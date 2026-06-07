@@ -35,6 +35,7 @@ export const crmMeetingSchema = z.object({
   id: z.string(),
   title: z.string(),
   account: z.string(),
+  opportunityId: z.string().optional(),
   time: z.string(),
   date: z.string(),
   status: meetingStatusSchema,

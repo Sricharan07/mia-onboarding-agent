@@ -5,8 +5,8 @@ import type { SemanticSearchAdapter } from "../../adapters/interfaces.js";
 import { AppError, NotFoundError, ValidationAppError } from "../../utils/errors.js";
 import { createId } from "../../utils/id.js";
 import { applyUiScanAuth, type UiScanAuthMode } from "./auth.js";
+import { gotoAndSettle } from "./navigation.js";
 import { UiMapPageCaptureService, type CapturePageResult } from "./pageCaptureService.js";
-import { captureSafeExpansions } from "./safeExpansion.js";
 
 type InteractiveSession = {
   sessionId: string;
@@ -61,7 +61,7 @@ export class InteractiveUiMapScanService {
         config: this.config,
         mode: input.auth?.mode
       });
-      await page.goto(new URL(firstRoute, app.baseUrl).toString(), { waitUntil: "networkidle" });
+      await gotoAndSettle(page, new URL(firstRoute, app.baseUrl).toString());
       const initialCapture = await this.capture.captureCurrentPage({
         appId: input.appId,
         uiMapVersionId: version.id,
@@ -71,15 +71,6 @@ export class InteractiveUiMapScanService {
         stateName: "default",
         discoveredBy: "route_scan"
       });
-      await captureSafeExpansions({
-        page,
-        appId: input.appId,
-        uiMapVersionId: version.id,
-        baseUrl: app.baseUrl,
-        route: firstRoute,
-        capture: this.capture
-      });
-
       this.sessions.set(sessionId, {
         sessionId,
         appId: input.appId,
@@ -117,7 +108,7 @@ export class InteractiveUiMapScanService {
 
   async goto(sessionId: string, input: { route: string; captureDefault?: boolean }): Promise<InteractiveSessionSummary & { capture?: CapturePageResult }> {
     const session = this.getSession(sessionId);
-    await session.page.goto(new URL(input.route, session.baseUrl).toString(), { waitUntil: "networkidle" });
+    await gotoAndSettle(session.page, new URL(input.route, session.baseUrl).toString());
     session.currentRoute = input.route;
 
     const capture = input.captureDefault === false
@@ -131,16 +122,6 @@ export class InteractiveUiMapScanService {
         stateName: "default",
         discoveredBy: "route_scan"
       });
-    if (capture) {
-      await captureSafeExpansions({
-        page: session.page,
-        appId: session.appId,
-        uiMapVersionId: session.uiMapVersionId,
-        baseUrl: session.baseUrl,
-        route: input.route,
-        capture: this.capture
-      });
-    }
 
     return { ...toSummary(session), capture };
   }

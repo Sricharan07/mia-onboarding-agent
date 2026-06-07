@@ -138,6 +138,20 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authenticated, api]);
 
+  useEffect(() => {
+    const hasActiveWorkflowJob = jobs.some((job) => ["uploaded", "analyzing", "mapped"].includes(job.status));
+    if (!authenticated || !selectedAppId || !hasActiveWorkflowJob) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      void refresh(selectedAppId);
+    }, 2500);
+
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authenticated, selectedAppId, jobs]);
+
   const selectApp = async (appId: string) => {
     setSelectedAppId(appId);
     setSelectedWorkflowId("");

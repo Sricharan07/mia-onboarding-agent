@@ -23,10 +23,10 @@ export function UiMapPage({
   onOpenPage: (pageId: string) => void;
   showToast: (message: string) => void;
 }) {
-  const [routes, setRoutes] = useState("/\n/dashboard\n/settings");
+  const [routes, setRoutes] = useState("/dashboard/crm");
   const [authMode, setAuthMode] = useState<"none" | "login_form">("none");
   const [session, setSession] = useState<InteractiveUiMapSession | null>(null);
-  const [routeDraft, setRouteDraft] = useState("/dashboard");
+  const [routeDraft, setRouteDraft] = useState("/dashboard/crm");
   const [stateName, setStateName] = useState("default");
   const [stateReason, setStateReason] = useState("");
 
@@ -117,6 +117,9 @@ export function UiMapPage({
     <div className="page-grid">
       <Panel title="Trigger UI mapping scan" action={<StatusPill tone={latestUiMap ? "green" : "gray"} label={latestUiMap?.version ?? "No map"} />}>
         <div className="scan-form">
+          <div className="empty-state">
+            Demo CRM ingestion: use auth mode <strong>None</strong>, route <code>/dashboard/crm</code>, then capture states for calendar modal and opportunity drawer.
+          </div>
           <label>
             Routes to scan
             <textarea value={routes} onChange={(event) => setRoutes(event.target.value)} rows={5} />
@@ -141,7 +144,7 @@ export function UiMapPage({
       >
         <div className="scan-form">
           <div className="empty-state">
-            Start a headed Playwright browser, open hidden menus or modals manually in that browser, then capture the current state here. Set <code>UI_SCAN_HEADLESS=false</code> to see the browser.
+            Start a headed Playwright browser, open hidden menus or modals manually in that browser, then capture the current state here. For the CRM workflow, capture <code>calendar modal open</code>, then click <code>Open opportunity</code> and capture <code>opportunity drawer open</code>. Set <code>UI_SCAN_HEADLESS=false</code> to see the browser.
           </div>
           {!session ? (
             <button className="button primary" type="button" onClick={() => void startInteractive()}>

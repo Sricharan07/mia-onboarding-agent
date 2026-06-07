@@ -127,19 +127,29 @@ export function OpportunityDrawer({
               <div className="space-y-5 pb-6">
                 <section className="grid grid-cols-1 gap-3 md:grid-cols-2">
                   <Field label="Account">
-                    <Input value={form.account} onChange={(event) => updateForm("account", event.target.value)} />
+                    <Input
+                      data-ai-id="crm.opportunity.account_input"
+                      value={form.account}
+                      onChange={(event) => updateForm("account", event.target.value)}
+                    />
                   </Field>
                   <Field label="Contact">
                     <Input
+                      data-ai-id="crm.opportunity.contact_input"
                       value={form.contactName}
                       onChange={(event) => updateForm("contactName", event.target.value)}
                     />
                   </Field>
                   <Field label="Owner">
-                    <Input value={form.owner} onChange={(event) => updateForm("owner", event.target.value)} />
+                    <Input
+                      data-ai-id="crm.opportunity.owner_input"
+                      value={form.owner}
+                      onChange={(event) => updateForm("owner", event.target.value)}
+                    />
                   </Field>
                   <Field label="Stage">
                     <NativeSelect
+                      data-ai-id="crm.opportunity.stage_select"
                       value={form.stage}
                       onChange={(event) => updateForm("stage", event.target.value as FormState["stage"])}
                       className="w-full"
@@ -153,6 +163,7 @@ export function OpportunityDrawer({
                   </Field>
                   <Field label="Health">
                     <NativeSelect
+                      data-ai-id="crm.opportunity.health_select"
                       value={form.health}
                       onChange={(event) => updateForm("health", event.target.value as FormState["health"])}
                       className="w-full"
@@ -166,6 +177,7 @@ export function OpportunityDrawer({
                   </Field>
                   <Field label="Outcome">
                     <NativeSelect
+                      data-ai-id="crm.opportunity.outcome_select"
                       value={form.outcome}
                       onChange={(event) => updateForm("outcome", event.target.value as FormState["outcome"])}
                       className="w-full"
@@ -179,6 +191,7 @@ export function OpportunityDrawer({
                   </Field>
                   <Field label="Probability">
                     <Input
+                      data-ai-id="crm.opportunity.probability_input"
                       type="number"
                       min={0}
                       max={100}
@@ -188,6 +201,7 @@ export function OpportunityDrawer({
                   </Field>
                   <Field label="Priority">
                     <Input
+                      data-ai-id="crm.opportunity.priority_input"
                       type="number"
                       min={1}
                       max={5}
@@ -197,6 +211,7 @@ export function OpportunityDrawer({
                   </Field>
                   <Field label="Amount">
                     <Input
+                      data-ai-id="crm.opportunity.amount_input"
                       type="number"
                       min={0}
                       value={form.amount}
@@ -205,6 +220,7 @@ export function OpportunityDrawer({
                   </Field>
                   <Field label="Close date">
                     <Input
+                      data-ai-id="crm.opportunity.close_date_input"
                       type="date"
                       value={form.closeDate}
                       onChange={(event) => updateForm("closeDate", event.target.value)}
@@ -213,6 +229,7 @@ export function OpportunityDrawer({
                   <div className="md:col-span-2">
                     <Field label="Next step">
                       <Textarea
+                        data-ai-id="crm.opportunity.next_step_textarea"
                         value={form.nextStep}
                         onChange={(event) => updateForm("nextStep", event.target.value)}
                       />
@@ -221,7 +238,7 @@ export function OpportunityDrawer({
                 </section>
 
                 <div className="flex justify-end">
-                  <Button onClick={saveChanges} disabled={saving}>
+                  <Button data-ai-id="crm.opportunity.save_button" onClick={saveChanges} disabled={saving}>
                     <Save />
                     Save changes
                   </Button>
@@ -235,11 +252,17 @@ export function OpportunityDrawer({
                     </p>
                   </div>
                   <Textarea
+                    data-ai-id="crm.opportunity.note_textarea"
                     value={noteBody}
                     onChange={(event) => setNoteBody(event.target.value)}
                     placeholder="Add call outcome or follow-up detail..."
                   />
-                  <Button variant="outline" onClick={addNote} disabled={saving || !noteBody.trim()}>
+                  <Button
+                    data-ai-id="crm.opportunity.add_note_button"
+                    variant="outline"
+                    onClick={addNote}
+                    disabled={saving || !noteBody.trim()}
+                  >
                     Add note
                   </Button>
                 </section>
@@ -256,6 +279,7 @@ export function OpportunityDrawer({
                           </div>
                         </div>
                         <Button
+                          data-ai-id={`crm.opportunity.task.${task.id}.complete_button`}
                           variant="outline"
                           size="sm"
                           disabled={task.status === "completed"}

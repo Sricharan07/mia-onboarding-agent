@@ -1,6 +1,7 @@
 import type { Page } from "playwright";
 import type { AppConfig } from "../../config/env.js";
 import { ConfigError } from "../../utils/errors.js";
+import { gotoAndSettle } from "./navigation.js";
 
 export type UiScanAuthMode = "none" | "login_form";
 
@@ -34,7 +35,7 @@ async function loginWithForm(page: Page, baseUrl: string, config: AppConfig): Pr
   }
 
   const loginUrl = new URL(config.UI_SCAN_LOGIN_URL!, baseUrl).toString();
-  await page.goto(loginUrl, { waitUntil: "networkidle" });
+  await gotoAndSettle(page, loginUrl);
   await page.locator(config.UI_SCAN_USERNAME_SELECTOR!).fill(config.UI_SCAN_USERNAME!);
   await page.locator(config.UI_SCAN_PASSWORD_SELECTOR!).fill(config.UI_SCAN_PASSWORD!);
   await page.locator(config.UI_SCAN_SUBMIT_SELECTOR!).click();
@@ -42,7 +43,7 @@ async function loginWithForm(page: Page, baseUrl: string, config: AppConfig): Pr
   if (config.UI_SCAN_SUCCESS_URL_PATTERN) {
     await page.waitForURL((url) => url.toString().includes(config.UI_SCAN_SUCCESS_URL_PATTERN!), { timeout: 15000 });
   } else {
-    await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => undefined);
+    await page.waitForLoadState("load", { timeout: 15000 }).catch(() => undefined);
   }
 
   if (config.UI_SCAN_POST_LOGIN_WAIT_MS > 0) {

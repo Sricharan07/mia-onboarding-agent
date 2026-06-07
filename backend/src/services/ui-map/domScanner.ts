@@ -18,13 +18,13 @@ const interactiveSelector = [
 ].join(",");
 
 export async function scanVisibleElements(page: Page): Promise<RawElement[]> {
-  return page.$$eval(interactiveSelector, (nodes) => {
-    function text(value: string | null | undefined): string | undefined {
-      const normalized = value?.replace(/\s+/g, " ").trim();
+  return page.evaluate(`(() => {
+    const nodes = Array.from(document.querySelectorAll(${JSON.stringify(interactiveSelector)}));
+    const text = (value) => {
+      const normalized = value?.replace(/\\s+/g, " ").trim();
       return normalized || undefined;
-    }
-
-    function visible(element: HTMLElement): boolean {
+    };
+    const visible = (element) => {
       const rect = element.getBoundingClientRect();
       const style = window.getComputedStyle(element);
       return rect.width > 0
@@ -32,56 +32,48 @@ export async function scanVisibleElements(page: Page): Promise<RawElement[]> {
         && style.visibility !== "hidden"
         && style.display !== "none"
         && style.pointerEvents !== "none";
-    }
-
-    function labelledBy(element: HTMLElement): string | undefined {
+    };
+    const labelledBy = (element) => {
       const id = element.getAttribute("aria-labelledby");
       if (!id) return undefined;
-      return text(id.split(/\s+/).map((part) => document.getElementById(part)?.textContent).filter(Boolean).join(" "));
-    }
-
-    function nearestHeading(element: HTMLElement): string | undefined {
+      return text(id.split(/\\s+/).map((part) => document.getElementById(part)?.textContent).filter(Boolean).join(" "));
+    };
+    const nearestHeading = (element) => {
       const container = element.closest("section,main,aside,nav,header,footer,form,[role='dialog'],[role='menu'],[role='listbox'],[data-state]");
       const heading = container?.querySelector("h1,h2,h3,h4,h5,h6,[role='heading']");
       return text(heading?.textContent);
-    }
-
-    function nearestForm(element: HTMLElement): string | undefined {
+    };
+    const nearestForm = (element) => {
       const form = element.closest("form");
       if (!form) return undefined;
       return text(form.getAttribute("aria-label"))
-        ?? labelledBy(form as HTMLElement)
+        ?? labelledBy(form)
         ?? text(form.querySelector("legend,h1,h2,h3,h4,h5,h6")?.textContent);
-    }
-
-    function nearestDialog(element: HTMLElement): string | undefined {
+    };
+    const nearestDialog = (element) => {
       const dialog = element.closest("dialog,[role='dialog'],[aria-modal='true']");
       if (!dialog) return undefined;
       return text(dialog.getAttribute("aria-label"))
-        ?? labelledBy(dialog as HTMLElement)
+        ?? labelledBy(dialog)
         ?? text(dialog.querySelector("h1,h2,h3,h4,h5,h6")?.textContent);
-    }
-
-    function nearestTable(element: HTMLElement): string | undefined {
+    };
+    const nearestTable = (element) => {
       const table = element.closest("table,[role='table'],[role='grid']");
       if (!table) return undefined;
       return text(table.getAttribute("aria-label"))
-        ?? labelledBy(table as HTMLElement)
+        ?? labelledBy(table)
         ?? text(table.querySelector("caption,h1,h2,h3,h4,h5,h6")?.textContent);
-    }
-
+    };
     return nodes
-      .filter((node): node is HTMLElement => node instanceof HTMLElement && visible(node))
+      .filter((node) => node instanceof HTMLElement && visible(node))
       .map((element) => {
         const rect = element.getBoundingClientRect();
-        const input = element as HTMLInputElement;
         const label = text(element.getAttribute("aria-label"))
           ?? labelledBy(element)
-          ?? text(input.labels?.[0]?.textContent)
+          ?? text(element.labels?.[0]?.textContent)
           ?? text(element.innerText)
           ?? text(element.textContent)
           ?? text(element.getAttribute("title"));
-
         return {
           tagName: element.tagName,
           role: element.getAttribute("role") ?? undefined,
@@ -90,12 +82,12 @@ export async function scanVisibleElements(page: Page): Promise<RawElement[]> {
           dataAiId: element.getAttribute("data-ai-id") ?? undefined,
           testId: element.getAttribute("data-testid") ?? undefined,
           id: element.id || undefined,
-          name: input.name || undefined,
-          placeholder: input.placeholder || undefined,
+          name: element.name || undefined,
+          placeholder: element.placeholder || undefined,
           ariaLabel: element.getAttribute("aria-label") ?? undefined,
-          inputType: input.type || undefined,
+          inputType: element.type || undefined,
           title: element.getAttribute("title") ?? undefined,
-          href: (element as HTMLAnchorElement).href || undefined,
+          href: element.href || undefined,
           sectionName: nearestHeading(element),
           formName: nearestForm(element),
           dialogName: nearestDialog(element),
@@ -103,5 +95,5 @@ export async function scanVisibleElements(page: Page): Promise<RawElement[]> {
           boundingBox: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
         };
       });
-  }) as Promise<RawElement[]>;
+  })()`) as Promise<RawElement[]>;
 }

@@ -69,6 +69,10 @@ export function CrmDashboard({ initialState }: { initialState: CrmSnapshot }) {
     setSelectedOpportunityId(opportunity.id);
   };
 
+  const handleOpenOpportunityById = (opportunityId: string) => {
+    setSelectedOpportunityId(opportunityId);
+  };
+
   return (
     <div className="flex flex-col gap-4 md:gap-6">
       <KpiCards metrics={state.metrics} />
@@ -78,6 +82,7 @@ export function CrmDashboard({ initialState }: { initialState: CrmSnapshot }) {
         proposalSent={state.proposalSent}
         proposalGoal={state.proposalGoal}
         onCompleteMeeting={handleCompleteMeeting}
+        onOpenOpportunity={handleOpenOpportunityById}
       />
       <OpportunitiesSection opportunities={state.opportunities} onOpenOpportunity={handleOpenOpportunity} />
       <OpportunityDrawer

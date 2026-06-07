@@ -109,6 +109,7 @@ export function getOpportunitiesColumns(input: {
       cell: ({ row }) => (
         <div className="text-right">
           <Button
+            data-ai-id={`crm.opportunities.${row.original.id}.edit_button`}
             variant="ghost"
             size="icon"
             className="size-8 rounded-full text-muted-foreground hover:bg-transparent focus-visible:bg-transparent"

@@ -16,11 +16,13 @@ export function TaskReminders({
   proposalSent,
   proposalGoal,
   onCompleteMeeting,
+  onOpenOpportunity,
 }: {
   meetings: CrmMeeting[];
   proposalSent: number;
   proposalGoal: number;
   onCompleteMeeting: (meetingId: string) => Promise<void>;
+  onOpenOpportunity: (opportunityId: string) => void;
 }) {
   const [calendarOpen, setCalendarOpen] = React.useState(false);
   const primaryMeeting = meetings[0];
@@ -37,7 +39,12 @@ export function TaskReminders({
         <CardHeader>
           <CardTitle>Upcoming Meetings</CardTitle>
           <CardAction>
-            <Button variant="outline" size="sm" onClick={() => setCalendarOpen(true)}>
+            <Button
+              data-ai-id="crm.calendar.view_button"
+              variant="outline"
+              size="sm"
+              onClick={() => setCalendarOpen(true)}
+            >
               <CalendarDays data-icon="inline-start" />
               View Calendar
             </Button>
@@ -144,10 +151,26 @@ export function TaskReminders({
                       : "Mark it complete after the call finishes."}
                   </p>
                 </div>
-                <Button variant="outline" size="sm" onClick={() => onCompleteMeeting(meeting.id)}>
-                  <CalendarCheck2 />
-                  {meeting.status === "completed" ? "Reopen" : "Mark complete"}
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    data-ai-id={`crm.calendar.meeting.${meeting.id}.complete_button`}
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onCompleteMeeting(meeting.id)}
+                  >
+                    <CalendarCheck2 />
+                    {meeting.status === "completed" ? "Reopen" : "Mark complete"}
+                  </Button>
+                  <Button
+                    data-ai-id={`crm.calendar.meeting.${meeting.id}.open_opportunity_button`}
+                    variant="outline"
+                    size="sm"
+                    disabled={!meeting.opportunityId}
+                    onClick={() => meeting.opportunityId && onOpenOpportunity(meeting.opportunityId)}
+                  >
+                    Open opportunity
+                  </Button>
+                </div>
               </div>
             ))}
           </div>

@@ -112,6 +112,7 @@ export function OpportunitiesSection({
           <CardAction>
             <div className="flex items-center gap-2">
               <Input
+                data-ai-id="crm.opportunities.search_input"
                 className="h-7 w-44 md:w-52"
                 placeholder="Search deals..."
                 value={searchQuery}
@@ -122,7 +123,7 @@ export function OpportunitiesSection({
               />
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm">
+                  <Button data-ai-id="crm.opportunities.stage_filter_button" variant="outline" size="sm">
                     <ListFilter data-icon="inline-start" />
                     Stage
                     <ChevronDownIcon data-icon="inline-end" />
@@ -146,7 +147,7 @@ export function OpportunitiesSection({
               </DropdownMenu>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm">
+                  <Button data-ai-id="crm.opportunities.health_filter_button" variant="outline" size="sm">
                     <ListFilter data-icon="inline-start" />
                     Health
                     <ChevronDownIcon data-icon="inline-end" />

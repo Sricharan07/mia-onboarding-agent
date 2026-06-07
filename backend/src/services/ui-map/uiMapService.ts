@@ -4,6 +4,7 @@ import type { SemanticSearchAdapter } from "../../adapters/interfaces.js";
 import { ValidationAppError } from "../../utils/errors.js";
 import type { AppConfig } from "../../config/env.js";
 import { applyUiScanAuth, type UiScanAuthMode } from "./auth.js";
+import { gotoAndSettle } from "./navigation.js";
 import { UiMapPageCaptureService } from "./pageCaptureService.js";
 import { captureSafeExpansions } from "./safeExpansion.js";
 
@@ -50,7 +51,7 @@ export class UiMapService {
       for (const route of input.routes) {
         const url = new URL(route, input.baseUrl).toString();
         try {
-          await page.goto(url, { waitUntil: "networkidle" });
+          await gotoAndSettle(page, url);
           await this.capture.captureCurrentPage({
             appId: input.appId,
             uiMapVersionId: input.uiMapVersionId,

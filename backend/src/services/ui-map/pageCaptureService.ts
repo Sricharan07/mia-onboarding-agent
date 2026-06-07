@@ -3,7 +3,7 @@ import type { Repositories } from "../../db/repositories.js";
 import type { SemanticSearchAdapter } from "../../adapters/interfaces.js";
 import { scanVisibleElements } from "./domScanner.js";
 import { buildUiElementRecord } from "./selector.js";
-import type { UIElementRecord } from "../../schemas/domain.js";
+import type { SemanticRecord, UIElementRecord } from "../../schemas/domain.js";
 
 export type UiElementDiscoveredBy = UIElementRecord["discoveredBy"];
 
@@ -52,6 +52,7 @@ export class UiMapPageCaptureService {
     let savedElements = 0;
     let duplicateElements = 0;
     let weakSelectors = 0;
+    const semanticRecords: SemanticRecord[] = [];
 
     for (const [index, raw] of rawElements.entries()) {
       const record = buildUiElementRecord({
@@ -75,8 +76,10 @@ export class UiMapPageCaptureService {
       }
 
       savedElements += 1;
-      await this.moss.index(toSemanticRecord(record));
+      semanticRecords.push(toSemanticRecord(record));
     }
+
+    await this.moss.upsertMany(semanticRecords);
 
     return {
       pageId,

@@ -131,7 +131,7 @@ async function mutateState(mutator: (state: CrmSnapshot) => void): Promise<CrmSn
 async function readState(): Promise<CrmSnapshot> {
   try {
     const raw = await readFile(statePath, "utf8");
-    return crmSnapshotSchema.parse(JSON.parse(raw));
+    return migrateState(crmSnapshotSchema.parse(JSON.parse(raw)));
   } catch {
     const initial = recomputeState(createInitialState());
     await writeState(initial);
@@ -250,7 +250,8 @@ function seedMeetings(): CrmMeeting[] {
     {
       id: "meeting_product_demo",
       title: "Product demo with Tim",
-      account: "Weblabs Studio",
+      account: "Asteron Bioworks",
+      opportunityId: "OP-1842",
       time: "08:45 AM",
       date: "Today",
       status: "scheduled",
@@ -259,6 +260,7 @@ function seedMeetings(): CrmMeeting[] {
       id: "meeting_security_review",
       title: "Security review with Asteron Bioworks",
       account: "Asteron Bioworks",
+      opportunityId: "OP-1842",
       time: "10:00 AM",
       date: "Today",
       status: "scheduled",
@@ -267,11 +269,28 @@ function seedMeetings(): CrmMeeting[] {
       id: "meeting_pricing_workshop",
       title: "Pricing workshop with BlueHaven Systems",
       account: "BlueHaven Systems",
+      opportunityId: "OP-1841",
       time: "02:15 PM",
       date: "Tomorrow",
       status: "scheduled",
     },
   ];
+}
+
+function migrateState(state: CrmSnapshot): CrmSnapshot {
+  for (const meeting of state.meetings) {
+    if (meeting.id === "meeting_product_demo") {
+      meeting.account = "Asteron Bioworks";
+      meeting.opportunityId = "OP-1842";
+    }
+    if (meeting.id === "meeting_security_review") {
+      meeting.opportunityId = "OP-1842";
+    }
+    if (meeting.id === "meeting_pricing_workshop") {
+      meeting.opportunityId = "OP-1841";
+    }
+  }
+  return state;
 }
 
 function seedTasks(opportunities: CrmOpportunity[]): CrmTask[] {

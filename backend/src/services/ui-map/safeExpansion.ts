@@ -45,24 +45,21 @@ export async function captureSafeExpansions(input: {
 }
 
 async function markSafeExpansionCandidates(page: Page): Promise<ExpansionCandidate[]> {
-  return page.evaluate(() => {
+  return page.evaluate(`(() => {
     const safeLabel = /^(more|more options|actions|options|menu|open menu|filter|filters|columns|view options)$/i;
     const dangerousLabel = /(save|submit|delete|remove|archive|send|invite|create|update|confirm|pay|purchase|checkout|disable|enable)/i;
     const nodes = Array.from(document.querySelectorAll("button,summary,[role='button'],[role='combobox']"));
     document.querySelectorAll("[data-mia-scan-expander]").forEach((node) => node.removeAttribute("data-mia-scan-expander"));
-
-    function text(value: string | null | undefined): string | undefined {
-      const normalized = value?.replace(/\s+/g, " ").trim();
+    const text = (value) => {
+      const normalized = value?.replace(/\\s+/g, " ").trim();
       return normalized || undefined;
-    }
-
-    function visible(element: HTMLElement): boolean {
+    };
+    const visible = (element) => {
       const rect = element.getBoundingClientRect();
       const style = window.getComputedStyle(element);
       return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
-    }
-
-    const candidates: ExpansionCandidate[] = [];
+    };
+    const candidates = [];
     for (const node of nodes) {
       if (!(node instanceof HTMLElement) || !visible(node)) continue;
       const label = text(node.getAttribute("aria-label")) ?? text(node.innerText) ?? text(node.textContent) ?? text(node.getAttribute("title"));
@@ -71,15 +68,13 @@ async function markSafeExpansionCandidates(page: Page): Promise<ExpansionCandida
         || node.getAttribute("aria-expanded") === "false"
         || node.getAttribute("role") === "combobox";
       if (!hasSemanticExpansionSignal && !safeLabel.test(label)) continue;
-
       const index = candidates.length;
       node.setAttribute("data-mia-scan-expander", String(index));
       candidates.push({
-        selector: `[data-mia-scan-expander='${index}']`,
+        selector: "[data-mia-scan-expander='" + index + "']",
         label
       });
     }
-
     return candidates;
-  });
+  })()`) as Promise<ExpansionCandidate[]>;
 }
