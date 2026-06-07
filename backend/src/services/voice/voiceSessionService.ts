@@ -1,4 +1,4 @@
-import { MossVoiceServer } from "@moss-tools/voice-server";
+import { AccessToken, AgentDispatchClient, RoomConfiguration } from "livekit-server-sdk";
 import type { AppConfig } from "../../config/env.js";
 import { requireConfig } from "../../config/env.js";
 import type { SDKRuntimeContext } from "../../schemas/domain.js";
@@ -29,11 +29,15 @@ type VoiceSession = {
   events: VoiceSessionEvent[];
   subscribers: Set<(event: VoiceSessionEvent) => void>;
   stopped: boolean;
+  lastUserTranscript?: string;
+  inputCapture?: {
+    prompt: string;
+    startedAt: number;
+  };
 };
 
 export class VoiceSessionService {
   private readonly sessions = new Map<string, VoiceSession>();
-  private mossVoiceServer?: Promise<MossVoiceServer>;
 
   constructor(
     private readonly config: AppConfig,
@@ -47,9 +51,8 @@ export class VoiceSessionService {
     context: Omit<SDKRuntimeContext, "appId" | "sessionId">;
     userMetadata?: Record<string, unknown>;
   }): Promise<{ voiceSessionId: string; serverUrl: string; token: string; roomName: string; status: VoiceSessionStatus }> {
-    requireConfig(this.config, ["MOSS_PROJECT_ID", "MOSS_PROJECT_KEY", "MOSS_VOICE_AGENT_ID"], "Moss voice agent");
+    requireConfig(this.config, ["LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"], "LiveKit voice agent");
 
-    const server = await this.getMossVoiceServer();
     const voiceSessionId = createId("voice_session");
     const roomName = `mia-${voiceSessionId}`;
     const metadata = JSON.stringify({
@@ -59,11 +62,7 @@ export class VoiceSessionService {
       userMetadata: input.userMetadata ?? {}
     });
 
-    const token = await server.createParticipantToken(
-      { identity: input.identity, name: input.identity, metadata },
-      roomName,
-      server.getAgentName()
-    );
+    const token = await this.createParticipantToken({ identity: input.identity, roomName, metadata });
 
     const session: VoiceSession = {
       id: voiceSessionId,
@@ -79,12 +78,14 @@ export class VoiceSessionService {
     };
     this.sessions.set(voiceSessionId, session);
 
+    console.info(`[voice] created session=${voiceSessionId} room=${roomName} identity=${input.identity}`);
+    await this.dispatchAgent(roomName, metadata);
     this.emit(session, { type: "session_ready", voiceSessionId, status: "listening", roomName });
     this.emit(session, { type: "listening", voiceSessionId, status: "listening" });
 
     return {
       voiceSessionId,
-      serverUrl: server.getServerUrl(),
+      serverUrl: this.config.LIVEKIT_URL!,
       token,
       roomName,
       status: "listening"
@@ -98,8 +99,20 @@ export class VoiceSessionService {
     const utterance = input.utterance.trim();
     if (!utterance) throw new AppError("EMPTY_UTTERANCE", "Voice utterance cannot be empty.", 400);
 
+    if (session.inputCapture) {
+      console.info(`[voice] captured workflow input session=${voiceSessionId} utterance=${JSON.stringify(utterance)}`);
+      session.inputCapture = undefined;
+      this.recordTranscriptForSession(session, utterance);
+      const result = { type: "answer", message: "Got it." };
+      this.emit(session, { type: "assistant_response", voiceSessionId: session.id, message: result.message, result });
+      session.status = "listening";
+      this.emit(session, { type: "listening", voiceSessionId: session.id, status: "listening" });
+      return { voiceSessionId: session.id, message: result.message, result };
+    }
+
+    console.info(`[voice] resolving session=${voiceSessionId} utterance=${JSON.stringify(utterance)}`);
     session.status = "thinking";
-    this.emit(session, { type: "transcript_user", voiceSessionId: session.id, text: utterance, isFinal: true });
+    this.recordTranscriptForSession(session, utterance);
     this.emit(session, { type: "thinking", voiceSessionId: session.id, status: "thinking" });
 
     try {
@@ -111,6 +124,8 @@ export class VoiceSessionService {
         includeTts: false
       });
       const message = typeof result === "object" && result && "message" in result ? String(result.message) : "";
+      const resultType = typeof result === "object" && result && "type" in result ? String(result.type) : "unknown";
+      console.info(`[voice] resolved session=${voiceSessionId} type=${resultType} message=${JSON.stringify(message)}`);
       this.emit(session, { type: "assistant_response", voiceSessionId: session.id, message, result });
       if (typeof result === "object" && result && "type" in result && result.type === "workflow") {
         this.emit(session, { type: "workflow_resolved", voiceSessionId: session.id, result });
@@ -124,6 +139,33 @@ export class VoiceSessionService {
     }
   }
 
+  async recordTranscript(voiceSessionId: string, input: { text: string }): Promise<{ voiceSessionId: string; text: string }> {
+    const session = this.get(voiceSessionId);
+    if (session.stopped) throw new AppError("VOICE_SESSION_ENDED", "Voice session has already ended.", 409);
+    const text = input.text.trim();
+    if (!text) throw new AppError("EMPTY_TRANSCRIPT", "Voice transcript cannot be empty.", 400);
+    this.recordTranscriptForSession(session, text);
+    return { voiceSessionId: session.id, text };
+  }
+
+  beginInputCapture(voiceSessionId: string, input: { prompt: string }): { voiceSessionId: string; status: VoiceSessionStatus } {
+    const session = this.get(voiceSessionId);
+    if (session.stopped) throw new AppError("VOICE_SESSION_ENDED", "Voice session has already ended.", 409);
+    session.inputCapture = {
+      prompt: input.prompt,
+      startedAt: Date.now()
+    };
+    session.status = "listening";
+    this.emit(session, { type: "listening", voiceSessionId: session.id, status: "listening" });
+    return { voiceSessionId: session.id, status: session.status };
+  }
+
+  endInputCapture(voiceSessionId: string): { voiceSessionId: string; status: VoiceSessionStatus } {
+    const session = this.get(voiceSessionId);
+    session.inputCapture = undefined;
+    return { voiceSessionId: session.id, status: session.status };
+  }
+
   subscribe(voiceSessionId: string, subscriber: (event: VoiceSessionEvent) => void): () => void {
     const session = this.get(voiceSessionId);
     for (const event of session.events) subscriber(event);
@@ -131,6 +173,17 @@ export class VoiceSessionService {
     return () => {
       session.subscribers.delete(subscriber);
     };
+  }
+
+  listDebug(): Array<{ id: string; roomName: string; identity: string; status: VoiceSessionStatus; eventCount: number; lastEvent?: VoiceSessionEvent }> {
+    return [...this.sessions.values()].map((session) => ({
+      id: session.id,
+      roomName: session.roomName,
+      identity: session.identity,
+      status: session.status,
+      eventCount: session.events.length,
+      lastEvent: session.events.at(-1)
+    }));
   }
 
   async end(voiceSessionId: string): Promise<{ voiceSessionId: string; status: VoiceSessionStatus }> {
@@ -143,18 +196,45 @@ export class VoiceSessionService {
     for (const session of this.sessions.values()) this.closeSession(session, "ended");
   }
 
-  private getMossVoiceServer(): Promise<MossVoiceServer> {
-    if (!this.mossVoiceServer) {
-      this.mossVoiceServer = MossVoiceServer.create({
-        projectId: this.config.MOSS_PROJECT_ID!,
-        projectKey: this.config.MOSS_PROJECT_KEY!,
-        voiceAgentId: this.config.MOSS_VOICE_AGENT_ID!
-      }).catch((error) => {
-        this.mossVoiceServer = undefined;
-        throw error;
-      });
+  private async createParticipantToken(input: { identity: string; roomName: string; metadata: string }): Promise<string> {
+    const token = new AccessToken(this.config.LIVEKIT_API_KEY!, this.config.LIVEKIT_API_SECRET!, {
+      identity: input.identity,
+      name: input.identity,
+      metadata: input.metadata,
+      ttl: "15m"
+    });
+    token.addGrant({
+      room: input.roomName,
+      roomJoin: true,
+      canPublish: true,
+      canPublishData: true,
+      canSubscribe: true
+    });
+    token.roomConfig = new RoomConfiguration({
+      agents: [{ agentName: this.config.LIVEKIT_AGENT_NAME, metadata: input.metadata }]
+    });
+    return token.toJwt();
+  }
+
+  private async dispatchAgent(roomName: string, metadata: string): Promise<void> {
+    const dispatchClient = new AgentDispatchClient(
+      liveKitHttpUrl(this.config.LIVEKIT_URL!),
+      this.config.LIVEKIT_API_KEY!,
+      this.config.LIVEKIT_API_SECRET!,
+      { requestTimeout: 5000 }
+    );
+    try {
+      const dispatch = await dispatchClient.createDispatch(roomName, this.config.LIVEKIT_AGENT_NAME, { metadata });
+      console.info(`[voice] dispatched agent=${this.config.LIVEKIT_AGENT_NAME} room=${roomName} dispatch=${dispatch.id}`);
+    } catch (error) {
+      console.error(`[voice] failed to dispatch agent=${this.config.LIVEKIT_AGENT_NAME} room=${roomName}`, error);
+      throw new AppError(
+        "LIVEKIT_AGENT_DISPATCH_FAILED",
+        `LiveKit agent dispatch failed. Confirm ./voice-agent/run-local.sh is running with LIVEKIT_AGENT_NAME=${this.config.LIVEKIT_AGENT_NAME}.`,
+        502,
+        error instanceof Error ? { message: error.message } : error
+      );
     }
-    return this.mossVoiceServer;
   }
 
   private get(voiceSessionId: string): VoiceSession {
@@ -172,12 +252,19 @@ export class VoiceSessionService {
   private emitError(session: VoiceSession, error: unknown): void {
     session.status = "error";
     const appError = error instanceof AppError ? error : undefined;
+    console.error(`[voice] error session=${session.id}`, error);
     this.emit(session, {
       type: "error",
       voiceSessionId: session.id,
       code: appError?.code,
       message: error instanceof Error ? error.message : String(error)
     });
+  }
+
+  private recordTranscriptForSession(session: VoiceSession, text: string): void {
+    if (session.lastUserTranscript === text) return;
+    session.lastUserTranscript = text;
+    this.emit(session, { type: "transcript_user", voiceSessionId: session.id, text, isFinal: true });
   }
 
   private closeSession(session: VoiceSession, status: VoiceSessionStatus): void {
@@ -191,4 +278,10 @@ export class VoiceSessionService {
 
 function windowSetTimeout(fn: () => void, ms: number): void {
   setTimeout(fn, ms).unref?.();
+}
+
+function liveKitHttpUrl(url: string): string {
+  if (url.startsWith("ws://")) return `http://${url.slice("ws://".length)}`;
+  if (url.startsWith("wss://")) return `https://${url.slice("wss://".length)}`;
+  return url;
 }

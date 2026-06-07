@@ -5,6 +5,10 @@ import { sdkRuntimeContextSchema } from "../schemas/domain.js";
 import { requireApiKeyScope } from "./auth.js";
 
 export async function registerVoiceSessionRoutes(app: FastifyInstance, dependencies: AppDependencies): Promise<void> {
+  app.get("/api/v1/voice/sessions", {
+    preHandler: (request, reply) => requireApiKeyScope(request, reply, dependencies, ["runtime:write"])
+  }, async () => dependencies.services.voiceSessions.listDebug());
+
   app.post("/api/v1/voice/sessions", {
     preHandler: (request, reply) => requireApiKeyScope(request, reply, dependencies, ["runtime:write"])
   }, async (request) => {
@@ -46,6 +50,33 @@ export async function registerVoiceSessionRoutes(app: FastifyInstance, dependenc
       utterance: z.string().min(1)
     }).parse(request.body);
     return dependencies.services.voiceSessions.resolveUtterance(params.voiceSessionId, body);
+  });
+
+  app.post("/api/v1/voice/sessions/:voiceSessionId/transcript", {
+    preHandler: (request, reply) => requireApiKeyScope(request, reply, dependencies, ["runtime:write"])
+  }, async (request) => {
+    const params = z.object({ voiceSessionId: z.string().min(1) }).parse(request.params);
+    const body = z.object({
+      text: z.string().min(1)
+    }).parse(request.body);
+    return dependencies.services.voiceSessions.recordTranscript(params.voiceSessionId, body);
+  });
+
+  app.post("/api/v1/voice/sessions/:voiceSessionId/input-capture", {
+    preHandler: (request, reply) => requireApiKeyScope(request, reply, dependencies, ["runtime:write"])
+  }, async (request) => {
+    const params = z.object({ voiceSessionId: z.string().min(1) }).parse(request.params);
+    const body = z.object({
+      prompt: z.string().min(1)
+    }).parse(request.body);
+    return dependencies.services.voiceSessions.beginInputCapture(params.voiceSessionId, body);
+  });
+
+  app.delete("/api/v1/voice/sessions/:voiceSessionId/input-capture", {
+    preHandler: (request, reply) => requireApiKeyScope(request, reply, dependencies, ["runtime:write"])
+  }, async (request) => {
+    const params = z.object({ voiceSessionId: z.string().min(1) }).parse(request.params);
+    return dependencies.services.voiceSessions.endInputCapture(params.voiceSessionId);
   });
 
   app.post("/api/v1/voice/sessions/:voiceSessionId/end", {

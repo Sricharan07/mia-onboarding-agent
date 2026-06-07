@@ -38,6 +38,7 @@ export class WorkflowService {
     if (workflow.status !== "approved") {
       throw new AppError("WORKFLOW_NOT_APPROVED", "Workflow must be approved before publishing.");
     }
+    this.assertPublishable(workflow);
     const next = workflowSchema.parse({ ...workflow, status: "published", updatedAt: nowIso() });
     this.repositories.saveWorkflow(next);
     await this.moss.index({
@@ -119,4 +120,32 @@ export class WorkflowService {
       updatedAt: nowIso()
     });
   }
+
+  private assertPublishable(workflow: Workflow): void {
+    const issues: string[] = [];
+
+    for (const step of workflow.steps) {
+      if (!isExecutableTargetStep(step) || step.executionPolicy !== "auto") continue;
+      const selectors = [step.target.selector, ...(step.target.fallbackSelectors ?? [])];
+      if (!selectors.some(isStableEnoughSelector)) {
+        issues.push(`${step.type} step "${step.id}" targets "${step.target.elementId}" with only brittle selectors.`);
+      }
+    }
+
+    if (issues.length) {
+      throw new AppError("WORKFLOW_SELECTOR_NOT_PUBLISHABLE", "Workflow has auto steps with brittle selectors. Re-scan the UI map or edit the target selector before publishing.", 400, { issues });
+    }
+  }
+}
+
+function isExecutableTargetStep(step: WorkflowStep): step is Extract<WorkflowStep, { type: "click" | "focus" | "fill" | "select" }> {
+  return step.type === "click" || step.type === "focus" || step.type === "fill" || step.type === "select";
+}
+
+function isStableEnoughSelector(selector: string): boolean {
+  const trimmed = selector.trim();
+  if (!trimmed) return false;
+  if (trimmed.includes(":nth-of-type") || trimmed.includes(":nth-child")) return false;
+  if (/^[a-z][a-z0-9-]*$/i.test(trimmed)) return false;
+  return true;
 }

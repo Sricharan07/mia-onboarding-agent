@@ -14,6 +14,13 @@ class AIOnboardingAgentInstance {
   private voice?: LiveKitVoiceClient;
   private sessionId = `sdk_session_${crypto.randomUUID()}`;
   private speakingMeter?: number;
+  private pendingWorkflowInput?: {
+    resolve: (value: string) => void;
+    prompt: string;
+    voiceSessionId: string;
+    settled: boolean;
+  };
+  private suppressNextAssistantResponse = false;
 
   init(config: SDKConfig): void {
     this.config = config;
@@ -76,6 +83,7 @@ class AIOnboardingAgentInstance {
       identity: this.config.user?.id ?? this.sessionId,
       context,
       onInputLevel: (level) => this.cursor?.setListeningLevel(level),
+      onStage: (stage) => this.cursor?.setBubbleText(stage),
       onEvent: (event) => void this.handleVoiceEvent(event)
     });
   }
@@ -107,6 +115,7 @@ class AIOnboardingAgentInstance {
         cursor: this.cursor,
         promptUi: this.promptUi,
         clientSessionId: this.sessionId,
+        requestUserInput: (input) => this.requestWorkflowInput(input),
         onWorkflowEvent: this.config.onWorkflowEvent
       });
       await executor.start();
@@ -130,11 +139,19 @@ class AIOnboardingAgentInstance {
       return;
     }
     if (event.type === "transcript_user") {
+      if (this.pendingWorkflowInput) {
+        this.resolvePendingWorkflowInput(event.text);
+        return;
+      }
       this.cursor.setBubbleText(`You: ${event.text}`);
       this.config?.onTranscript?.({ role: "user", text: event.text });
       return;
     }
     if (event.type === "assistant_response") {
+      if (this.suppressNextAssistantResponse) {
+        this.suppressNextAssistantResponse = false;
+        return;
+      }
       this.config?.onTranscript?.({ role: "assistant", text: event.message });
       await this.handleResolveResult(event.result, { playTts: false });
       return;
@@ -170,6 +187,57 @@ class AIOnboardingAgentInstance {
     });
     this.stopSpeakingMeter();
     if (this.config.enableVoice) this.cursor?.setState("listening");
+  }
+
+  private async requestWorkflowInput(input: { prompt: string; inputType?: string; choices?: string[] }): Promise<string> {
+    if (!this.config || !this.backendClient || !this.cursor || !this.promptUi) {
+      throw new Error("AIOnboardingAgent.init(config) must be called before collecting workflow input.");
+    }
+
+    const voiceSessionId = this.voice?.getVoiceSessionId();
+    if (!this.config.enableVoice || !voiceSessionId) {
+      return this.promptUi.ask(input.prompt, input.inputType, input.choices);
+    }
+
+    if (input.choices?.length) {
+      return this.promptUi.ask(input.prompt, input.inputType, input.choices);
+    }
+
+    this.cursor.setState("listening");
+    this.cursor.setBubbleText(input.prompt);
+    this.promptUi.showListening(input.prompt);
+    const inputPromise = new Promise<string>((resolve) => {
+      this.pendingWorkflowInput = {
+        resolve,
+        prompt: input.prompt,
+        voiceSessionId,
+        settled: false
+      };
+    });
+
+    try {
+      await this.backendClient.beginVoiceInputCapture(voiceSessionId, { prompt: input.prompt });
+      return await inputPromise;
+    } finally {
+      if (this.pendingWorkflowInput?.voiceSessionId === voiceSessionId) {
+        this.pendingWorkflowInput = undefined;
+      }
+      this.promptUi.clear();
+      await this.backendClient.endVoiceInputCapture(voiceSessionId).catch(() => undefined);
+    }
+  }
+
+  private resolvePendingWorkflowInput(text: string): void {
+    const pending = this.pendingWorkflowInput;
+    if (!pending || pending.settled) return;
+    const value = text.trim();
+    if (!value) return;
+    pending.settled = true;
+    this.pendingWorkflowInput = undefined;
+    this.suppressNextAssistantResponse = true;
+    this.cursor?.setBubbleText(`Got it: ${value}`);
+    this.config?.onTranscript?.({ role: "user", text: value });
+    pending.resolve(value);
   }
 
   private setStatus(status: MiaStatus): void {

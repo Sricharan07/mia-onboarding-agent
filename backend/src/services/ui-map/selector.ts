@@ -8,6 +8,9 @@ export type RawElement = {
   text?: string;
   dataAiId?: string;
   testId?: string;
+  dataSlot?: string;
+  dataSidebar?: string;
+  dataState?: string;
   id?: string;
   name?: string;
   placeholder?: string;
@@ -78,21 +81,45 @@ export function buildUiElementRecord(input: {
   };
 }
 
-function generateSelector(raw: RawElement, index: number): { selector: string; selectorType: UIElementRecord["selectorType"]; fallbackSelectors: string[] } {
-  const fallbacks = [
-    raw.ariaLabel ? `[aria-label='${escapeCssValue(raw.ariaLabel)}']` : undefined,
-    raw.name ? `[name='${escapeCssValue(raw.name)}']` : undefined,
-    raw.id ? `#${cssEscape(raw.id)}` : undefined,
-    raw.placeholder ? `[placeholder='${escapeCssValue(raw.placeholder)}']` : undefined
-  ].filter(Boolean) as string[];
+type SelectorCandidate = {
+  selector: string;
+  selectorType: UIElementRecord["selectorType"];
+};
 
-  if (raw.dataAiId) return { selector: `[data-ai-id='${escapeCssValue(raw.dataAiId)}']`, selectorType: "data-ai-id", fallbackSelectors: fallbacks };
-  if (raw.testId) return { selector: `[data-testid='${escapeCssValue(raw.testId)}']`, selectorType: "data-testid", fallbackSelectors: fallbacks };
-  if (raw.ariaLabel) return { selector: `[aria-label='${escapeCssValue(raw.ariaLabel)}']`, selectorType: "aria-label", fallbackSelectors: fallbacks };
-  if (raw.name) return { selector: `[name='${escapeCssValue(raw.name)}']`, selectorType: "name", fallbackSelectors: fallbacks };
-  if (raw.id) return { selector: `#${cssEscape(raw.id)}`, selectorType: "id", fallbackSelectors: fallbacks };
-  if (raw.placeholder) return { selector: `[placeholder='${escapeCssValue(raw.placeholder)}']`, selectorType: "placeholder", fallbackSelectors: fallbacks };
-  return { selector: `${raw.tagName.toLowerCase()}:nth-of-type(${index + 1})`, selectorType: "css", fallbackSelectors: fallbacks };
+function generateSelector(raw: RawElement, index: number): { selector: string; selectorType: UIElementRecord["selectorType"]; fallbackSelectors: string[] } {
+  const candidates = buildSelectorCandidates(raw);
+  const positionalFallback = {
+    selector: `${raw.tagName.toLowerCase()}:nth-of-type(${index + 1})`,
+    selectorType: "css" as const
+  };
+  const [primary = positionalFallback, ...fallbackCandidates] = candidates.length ? candidates : [positionalFallback];
+
+  return {
+    selector: primary.selector,
+    selectorType: primary.selectorType,
+    fallbackSelectors: unique(fallbackCandidates.map((candidate) => candidate.selector))
+  };
+}
+
+function buildSelectorCandidates(raw: RawElement): SelectorCandidate[] {
+  const tag = raw.tagName.toLowerCase();
+  const label = raw.label ?? raw.ariaLabel ?? raw.title ?? raw.text;
+  const candidates: Array<SelectorCandidate | undefined> = [
+    raw.dataAiId ? { selector: `[data-ai-id='${escapeCssValue(raw.dataAiId)}']`, selectorType: "data-ai-id" } : undefined,
+    raw.testId ? { selector: `[data-testid='${escapeCssValue(raw.testId)}']`, selectorType: "data-testid" } : undefined,
+    raw.dataSidebar && raw.dataSlot ? { selector: attrSelector({ "data-sidebar": raw.dataSidebar, "data-slot": raw.dataSlot }), selectorType: "css" } : undefined,
+    raw.dataSlot && raw.ariaLabel ? { selector: attrSelector({ "data-slot": raw.dataSlot, "aria-label": raw.ariaLabel }), selectorType: "css" } : undefined,
+    raw.dataSlot && raw.title ? { selector: attrSelector({ "data-slot": raw.dataSlot, title: raw.title }), selectorType: "css" } : undefined,
+    raw.dataState && raw.ariaLabel ? { selector: attrSelector({ "data-state": raw.dataState, "aria-label": raw.ariaLabel }), selectorType: "css" } : undefined,
+    raw.ariaLabel ? { selector: `[aria-label='${escapeCssValue(raw.ariaLabel)}']`, selectorType: "aria-label" } : undefined,
+    raw.title ? { selector: `[title='${escapeCssValue(raw.title)}']`, selectorType: "css" } : undefined,
+    raw.name ? { selector: `[name='${escapeCssValue(raw.name)}']`, selectorType: "name" } : undefined,
+    raw.id ? { selector: `#${cssEscape(raw.id)}`, selectorType: "id" } : undefined,
+    raw.placeholder ? { selector: `[placeholder='${escapeCssValue(raw.placeholder)}']`, selectorType: "placeholder" } : undefined,
+    label && supportsTextSelector(tag, raw.role) ? { selector: `${tag}:has-text('${escapeCssValue(label)}')`, selectorType: "text" } : undefined
+  ];
+
+  return uniqueCandidates(candidates.filter(Boolean) as SelectorCandidate[]);
 }
 
 function scoreSelector(selectorType: UIElementRecord["selectorType"], selector: string): { quality: UIElementRecord["selectorQuality"]; warnings: string[] } {
@@ -110,9 +137,34 @@ function scoreSelector(selectorType: UIElementRecord["selectorType"], selector: 
     css: selector.includes("nth") ? 10 : 20,
     "dom-path": 5
   };
-  const score = scoreByType[selectorType];
-  if (score < 45) warnings.push("Selector is brittle. Add data-ai-id or data-testid.");
+  const score = scoreSelectorValue(selectorType, selector, scoreByType[selectorType]);
+  if (selector.includes(":nth-of-type") || selector.includes(":nth-child")) {
+    warnings.push("Selector is positional and may break when layout changes.");
+  }
+  if (score < 45) warnings.push("Selector is brittle. Add data-ai-id, data-testid, aria-label, or stable data attributes.");
   return { quality: score >= 80 ? "strong" : score >= 45 ? "medium" : "weak", warnings };
+}
+
+function scoreSelectorValue(selectorType: UIElementRecord["selectorType"], selector: string, baseScore: number): number {
+  if (selector.includes(":nth-of-type") || selector.includes(":nth-child")) return 10;
+  if (selector.includes("[data-ai-id=")) return 100;
+  if (selector.includes("[data-testid=")) return 90;
+  if (selector.includes("[data-sidebar=") && selector.includes("[data-slot=")) return 85;
+  if (selector.includes("[data-slot=") && (selector.includes("[aria-label=") || selector.includes("[title="))) return 80;
+  if (selector.includes("[data-state=") && selector.includes("[aria-label=")) return 70;
+  if (selectorType === "css" && selector.includes("[title=")) return 55;
+  return baseScore;
+}
+
+function attrSelector(attrs: Record<string, string | undefined>): string {
+  return Object.entries(attrs)
+    .filter((entry): entry is [string, string] => Boolean(entry[1]))
+    .map(([name, value]) => `[${name}='${escapeCssValue(value)}']`)
+    .join("");
+}
+
+function supportsTextSelector(tag: string, role?: string): boolean {
+  return ["button", "a", "summary"].includes(tag) || ["button", "link", "tab", "menuitem", "option"].includes(role ?? "");
 }
 
 function getElementType(raw: RawElement): UIElementRecord["elementType"] {
@@ -171,4 +223,17 @@ function cssEscape(value: string): string {
 
 function generateFingerprint(route: string, selector: string, label: string, type: string): string {
   return toSlug([route, selector, label, type].join("|"));
+}
+
+function unique(values: string[]): string[] {
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
+function uniqueCandidates(candidates: SelectorCandidate[]): SelectorCandidate[] {
+  const seen = new Set<string>();
+  return candidates.filter((candidate) => {
+    if (seen.has(candidate.selector)) return false;
+    seen.add(candidate.selector);
+    return true;
+  });
 }

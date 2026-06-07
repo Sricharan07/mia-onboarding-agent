@@ -62,14 +62,23 @@ export class BackendClient {
     return this.post(`/api/v1/voice/sessions/${encodeURIComponent(voiceSessionId)}/end`, {});
   }
 
+  async beginVoiceInputCapture(voiceSessionId: string, input: { prompt: string }): Promise<{ voiceSessionId: string; status: string }> {
+    return this.post(`/api/v1/voice/sessions/${encodeURIComponent(voiceSessionId)}/input-capture`, input);
+  }
+
+  async endVoiceInputCapture(voiceSessionId: string): Promise<{ voiceSessionId: string; status: string }> {
+    return this.request(`/api/v1/voice/sessions/${encodeURIComponent(voiceSessionId)}/input-capture`, { method: "DELETE" });
+  }
+
   async streamVoiceEvents(voiceSessionId: string, onEvent: (event: VoiceSessionEvent) => void, signal?: AbortSignal): Promise<void> {
-    const response = await fetch(`${this.config.backendUrl.replace(/\/+$/, "")}/api/v1/voice/sessions/${encodeURIComponent(voiceSessionId)}/events`, {
+    const url = `${this.config.backendUrl.replace(/\/+$/, "")}/api/v1/voice/sessions/${encodeURIComponent(voiceSessionId)}/events`;
+    const response = await fetchWithBackendError(url, {
       method: "GET",
       headers: {
         ...(this.config.apiKey ? { authorization: `Bearer ${this.config.apiKey}` } : {})
       },
       signal
-    });
+    }, this.config.backendUrl);
     if (!response.ok || !response.body) {
       throw new Error(`Voice event stream failed: ${response.status} ${response.statusText}`);
     }
@@ -103,18 +112,27 @@ export class BackendClient {
   }
 
   private async request<T>(path: string, input: { method: string; body?: unknown }): Promise<T> {
-    const response = await fetch(`${this.config.backendUrl.replace(/\/+$/, "")}${path}`, {
+    const response = await fetchWithBackendError(`${this.config.backendUrl.replace(/\/+$/, "")}${path}`, {
       method: input.method,
       headers: {
         "content-type": "application/json",
         ...(this.config.apiKey ? { authorization: `Bearer ${this.config.apiKey}` } : {})
       },
       body: input.body === undefined ? undefined : JSON.stringify(input.body)
-    });
+    }, this.config.backendUrl);
     const json = await response.json();
     if (!response.ok || json?.error) {
       throw new Error(json?.error?.message ?? `Backend request failed: ${response.status}`);
     }
     return json as T;
+  }
+}
+
+async function fetchWithBackendError(url: string, init: RequestInit, backendUrl: string): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`MIA backend is unreachable at ${backendUrl}. Start npm run dev:backend and refresh. Details: ${message}`);
   }
 }

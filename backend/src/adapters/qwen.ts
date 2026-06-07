@@ -38,6 +38,8 @@ Your task:
 - Identify the user's goal.
 - Identify the pages used.
 - Identify each visible action in order.
+- Prefer observed element names that match the Known UI summary labels when the recording shows the same control.
+- Use Known routes when a visible navigation/page clearly matches one.
 - Use only actions visible in the recording.
 - Do not guess selectors.
 - Do not produce executable instructions.

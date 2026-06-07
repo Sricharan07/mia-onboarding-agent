@@ -25,7 +25,7 @@ export type SystemReadiness = {
   providers: {
     qwen: ProviderReadiness;
     moss: ProviderReadiness;
-    mossVoiceAgent: ProviderReadiness;
+    livekit: ProviderReadiness;
   };
 };
 

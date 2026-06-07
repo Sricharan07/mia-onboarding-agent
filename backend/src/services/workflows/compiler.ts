@@ -1,5 +1,5 @@
 import type { Repositories } from "../../db/repositories.js";
-import type { ExtractedActionStep, ExtractedActionTimeline, Workflow, WorkflowStep } from "../../schemas/domain.js";
+import type { ExtractedActionStep, ExtractedActionTimeline, UIElementRecord, Workflow, WorkflowStep, WorkflowTarget } from "../../schemas/domain.js";
 import type { SemanticSearchAdapter } from "../../adapters/interfaces.js";
 import { createId, nowIso } from "../../utils/id.js";
 
@@ -86,16 +86,25 @@ export class WorkflowCompiler {
     ];
   }
 
-  private async matchTarget(appId: string, step: ExtractedActionStep): Promise<WorkflowStep extends never ? never : { elementId: string; label?: string; selector: string; fallbackSelectors?: string[]; route?: string; pageName?: string } | undefined> {
+  private async matchTarget(appId: string, step: ExtractedActionStep): Promise<WorkflowTarget | undefined> {
     const query = [step.action, step.observedElement, step.page, step.visualContext].filter(Boolean).join(" ");
     const filters: Record<string, string> = { appId, kind: "ui_element" };
     if (step.route) filters.route = step.route;
-    const results = await this.moss.search({ query, filters, limit: 3 });
-    const best = results[0];
-    const elementId = best?.metadata?.elementId;
-    if (!best || best.score < 0.55 || typeof elementId !== "string") return undefined;
-    const record = this.repositories.getElementByElementId(appId, elementId);
-    if (!record) return undefined;
+    const results = await this.moss.search({ query, filters, limit: 8 });
+
+    for (const result of results) {
+      const elementId = result.metadata?.elementId;
+      if (result.score < 0.55 || typeof elementId !== "string") continue;
+      const record = this.repositories.getElementByElementId(appId, elementId);
+      if (!record || !hasExecutableSelector(record)) continue;
+      return toWorkflowTarget(record);
+    }
+
+    return undefined;
+  }
+}
+
+function toWorkflowTarget(record: UIElementRecord): WorkflowTarget {
     return {
       elementId: record.elementId,
       label: record.label,
@@ -104,7 +113,6 @@ export class WorkflowCompiler {
       route: record.route,
       pageName: record.pageName
     };
-  }
 }
 
 const sensitiveInputTypes = new Set(["password", "credit_card", "api_key", "secret", "token", "ssn", "bank_account"]);
@@ -115,4 +123,17 @@ function createWorkflowId(goal: string): string {
 
 function createFieldName(label: string): string {
   return label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "field";
+}
+
+function hasExecutableSelector(record: UIElementRecord): boolean {
+  if (record.selectorQuality !== "weak") return true;
+  return [record.selector, ...record.fallbackSelectors].some((selector) => isStableEnoughSelector(selector));
+}
+
+function isStableEnoughSelector(selector: string): boolean {
+  const trimmed = selector.trim();
+  if (!trimmed) return false;
+  if (trimmed.includes(":nth-of-type") || trimmed.includes(":nth-child")) return false;
+  if (/^[a-z][a-z0-9-]*$/i.test(trimmed)) return false;
+  return true;
 }

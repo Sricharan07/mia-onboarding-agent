@@ -1,7 +1,7 @@
 import type { Repositories } from "../../db/repositories.js";
 import type { ModelGatewayAdapter, SemanticSearchAdapter, TextToSpeechAdapter } from "../../adapters/interfaces.js";
 import type { SDKRuntimeContext, Workflow } from "../../schemas/domain.js";
-import { AppError } from "../../utils/errors.js";
+import { AppError, NotFoundError } from "../../utils/errors.js";
 import { z } from "zod";
 
 const runtimeIntentSchema = z.object({
@@ -74,18 +74,13 @@ Current route: ${input.context.currentRoute}`
     const matches = await this.moss.search({
       query: `${intent.query ?? input.utterance}\nCurrent route: ${input.context.currentRoute}`,
       filters: { kind: "workflow", appId: input.appId, status: "published" },
-      limit: 1
+      limit: 5
     });
 
-    const workflowId = matches[0]?.metadata?.workflowId;
-    if (typeof workflowId !== "string") {
+    const workflow = this.findExecutableWorkflow(matches, input.appId);
+    if (!workflow) {
       const message = "I could not find a saved workflow for that yet.";
       return this.withOptionalTts({ type: "no_match", message }, input.includeTts);
-    }
-
-    const workflow = this.repositories.getWorkflow(workflowId);
-    if (workflow.status !== "published" || workflow.appId !== input.appId) {
-      throw new AppError("WORKFLOW_NOT_EXECUTABLE", "Runtime can only resolve published workflows for this app.", 403);
     }
 
     const message = `I can help you with ${workflow.name}. Let's start.`;
@@ -94,6 +89,25 @@ Current route: ${input.context.currentRoute}`
       workflow: sanitizeWorkflowForRuntime(workflow),
       message
     }, input.includeTts);
+  }
+
+  private findExecutableWorkflow(matches: Array<{ metadata?: Record<string, unknown> }>, appId: string): Workflow | undefined {
+    for (const match of matches) {
+      const workflowId = match.metadata?.workflowId;
+      if (typeof workflowId !== "string") continue;
+
+      try {
+        const workflow = this.repositories.getWorkflow(workflowId);
+        if (workflow.status === "published" && workflow.appId === appId) return workflow;
+      } catch (error) {
+        if (error instanceof NotFoundError) {
+          console.warn(`[runtime] Moss returned stale workflowId=${workflowId}; skipping.`);
+          continue;
+        }
+        throw error;
+      }
+    }
+    return undefined;
   }
 
   private async withOptionalTts<T extends { message: string }>(result: T, includeTts = true): Promise<T | (T & { tts: { text: string; audioUrl?: string; mimeType?: string } })> {

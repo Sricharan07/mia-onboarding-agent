@@ -133,7 +133,7 @@ export function OverviewPage({
             <ServiceRow label="Database" value={readinessLabel(readiness?.database.status)} />
             <ServiceRow label="Qwen" value={readinessLabel(readiness?.providers.qwen.status)} />
             <ServiceRow label="Moss" value={readinessLabel(readiness?.providers.moss.status)} />
-            <ServiceRow label="Moss Voice Agent" value={readinessLabel(readiness?.providers.mossVoiceAgent.status)} />
+            <ServiceRow label="LiveKit Voice Agent" value={readinessLabel(readiness?.providers.livekit.status)} />
           </div>
         </Panel>
       </section>

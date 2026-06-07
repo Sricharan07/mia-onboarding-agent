@@ -193,6 +193,36 @@ export class Repositories {
     return row ? JSON.parse(row.raw_json) as UIElementRecord : undefined;
   }
 
+  listLatestUiElementsForApp(appId: string, limit = 200): UIElementRecord[] {
+    const latestVersion = this.db.prepare(`
+      SELECT id
+      FROM ui_map_versions
+      WHERE app_id = ? AND status = 'completed'
+      ORDER BY created_at DESC
+      LIMIT 1
+    `).get(appId) as { id: string } | undefined;
+
+    const params: unknown[] = latestVersion ? [appId, latestVersion.id, limit] : [appId, limit];
+    const versionClause = latestVersion ? "AND ui_map_version_id = ?" : "";
+    const rows = this.db.prepare(`
+      SELECT raw_json
+      FROM ui_elements
+      WHERE app_id = ?
+      ${versionClause}
+      ORDER BY
+        CASE selector_quality
+          WHEN 'strong' THEN 0
+          WHEN 'medium' THEN 1
+          ELSE 2
+        END,
+        updated_at DESC,
+        route,
+        label
+      LIMIT ?
+    `).all(...params) as Array<{ raw_json: string }>;
+    return rows.map((row) => JSON.parse(row.raw_json) as UIElementRecord);
+  }
+
   updateElement(elementId: string, input: { description?: string; tags?: string[] }): void {
     const row = this.db.prepare("SELECT id, raw_json FROM ui_elements WHERE element_id = ? ORDER BY created_at DESC LIMIT 1").get(elementId) as { id: string; raw_json: string } | undefined;
     if (!row) throw new NotFoundError(`Element not found: ${elementId}`);

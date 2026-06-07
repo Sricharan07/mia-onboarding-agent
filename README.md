@@ -31,7 +31,7 @@ npm run dev
 
 The console defaults to `http://localhost:4000` and can be pointed at another backend URL from Settings.
 
-Qwen and Moss credentials are required for provider-backed routes. Voice uses Moss Voice Agents: the backend mints Moss participant tokens, while the deployed Moss Python agent owns STT, voice LLM turns, and TTS. Missing credentials fail with explicit config errors.
+Qwen and Moss credentials are required for provider-backed routes. Moss is used for indexing and retrieval. Voice uses a local LiveKit Agents worker: the backend mints LiveKit participant tokens, while the Python worker owns STT, voice LLM turns, and TTS. Missing credentials fail with explicit config errors.
 
 Runtime-sensitive SDK/backend routes are protected with local scoped API keys. Create one from the console API Keys page and pass it to the SDK as `apiKey`.
 
@@ -47,19 +47,16 @@ npm install
 npm run dev -- --port 3001
 ```
 
-Set `NEXT_PUBLIC_MIA_API_KEY` to a scoped local API key with `runtime:write` and `logs:write`. The SDK demo enables voice by default and renders only the custom Mia Shadow Cursor, not an Ask Mia button. Set `NEXT_PUBLIC_MIA_ENABLE_VOICE=false` only if you want to disable voice locally. `MOSS_PROJECT_ID`, `MOSS_PROJECT_KEY`, and `MOSS_VOICE_AGENT_ID` must be valid for voice startup; setup fails clearly and does not fall back to text.
+Set `NEXT_PUBLIC_MIA_API_KEY` to a scoped local API key with `runtime:write` and `logs:write`. The SDK demo enables voice by default and renders only the custom Mia Shadow Cursor, not an Ask Mia button. Set `NEXT_PUBLIC_MIA_ENABLE_VOICE=false` only if you want to disable voice locally. `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, and `OPENAI_API_KEY` must be valid for voice startup; setup fails clearly and does not fall back to text.
 
-To run the Moss voice agent worker locally:
+To run the LiveKit voice agent worker locally:
 
 ```bash
 cd voice-agent
-python -m venv .venv
-. .venv/bin/activate
-pip install -r requirements.txt
-python agent.py console
+./run-local.sh
 ```
 
-Set `voice-agent/.env` with `MIA_BACKEND_URL`, `MIA_BACKEND_API_KEY`, `MOSS_PROJECT_ID`, `MOSS_PROJECT_KEY`, and `MOSS_VOICE_AGENT_ID`. The API key needs `runtime:write`.
+Set `voice-agent/.env` with `MIA_BACKEND_URL`, `MIA_BACKEND_API_KEY`, `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `OPENAI_API_KEY`, and optional `OPENAI_STT_MODEL`. The API key needs `runtime:write`.
 
 ## Useful Commands
 

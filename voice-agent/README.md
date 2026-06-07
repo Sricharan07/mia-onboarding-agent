@@ -1,38 +1,49 @@
-# MIA Moss Voice Agent
+# MIA LiveKit Voice Agent
 
-This worker is the Moss Voice Agent side of the voice architecture.
+This is a local LiveKit voice worker. Moss is used only by the backend for workflow/UI-map indexing and retrieval.
 
-The browser SDK connects to the Moss voice server using a token minted by the backend. Moss handles STT, LLM orchestration, and TTS. This worker calls the MIA backend resolver as a tool, and the backend emits typed workflow events to the SDK.
+## Env
 
-## Environment
-
-Create `voice-agent/.env` for local runs or push these through the Moss Agent CLI for deployments:
+`voice-agent/.env` needs:
 
 ```bash
+LIVEKIT_URL=ws://localhost:7880
+LIVEKIT_API_KEY=devkey
+LIVEKIT_API_SECRET=secret
 MIA_BACKEND_URL=http://localhost:4000
 MIA_BACKEND_API_KEY=local_api_key_with_runtime_write_scope
-MOSS_PROJECT_ID=
-MOSS_PROJECT_KEY=
-MOSS_VOICE_AGENT_ID=
+QWEN_API_KEY=
+QWEN_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+QWEN_MODEL=qwen3.6-plus
+QWEN_VOICE_MODEL=qwen3-tts-flash
+QWEN_TTS_BASE_URL=https://dashscope-intl.aliyuncs.com/api/v1
+QWEN_TTS_ENDPOINT=/services/aigc/multimodal-generation/generation
+QWEN_TTS_VOICE=Cherry
+STT_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+STT_API_KEY=
+STT_ENDPOINT=/chat/completions
+STT_MODEL=qwen3-asr-flash
 ```
 
-`MIA_BACKEND_API_KEY` needs the `runtime:write` scope.
+## Run
 
-## Local Run
+Terminal 1:
 
 ```bash
-python -m venv .venv
-. .venv/bin/activate
-pip install -r requirements.txt
-python agent.py console
+livekit-server --dev
 ```
 
-## Deploy
+Terminal 2:
 
 ```bash
-pip install moss-agent-cli
-moss-agent deploy
-moss-agent env push
+npm run dev:backend
 ```
 
-The `.env` file is local-only; push runtime variables with `moss-agent env push` after deploys or rotations.
+Terminal 3:
+
+```bash
+cd voice-agent
+./run-local.sh
+```
+
+Then open the SDK demo. The browser connects to LiveKit using a backend-minted token; this worker joins the room and calls the backend resolver for every user request.

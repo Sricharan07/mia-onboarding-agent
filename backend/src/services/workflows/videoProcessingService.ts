@@ -1,4 +1,5 @@
 import type { Repositories } from "../../db/repositories.js";
+import type { UIElementRecord } from "../../schemas/domain.js";
 import type { VideoUnderstandingAdapter } from "../../adapters/interfaces.js";
 import { WorkflowCompiler } from "./compiler.js";
 
@@ -15,12 +16,14 @@ export class VideoProcessingService {
     this.repositories.updateWorkflowJob(jobId, { status: "analyzing", error: null });
 
     try {
+      const uiElements = this.repositories.listLatestUiElementsForApp(String(job.app_id), 160);
+      const knownRoutes = Array.from(new Set(uiElements.map((element) => element.route))).filter(Boolean);
       const timelineResult = await this.videoUnderstanding.extractActionTimeline({
         videoPath: String(video.local_path),
         appContext: {
           appName: String(job.app_id),
-          knownRoutes: [],
-          uiMapSummary: undefined
+          knownRoutes,
+          uiMapSummary: summarizeUiMap(uiElements)
         }
       });
       this.repositories.updateWorkflowJob(jobId, {
@@ -45,4 +48,18 @@ export class VideoProcessingService {
       throw error;
     }
   }
+}
+
+function summarizeUiMap(elements: UIElementRecord[]): string | undefined {
+  if (!elements.length) return undefined;
+  return elements
+    .map((element) => [
+      `route=${element.route}`,
+      `page=${element.pageName}`,
+      `type=${element.elementType}`,
+      `label=${element.label ?? element.elementId}`,
+      `quality=${element.selectorQuality}`,
+      `selector=${element.selector}`
+    ].join("; "))
+    .join("\n");
 }

@@ -15,6 +15,7 @@ export class WorkflowExecutor {
     cursor: MiaShadowCursor;
     promptUi: MiaPromptUI;
     clientSessionId: string;
+    requestUserInput?: (input: { prompt: string; inputType?: string; choices?: string[] }) => Promise<string>;
     onWorkflowEvent?: (event: { type: string; workflowId?: string; stepId?: string; message?: string }) => void;
   }) {}
 
@@ -101,7 +102,9 @@ export class WorkflowExecutor {
     if (step.type === "ask_user") {
       this.options.cursor.setState("guiding");
       this.options.cursor.setBubbleText(step.label ?? step.prompt);
-      this.values[step.field] = await this.options.promptUi.ask(step.prompt, step.inputType, step.choices);
+      this.values[step.field] = await (this.options.requestUserInput
+        ? this.options.requestUserInput({ prompt: step.prompt, inputType: step.inputType, choices: step.choices })
+        : this.options.promptUi.ask(step.prompt, step.inputType, step.choices));
       return;
     }
 
@@ -156,12 +159,16 @@ export class WorkflowExecutor {
       }
       if (step.type === "focus") (element as HTMLElement).focus();
       if (step.type === "fill") {
+        const value = this.values[step.valueFrom];
+        if (value === undefined) throw new Error(`Missing collected value for ${step.valueFrom}.`);
         this.options.cursor.setBubbleText(`Fill ${step.target.label ?? step.target.elementId}`);
-        setNativeValue(element, this.values[step.valueFrom] ?? "");
+        setNativeValue(element, value);
       }
       if (step.type === "select") {
+        const value = this.values[step.valueFrom];
+        if (value === undefined) throw new Error(`Missing collected value for ${step.valueFrom}.`);
         this.options.cursor.setBubbleText(`Select ${step.target.label ?? step.target.elementId}`);
-        setNativeValue(element, this.values[step.valueFrom] ?? "");
+        setNativeValue(element, value);
       }
       if (step.type === "wait_for_element") return;
     } finally {

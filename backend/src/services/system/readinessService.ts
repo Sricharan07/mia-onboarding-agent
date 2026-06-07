@@ -13,7 +13,7 @@ export type SystemReadiness = {
   providers: {
     qwen: ProviderReadiness;
     moss: ProviderReadiness;
-    mossVoiceAgent: ProviderReadiness;
+    livekit: ProviderReadiness;
   };
 };
 
@@ -29,7 +29,7 @@ export class ReadinessService {
       providers: {
         qwen: await this.qwen(),
         moss: this.configOnly("Moss", ["MOSS_PROJECT_ID", "MOSS_PROJECT_KEY", "MOSS_INDEX_NAME"]),
-        mossVoiceAgent: this.configOnly("Moss Voice Agent", ["MOSS_PROJECT_ID", "MOSS_PROJECT_KEY", "MOSS_VOICE_AGENT_ID"])
+        livekit: this.configOnly("LiveKit Voice Agent", ["LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"])
       }
     };
   }

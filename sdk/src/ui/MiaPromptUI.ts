@@ -71,6 +71,14 @@ export class MiaPromptUI {
     this.open(message, "Mia needs attention");
   }
 
+  showListening(message: string): void {
+    this.open(message, "Mia is listening");
+    const hint = document.createElement("div");
+    hint.textContent = "Speak your answer now.";
+    hint.style.cssText = "margin-top:10px;color:#93c5fd;font:700 13px/1.35 system-ui,sans-serif";
+    this.body.append(hint);
+  }
+
   clear(): void {
     this.body.replaceChildren();
     this.root.style.display = "none";
