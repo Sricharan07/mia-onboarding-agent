@@ -396,3 +396,49 @@ For every Mia-guided step:
 3. Add one activity log entry for completed actions.
 4. Move Mia spotlight to the next target.
 5. Keep the change obvious enough that a viewer can understand it without explanation.
+
+---
+
+# Workflow 11: Follow Up After a CRM Meeting
+
+## Story Issue
+
+Ashwin finishes a customer call and needs to mark the meeting complete, then update the related opportunity with the call outcome.
+
+| Step | Employee Click | Mia Guidance | Visible UI Update | Demo Data Update |
+|---|---|---|---|---|
+| 1 | Click `View Calendar` in the CRM dashboard | Mia says: `Open today's meetings and pick the one you just finished.` | Calendar modal opens with the meeting list | `mia.activeWorkflow = "crm_meeting_follow_up"` |
+| 2 | Click `Mark complete` on `Pricing workshop with BlueHaven Systems` | Mia says: `I marked the meeting complete.` | Meeting badge changes `scheduled -> completed`; action button becomes `Reopen` | `meetings.meeting_pricing_workshop.status = "completed"` |
+| 3 | Click `Done` to close the calendar modal | Mia says: `Now update the related opportunity.` | Calendar modal closes and the CRM dashboard is visible again | `mia.spotlightTarget = "opportunities_table"` |
+| 4 | Search `BlueHaven Systems` in the opportunities table | Mia says: `I found the matching opportunity row.` | Table filters to the matching account | `opportunities.search = "BlueHaven Systems"` |
+| 5 | Click the pencil action on the `BlueHaven Systems` row | Mia says: `Open the record and add the call outcome.` | Opportunity drawer opens for the selected record | `selectedOpportunity = "BlueHaven Systems"` |
+| 6 | Type a note like `Call completed. Procurement approved the revised pricing.` and click `Add note` | Mia says: `I attached the meeting outcome to the timeline.` | New note appears in `Notes and activity` | `opportunity.notes.unshift(...)`, `activityLog.unshift(...)` |
+| 7 | Update `Next step` or `Stage` if needed and click `Save changes` | Mia says: `The opportunity is now in sync with the call.` | Opportunity row updates in the table; drawer stays in sync after save | `opportunity.stage` or `opportunity.nextStep` changes, `opportunity.lastActivityAt` updates |
+| 8 | Refresh the CRM page | Mia says: `Your changes persisted successfully.` | Meeting stays completed; opportunity note and status remain after refresh | Persisted CRM store reloads the updated state |
+
+Visible data diff:
+
+```ts
+{
+  before: {
+    meetingStatus: "scheduled",
+    opportunityNotes: 1,
+  },
+  after: {
+    meetingStatus: "completed",
+    opportunityNotes: 2,
+  },
+}
+```
+
+Activity log row:
+
+```ts
+{
+  id: "activity_follow_up_meeting",
+  title: "Ashwin logged the meeting outcome for BlueHaven Systems",
+  actor: "Ashwin Kumar",
+  timestamp: "Just now",
+  type: "employee_action",
+}
+```

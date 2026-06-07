@@ -1,28 +1,43 @@
-import { CalendarDays, CalendarRange } from "lucide-react";
+"use client";
 
+import * as React from "react";
+import { CalendarCheck2, CalendarDays, CalendarRange } from "lucide-react";
+
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
+import type { CrmMeeting } from "@/lib/crm-types";
 
-const proposalSent = 12;
-const proposalGoal = 18;
-const proposalProgressPercentage = Math.round((proposalSent / proposalGoal) * 100);
+type TaskRemindersProps = {
+  proposalSent: number;
+  proposalGoal: number;
+  meetings: CrmMeeting[];
+  onCompleteMeeting: (meetingId: string) => Promise<void>;
+};
+
 const proposalGoalBarCount = 42;
-const activeProposalBars = Math.round((proposalSent / proposalGoal) * proposalGoalBarCount);
 
-const proposalGoalBars = Array.from({ length: proposalGoalBarCount }, (_, index) => ({
-  id: `proposal-goal-${index + 1}`,
-  active: index < activeProposalBars,
-}));
+export function TaskReminders({ meetings, proposalGoal, proposalSent, onCompleteMeeting }: TaskRemindersProps) {
+  const [calendarOpen, setCalendarOpen] = React.useState(false);
+  const proposalProgressPercentage = proposalGoal > 0 ? Math.round((proposalSent / proposalGoal) * 100) : 0;
+  const proposalRatio = proposalGoal > 0 ? proposalSent / proposalGoal : 0;
+  const activeProposalBars = Math.round(proposalRatio * proposalGoalBarCount);
+  const proposalGoalBars = Array.from({ length: proposalGoalBarCount }, (_, index) => ({
+    id: `proposal-goal-${index + 1}`,
+    active: index < activeProposalBars,
+  }));
 
-export function TaskReminders() {
   return (
     <section className="grid grid-cols-1 gap-4 xl:grid-cols-12">
       <Card className="xl:col-span-8">
         <CardHeader>
           <CardTitle>Upcoming Meetings</CardTitle>
           <CardAction>
-            <Button variant="outline" size="sm">
+            <Button variant="outline" size="sm" onClick={() => setCalendarOpen(true)} data-ai-id="crm.view-calendar">
               <CalendarDays data-icon="inline-start" />
               View Calendar
             </Button>
@@ -58,9 +73,11 @@ export function TaskReminders() {
                   </div>
                   <div className="min-w-0">
                     <div className="truncate font-medium text-primary-foreground text-xs leading-none">
-                      Product demo with Tim
+                      {meetings[0]?.title ?? "Product demo with Tim"}
                     </div>
-                    <div className="truncate text-[10px] text-primary-foreground/75">Weblabs Studio</div>
+                    <div className="truncate text-[10px] text-primary-foreground/75">
+                      {meetings[0]?.account ?? "Weblabs Studio"}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -93,11 +110,58 @@ export function TaskReminders() {
               </div>
             ))}
           </div>
-          <p className="text-muted-foreground text-sm">
-            {proposalProgressPercentage}% of this month&apos;s proposal target reached.
-          </p>
+          <p className="text-muted-foreground text-sm">{proposalProgressPercentage}% of this month&apos;s proposal target reached.</p>
         </CardContent>
       </Card>
+
+      <Dialog open={calendarOpen} onOpenChange={setCalendarOpen}>
+        <DialogContent className="sm:max-w-[40rem]">
+          <DialogHeader>
+            <DialogTitle>Calendar</DialogTitle>
+            <DialogDescription>These meetings are backed by the CRM store and can be completed from here.</DialogDescription>
+          </DialogHeader>
+
+          <ScrollArea className="max-h-[22rem] pr-2">
+            <div className="space-y-3">
+              {meetings.map((meeting) => (
+                <div key={meeting.id} className="rounded-lg border border-border/60 p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="font-medium">{meeting.title}</div>
+                      <div className="text-sm text-muted-foreground">
+                        {meeting.account} • {meeting.date} • {meeting.time}
+                      </div>
+                    </div>
+                    <Badge variant={meeting.status === "completed" ? "secondary" : "outline"} className="rounded-full px-2.5">
+                      {meeting.status}
+                    </Badge>
+                  </div>
+                  <Separator className="my-3" />
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm text-muted-foreground">
+                      {meeting.status === "completed"
+                        ? "Reopen this meeting if you need to redo the follow-up."
+                        : "Mark it complete after the call finishes."}
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => onCompleteMeeting(meeting.id)}
+                    >
+                      <CalendarCheck2 />
+                      {meeting.status === "completed" ? "Reopen" : "Mark complete"}
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </ScrollArea>
+
+          <DialogFooter>
+            <Button onClick={() => setCalendarOpen(false)}>Done</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

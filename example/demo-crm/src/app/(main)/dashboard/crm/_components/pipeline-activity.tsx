@@ -1,13 +1,15 @@
 "use client";
 
+import * as React from "react";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { type ChartConfig, ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import type { CrmPipelineSeries } from "@/lib/crm-types";
 
-const pipelineChartValues = [34, 38, 31, 47, 42, 51, 44, 40, 58, 46, 43, 49] as const;
+export type PipelineRange = "last-30-days" | "last-quarter" | "last-12-months";
 
 const pipelineChartConfig = {
   qualified: {
@@ -19,10 +21,22 @@ const pipelineChartConfig = {
 const axisMonthFormatter = new Intl.DateTimeFormat("en-US", { month: "short" });
 const tooltipMonthFormatter = new Intl.DateTimeFormat("en-US", { month: "short", year: "2-digit" });
 
-function getRollingMonthData(values: readonly number[]) {
+type PipelineActivityProps = {
+  range: PipelineRange;
+  series: CrmPipelineSeries;
+  discoveryCallsBooked: number;
+  onRangeChange: (range: PipelineRange) => void;
+};
+
+function getRollingData(range: PipelineRange, values: readonly number[]) {
   return values.map((qualified, index) => {
     const date = new Date();
-    date.setMonth(date.getMonth() - (values.length - 1 - index));
+
+    if (range === "last-30-days") {
+      date.setDate(date.getDate() - (values.length - 1 - index) * 7);
+    } else {
+      date.setMonth(date.getMonth() - (values.length - 1 - index));
+    }
 
     return {
       date: date.toISOString(),
@@ -31,11 +45,33 @@ function getRollingMonthData(values: readonly number[]) {
   });
 }
 
-export function PipelineActivity() {
-  const pipelineChartData = getRollingMonthData(pipelineChartValues);
+function formatRangeLabel(range: PipelineRange) {
+  switch (range) {
+    case "last-30-days":
+      return "Last 30 days";
+    case "last-quarter":
+      return "Last quarter";
+    case "last-12-months":
+    default:
+      return "Last 12 months";
+  }
+}
+
+export function PipelineActivity({ range, series, discoveryCallsBooked, onRangeChange }: PipelineActivityProps) {
+  const pipelineChartData = React.useMemo(() => {
+    switch (range) {
+      case "last-30-days":
+        return getRollingData(range, series.last30Days);
+      case "last-quarter":
+        return getRollingData(range, series.lastQuarter);
+      case "last-12-months":
+      default:
+        return getRollingData(range, series.last12Months);
+    }
+  }, [range, series]);
+
   const totalQualified = pipelineChartData.reduce((sum, item) => sum + item.qualified, 0);
-  const discoveryCallsBooked = 184;
-  const discoveryProgress = Math.round((discoveryCallsBooked / totalQualified) * 100);
+  const discoveryProgress = totalQualified > 0 ? Math.round((discoveryCallsBooked / totalQualified) * 100) : 0;
 
   return (
     <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
@@ -43,9 +79,9 @@ export function PipelineActivity() {
         <CardHeader>
           <CardTitle>Qualified Lead Flow</CardTitle>
           <CardAction>
-            <Select defaultValue="last-12-months">
+            <Select value={range} onValueChange={(value) => onRangeChange(value as PipelineRange)}>
               <SelectTrigger size="sm" className="min-w-40">
-                <SelectValue placeholder="Select range" />
+                <SelectValue placeholder={formatRangeLabel(range)} />
               </SelectTrigger>
               <SelectContent>
                 <SelectGroup>
@@ -87,14 +123,24 @@ export function PipelineActivity() {
                   tickLine={false}
                   tickMargin={10}
                   axisLine={false}
-                  tickFormatter={(value) => axisMonthFormatter.format(new Date(String(value)))}
+                  tickFormatter={(value) =>
+                    range === "last-30-days"
+                      ? new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(new Date(String(value)))
+                      : axisMonthFormatter.format(new Date(String(value)))
+                  }
                 />
                 <YAxis hide />
                 <ChartTooltip
                   content={
                     <ChartTooltipContent
                       hideIndicator
-                      labelFormatter={(value) => tooltipMonthFormatter.format(new Date(String(value)))}
+                      labelFormatter={(value) =>
+                        range === "last-30-days"
+                          ? new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(
+                              new Date(String(value)),
+                            )
+                          : tooltipMonthFormatter.format(new Date(String(value)))
+                      }
                     />
                   }
                 />
@@ -114,7 +160,7 @@ export function PipelineActivity() {
                 <div className="font-medium text-4xl tabular-nums leading-none">
                   {totalQualified} <span className="font-normal text-lg text-muted-foreground">leads</span>
                 </div>
-                <p className="text-muted-foreground text-sm">Total qualified leads captured over the last 12 months.</p>
+                <p className="text-muted-foreground text-sm">Total qualified leads captured over the selected range.</p>
               </div>
 
               <div className="flex flex-col gap-3 rounded-lg border border-border/60 p-3">

@@ -35,20 +35,23 @@ import {
   PaginationPrevious,
 } from "@/components/ui/pagination";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import type { CrmOpportunity } from "@/lib/crm-types";
 
-import { opportunitiesColumns } from "./opportunities-table/columns";
-import opportunitiesData from "./opportunities-table/data.json";
-import { opportunitiesSchema } from "./opportunities-table/schema";
+import { createOpportunitiesColumns } from "./opportunities-table/columns";
 
 const stageOptions = ["all", "Proposal Sent", "Discovery", "Negotiation", "Qualified"] as const;
 const healthOptions = ["all", "On Track", "Needs Review", "At Risk", "On Hold"] as const;
-const opportunities = opportunitiesSchema.parse(opportunitiesData);
+
+type OpportunitiesSectionProps = {
+  opportunities: CrmOpportunity[];
+  onEditOpportunity: (opportunity: CrmOpportunity) => void;
+};
 
 function preventPaginationNavigation(event: React.MouseEvent<HTMLAnchorElement>) {
   event.preventDefault();
 }
 
-export function OpportunitiesSection() {
+export function OpportunitiesSection({ opportunities, onEditOpportunity }: OpportunitiesSectionProps) {
   const [rowSelection, setRowSelection] = React.useState({});
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([]);
   const [columnVisibility] = React.useState<VisibilityState>({});
@@ -58,9 +61,11 @@ export function OpportunitiesSection() {
     pageSize: 10,
   });
 
+  const columns = React.useMemo(() => createOpportunitiesColumns(onEditOpportunity), [onEditOpportunity]);
+
   const table = useReactTable({
     data: opportunities,
-    columns: opportunitiesColumns,
+    columns,
     state: {
       rowSelection,
       columnFilters,
@@ -79,6 +84,7 @@ export function OpportunitiesSection() {
     getPaginationRowModel: getPaginationRowModel(),
     globalFilterFn: "includesString",
   });
+
   const searchQuery = table.getState().globalFilter ?? "";
   const stageFilter = (table.getColumn("stage")?.getFilterValue() as string) ?? "all";
   const healthFilter = (table.getColumn("health")?.getFilterValue() as string) ?? "all";
