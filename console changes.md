@@ -6,6 +6,23 @@ Update this file every time the codebase changes.
 
 ## 2026-06-07
 
+### Right-side content centered in console
+
+Files changed:
+- [backend/console/src/styles.css](/Users/naveen/Hack/mia-onboarding-agent/backend/console/src/styles.css)
+
+Why this changed:
+- Console pages such as Upload workflow were hugging the left edge of the main content area, leaving the right side visually unbalanced.
+
+What changed:
+- Centered narrow page content within the right-hand main area by adding auto horizontal margins to the narrow page grid.
+
+Result:
+- The main window content is centered in the right-side workspace without changing the sidebar.
+
+Validation:
+- Not run after this layout-only tweak.
+
 ### UI map scan panel polish
 
 Files changed:

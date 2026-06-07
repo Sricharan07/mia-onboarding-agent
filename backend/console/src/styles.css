@@ -494,7 +494,9 @@ code {
 }
 
 .page-grid.narrow {
+  width: min(980px, 100%);
   max-width: 980px;
+  margin-inline: auto;
 }
 
 .dashboard-section {
