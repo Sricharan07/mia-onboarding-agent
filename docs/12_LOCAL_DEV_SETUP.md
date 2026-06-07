@@ -62,22 +62,11 @@ QWEN_TEXT_ENDPOINT=/chat/completions
 QWEN_VIDEO_ENDPOINT=/chat/completions
 QWEN_MODEL=
 QWEN_VISION_MODEL=
-QWEN_VOICE_MODEL=
-QWEN_TTS_BASE_URL=https://dashscope-us.aliyuncs.com/api/v1
-QWEN_TTS_ENDPOINT=/services/aigc/multimodal-generation/generation
 
 MOSS_PROJECT_ID=
 MOSS_PROJECT_KEY=
+MOSS_VOICE_AGENT_ID=
 MOSS_INDEX_NAME=mia-onboarding
-
-LIVEKIT_URL=
-LIVEKIT_API_KEY=
-LIVEKIT_API_SECRET=
-
-STT_API_KEY=
-STT_BASE_URL=https://dashscope-us.aliyuncs.com/compatible-mode/v1
-STT_ENDPOINT=/chat/completions
-STT_MODEL=
 
 RUNTIME_LLM_MODEL=
 ```
@@ -142,9 +131,7 @@ The MVP uses real provider adapters.
 ```text
 VIDEO_UNDERSTANDING_PROVIDER=qwen
 SEMANTIC_SEARCH_PROVIDER=moss
-TTS_PROVIDER=qwen_voice
-STT_PROVIDER=provider_name
-VOICE_TRANSPORT_PROVIDER=livekit
+VOICE_AGENT_PROVIDER=moss_voice_agent
 ```
 
 ## 8. Provider Failure Behavior

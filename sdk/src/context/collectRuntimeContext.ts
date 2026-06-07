@@ -17,6 +17,7 @@ function collectVisibleElements(): RuntimeElementContext[] {
   const nodes = Array.from(document.querySelectorAll("button,a,input,textarea,select,[role='button'],[role='tab'],[role='menuitem']"));
   return nodes
     .filter((node) => {
+      if (node instanceof HTMLElement && isSdkOwnedElement(node)) return false;
       const rect = (node as HTMLElement).getBoundingClientRect();
       return rect.width > 0 && rect.height > 0 && rect.bottom >= 0 && rect.right >= 0 && rect.top <= window.innerHeight && rect.left <= window.innerWidth;
     })
@@ -27,6 +28,7 @@ function collectVisibleElements(): RuntimeElementContext[] {
 
 function inspectElement(node: Element | null): RuntimeElementContext | undefined {
   if (!node || !(node instanceof HTMLElement)) return undefined;
+  if (isSdkOwnedElement(node)) return undefined;
   const rect = node.getBoundingClientRect();
   return {
     tagName: node.tagName,
@@ -37,4 +39,15 @@ function inspectElement(node: Element | null): RuntimeElementContext | undefined
     elementId: node.getAttribute("data-ai-id") ?? undefined,
     boundingBox: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
   };
+}
+
+function isSdkOwnedElement(node: HTMLElement): boolean {
+  return Boolean(node.closest([
+    "[data-mia-prompt-ui='true']",
+    "[data-mia-shadow-cursor='true']",
+    ".mia-root",
+    ".mia-cursor",
+    ".mia-bubble",
+    ".mia-nav-bubble"
+  ].join(",")));
 }

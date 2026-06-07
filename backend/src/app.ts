@@ -11,7 +11,6 @@ import { Repositories } from "./db/repositories.js";
 import { QwenModelGatewayAdapter } from "./adapters/qwenGateway.js";
 import { QwenVideoUnderstandingAdapter } from "./adapters/qwen.js";
 import { MossSemanticSearchAdapter } from "./adapters/moss.js";
-import { LiveKitVoiceTransportAdapter } from "./adapters/livekit.js";
 import { QwenTextToSpeechAdapter } from "./adapters/tts.js";
 import { LocalFileStorageAdapter } from "./adapters/storage.js";
 import { UiMapService } from "./services/ui-map/uiMapService.js";
@@ -23,6 +22,7 @@ import { RuntimeService } from "./services/runtime/runtimeService.js";
 import { ApiKeyService } from "./services/auth/apiKeyService.js";
 import { UsageService } from "./services/metrics/usageService.js";
 import { ReadinessService } from "./services/system/readinessService.js";
+import { VoiceSessionService } from "./services/voice/voiceSessionService.js";
 import { registerRoutes } from "./routes/index.js";
 
 export type AppDependencies = ReturnType<typeof createDependencies>;
@@ -38,6 +38,7 @@ export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
   const dependencies = createDependencies(config);
   app.addHook("onClose", async () => {
     await dependencies.services.interactiveUiMap.closeAll();
+    await dependencies.services.voiceSessions.closeAll();
   });
   registerErrorHandler(app);
   registerLocalFileRoute(app, config);
@@ -51,24 +52,25 @@ function createDependencies(config: AppConfig) {
   const gateway = new QwenModelGatewayAdapter(config);
   const moss = new MossSemanticSearchAdapter(config);
   const videoUnderstanding = new QwenVideoUnderstandingAdapter(config, gateway);
-  const livekit = new LiveKitVoiceTransportAdapter(config);
   const tts = new QwenTextToSpeechAdapter(config);
   const storage = new LocalFileStorageAdapter();
   const compiler = new WorkflowCompiler(repositories, moss);
+  const runtime = new RuntimeService(repositories, gateway, moss, tts);
 
   return {
     config,
     repositories,
-    adapters: { gateway, moss, videoUnderstanding, livekit, tts, storage },
+    adapters: { gateway, moss, videoUnderstanding, tts, storage },
     services: {
       uiMap: new UiMapService(config, repositories, moss),
       interactiveUiMap: new InteractiveUiMapScanService(config, repositories, moss),
       videoProcessing: new VideoProcessingService(repositories, videoUnderstanding, compiler),
       workflow: new WorkflowService(repositories, moss),
-      runtime: new RuntimeService(repositories, gateway, moss, tts),
+      runtime,
       apiKeys: new ApiKeyService(repositories),
       usage: new UsageService(repositories),
-      readiness: new ReadinessService(config, repositories)
+      readiness: new ReadinessService(config, repositories),
+      voiceSessions: new VoiceSessionService(config, runtime)
     }
   };
 }

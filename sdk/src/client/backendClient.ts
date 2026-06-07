@@ -1,4 +1,4 @@
-import type { ResolveResponse, SDKConfig, SDKRuntimeContext } from "../types/index.js";
+import type { ResolveResponse, SDKConfig, SDKRuntimeContext, VoiceSessionEvent, VoiceSessionResponse } from "../types/index.js";
 
 export class BackendClient {
   constructor(private readonly config: SDKConfig) {}
@@ -8,6 +8,7 @@ export class BackendClient {
       appId: this.config.appId,
       sessionId: input.sessionId,
       utterance: input.utterance,
+      includeTts: this.config.enableTTS,
       context: {
         currentUrl: input.context.currentUrl,
         currentRoute: input.context.currentRoute,
@@ -39,12 +40,54 @@ export class BackendClient {
     });
   }
 
-  async getLiveKitToken(input: { sessionId: string; identity: string }): Promise<{ token: string; url: string }> {
-    return this.post("/api/v1/livekit/token", {
+  async createVoiceSession(input: { clientSessionId: string; identity: string; context: SDKRuntimeContext }): Promise<VoiceSessionResponse> {
+    return this.post("/api/v1/voice/sessions", {
       appId: this.config.appId,
-      sessionId: input.sessionId,
-      identity: input.identity
+      clientSessionId: input.clientSessionId,
+      identity: input.identity,
+      context: {
+        currentUrl: input.context.currentUrl,
+        currentRoute: input.context.currentRoute,
+        pageTitle: input.context.pageTitle,
+        focusedElement: input.context.focusedElement ?? null,
+        hoveredElement: input.context.hoveredElement ?? null,
+        visibleElements: input.context.visibleElements ?? [],
+        userMetadata: input.context.userMetadata
+      },
+      userMetadata: this.config.user?.metadata
     });
+  }
+
+  async endVoiceSession(voiceSessionId: string): Promise<{ voiceSessionId: string; status: string }> {
+    return this.post(`/api/v1/voice/sessions/${encodeURIComponent(voiceSessionId)}/end`, {});
+  }
+
+  async streamVoiceEvents(voiceSessionId: string, onEvent: (event: VoiceSessionEvent) => void, signal?: AbortSignal): Promise<void> {
+    const response = await fetch(`${this.config.backendUrl.replace(/\/+$/, "")}/api/v1/voice/sessions/${encodeURIComponent(voiceSessionId)}/events`, {
+      method: "GET",
+      headers: {
+        ...(this.config.apiKey ? { authorization: `Bearer ${this.config.apiKey}` } : {})
+      },
+      signal
+    });
+    if (!response.ok || !response.body) {
+      throw new Error(`Voice event stream failed: ${response.status} ${response.statusText}`);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        onEvent(JSON.parse(trimmed) as VoiceSessionEvent);
+      }
+    }
   }
 
   async synthesize(text: string): Promise<{ audioUrl?: string; mimeType?: string }> {

@@ -13,6 +13,7 @@ export async function registerRuntimeRoutes(app: FastifyInstance, dependencies: 
       appId: z.string(),
       sessionId: z.string(),
       utterance: z.string().min(1),
+      includeTts: z.boolean().optional(),
       context: sdkRuntimeContextSchema.omit({ appId: true, sessionId: true })
     }).parse(request.body);
     return dependencies.services.runtime.resolve(body);

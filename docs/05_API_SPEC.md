@@ -82,7 +82,7 @@ Response:
 
 ### GET `/api/v1/system/readiness`
 
-Returns database and provider readiness without running credit-consuming model, voice, transcription, indexing, or room operations.
+Returns database and provider readiness without running credit-consuming model, voice, indexing, or room operations.
 
 Response:
 
@@ -101,29 +101,17 @@ Response:
       "status": "ok",
       "message": "Qwen model endpoint is reachable."
     },
-    "qwenTts": {
-      "configured": true,
-      "reachable": null,
-      "status": "unverified",
-      "message": "Qwen Voice/TTS is configured. No-credit live operation was not run."
-    },
-    "stt": {
-      "configured": true,
-      "reachable": null,
-      "status": "unverified",
-      "message": "STT is configured. No-credit live operation was not run."
-    },
     "moss": {
       "configured": true,
       "reachable": null,
       "status": "unverified",
       "message": "Moss is configured. No-credit live operation was not run."
     },
-    "livekit": {
+    "mossVoiceAgent": {
       "configured": true,
       "reachable": null,
       "status": "unverified",
-      "message": "LiveKit is configured. No-credit live operation was not run."
+      "message": "Moss Voice Agent is configured. No-credit live operation was not run."
     }
   }
 }
@@ -778,19 +766,24 @@ Implementation note:
 
 For local MVP, this returns a generated audio file URL from the configured TTS provider.
 
-## 11. LiveKit Token
+## 11. Voice Sessions
 
-### POST `/api/v1/livekit/token`
+### POST `/api/v1/voice/sessions`
 
-SDK requests a LiveKit token.
+SDK starts a real Moss voice-agent session. The backend uses `@moss-tools/voice-server` to mint a short-lived participant token and returns the Moss voice server URL to the browser. The backend does not run LiveKit media bridging, STT, or TTS itself.
 
 Request:
 
 ```json
 {
-      "appId": "app_example_app",
-  "sessionId": "sdk_session_123",
-  "identity": "local-user"
+  "appId": "app_example_app",
+  "clientSessionId": "sdk_session_123",
+  "identity": "local-user",
+  "context": {
+    "currentUrl": "http://localhost:3001/dashboard/crm",
+    "currentRoute": "/dashboard/crm",
+    "visibleElements": []
+  }
 }
 ```
 
@@ -798,12 +791,58 @@ Response:
 
 ```json
 {
+  "voiceSessionId": "voice_session_123",
+  "serverUrl": "wss://moss-voice-agent-url",
   "token": "livekit_token_here",
-  "url": "wss://livekit-dev-url"
+  "roomName": "mia-voice_session_123",
+  "status": "listening"
 }
 ```
 
-If LiveKit credentials are missing, return a configuration error.
+If Moss voice credentials are missing, return a configuration error. The SDK must not fall back to text mode after voice setup failure.
+
+### GET `/api/v1/voice/sessions/:voiceSessionId/events`
+
+Streams newline-delimited JSON voice events:
+
+```text
+session_ready
+listening
+transcript_user
+thinking
+assistant_response
+workflow_resolved
+error
+ended
+```
+
+### POST `/api/v1/voice/sessions/:voiceSessionId/resolve`
+
+Called by the deployed Moss voice agent after Moss STT has produced a final user utterance. The backend resolves the utterance through the same runtime path used by text requests and emits typed voice events to the SDK.
+
+Request:
+
+```json
+{
+  "utterance": "Show me my calendar"
+}
+```
+
+Response:
+
+```json
+{
+  "voiceSessionId": "voice_session_123",
+  "message": "I can help you with Review CRM meetings. Let's start.",
+  "result": {
+    "type": "workflow"
+  }
+}
+```
+
+### POST `/api/v1/voice/sessions/:voiceSessionId/end`
+
+Ends the local backend voice session event stream. The Moss/LiveKit media session is owned by the Moss voice agent platform.
 
 ## 12. Logs
 

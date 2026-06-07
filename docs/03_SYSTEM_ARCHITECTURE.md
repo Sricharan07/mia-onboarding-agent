@@ -87,8 +87,8 @@ The SDK is embedded inside the example app or any adopting SaaS app.
 
 Responsibilities:
 
-1. Render assistant launcher.
-2. Render AI cursor overlay.
+1. Render the Mia Shadow Cursor.
+2. Render minimal prompt UI only for required workflow prompts.
 3. Capture runtime UI context.
 4. Capture voice instructions.
 5. Connect to backend voice/session layer.
@@ -247,7 +247,7 @@ End user opens example app
 → Runtime LLM classifies request as workflow intent
 → Backend searches Moss for matching published workflow
 → Backend returns workflow execution plan
-→ SDK starts AI cursor execution
+→ SDK starts Mia Shadow Cursor execution
 → SDK asks for inputs where needed
 → SDK confirms sensitive steps
 → SDK completes workflow
@@ -317,24 +317,21 @@ Recommended folders:
 sdk/src/
   index.ts
   client.ts
-  context/
-    collectRuntimeContext.ts
-    elementInspector.ts
-  cursor/
-    CursorOverlay.ts
-    highlight.ts
-    movement.ts
-  execution/
-    WorkflowExecutor.ts
-    stepHandlers.ts
-    policies.ts
-  voice/
-    livekitClient.ts
-    microphone.ts
-  ui/
-    AssistantLauncher.ts
-    PromptOverlay.ts
-    ConfirmationDialog.ts
+	  context/
+	    collectRuntimeContext.ts
+	    elementInspector.ts
+	  cursor/
+	    MiaShadowCursor.ts
+	    miaShadowCursorStyles.ts
+	  execution/
+	    WorkflowExecutor.ts
+	    stepHandlers.ts
+	    policies.ts
+	  voice/
+	    livekitClient.ts
+	    microphone.ts
+	  ui/
+	    MiaPromptUI.ts
   events/
   types/
 ```

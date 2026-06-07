@@ -1,4 +1,8 @@
 export type ExecutionPolicy = "auto" | "requires_confirmation" | "manual_only" | "blocked";
+export type MiaTheme = "light" | "dark" | "auto";
+export type MiaCursorState = "idle" | "connecting" | "listening" | "thinking" | "speaking" | "guiding" | "fading" | "offline" | "error";
+export type MiaStatus = MiaCursorState | "ended";
+export type VoiceSessionStatus = "connecting" | "listening" | "thinking" | "speaking" | "ended" | "error";
 
 export type SDKConfig = {
   appId: string;
@@ -13,10 +17,16 @@ export type SDKConfig = {
     metadata?: Record<string, unknown>;
   };
   ui?: {
-    launcherPosition?: "bottom-right" | "bottom-left";
-    showCursor?: boolean;
-    showHighlights?: boolean;
+    cursorIcon?: string;
+    cursorOffset?: { x: number; y: number };
+    theme?: MiaTheme;
+    bubbleMaxWidth?: number;
+    bubbleLingerMs?: number;
   };
+  onStatusChange?: (status: MiaStatus) => void;
+  onTranscript?: (entry: { role: "user" | "assistant" | "system"; text: string }) => void;
+  onError?: (error: Error) => void;
+  onWorkflowEvent?: (event: { type: string; workflowId?: string; stepId?: string; message?: string }) => void;
 };
 
 export type RuntimeElementContext = {
@@ -76,6 +86,24 @@ export type ResolveResponse =
   | { type: "workflow"; workflow: Workflow; message: string; tts?: { text: string; audioUrl?: string; mimeType?: string } }
   | { type: "answer"; message: string; tts?: { text: string; audioUrl?: string; mimeType?: string } }
   | { type: "no_match"; message: string; tts?: { text: string; audioUrl?: string; mimeType?: string } };
+
+export type VoiceSessionResponse = {
+  voiceSessionId: string;
+  serverUrl: string;
+  token: string;
+  roomName: string;
+  status: VoiceSessionStatus;
+};
+
+export type VoiceSessionEvent =
+  | { type: "session_ready"; voiceSessionId: string; status: VoiceSessionStatus; roomName: string }
+  | { type: "listening"; voiceSessionId: string; status: VoiceSessionStatus }
+  | { type: "transcript_user"; voiceSessionId: string; text: string; isFinal: true }
+  | { type: "thinking"; voiceSessionId: string; status: VoiceSessionStatus }
+  | { type: "assistant_response"; voiceSessionId: string; message: string; result: ResolveResponse }
+  | { type: "workflow_resolved"; voiceSessionId: string; result: Extract<ResolveResponse, { type: "workflow" }> }
+  | { type: "error"; voiceSessionId: string; message: string; code?: string }
+  | { type: "ended"; voiceSessionId: string; status: VoiceSessionStatus };
 
 export type SDKEvent =
   | { type: "session_started"; sessionId: string }

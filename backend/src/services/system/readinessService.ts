@@ -12,10 +12,8 @@ export type SystemReadiness = {
   database: ProviderReadiness;
   providers: {
     qwen: ProviderReadiness;
-    qwenTts: ProviderReadiness;
-    stt: ProviderReadiness;
     moss: ProviderReadiness;
-    livekit: ProviderReadiness;
+    mossVoiceAgent: ProviderReadiness;
   };
 };
 
@@ -30,10 +28,8 @@ export class ReadinessService {
       database: this.database(),
       providers: {
         qwen: await this.qwen(),
-        qwenTts: this.configOnly("Qwen Voice/TTS", ["QWEN_API_KEY", "QWEN_TTS_BASE_URL", "QWEN_VOICE_MODEL"]),
-        stt: this.configOnly("STT", ["STT_API_KEY", "STT_BASE_URL", "STT_MODEL"]),
         moss: this.configOnly("Moss", ["MOSS_PROJECT_ID", "MOSS_PROJECT_KEY", "MOSS_INDEX_NAME"]),
-        livekit: this.configOnly("LiveKit", ["LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"])
+        mossVoiceAgent: this.configOnly("Moss Voice Agent", ["MOSS_PROJECT_ID", "MOSS_PROJECT_KEY", "MOSS_VOICE_AGENT_ID"])
       }
     };
   }

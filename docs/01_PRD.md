@@ -17,14 +17,14 @@ Use **AI Onboarding Agent** in code comments and docs unless renamed later.
 
 SaaS users should not need to read long documentation, watch static tutorials, or contact support just to complete common product tasks.
 
-The AI Onboarding Agent guides users directly inside the SaaS product UI. It listens to the user, finds the right workflow, moves an AI cursor, highlights elements, asks for required information, and executes approved workflow steps.
+The AI Onboarding Agent guides users directly inside the SaaS product UI. It listens to the user, finds the right workflow, shows a Mia Shadow Cursor, highlights elements, asks for required information, and executes approved workflow steps.
 
 The core idea:
 
 ```text
 Developers record workflows.
 The system converts recordings into structured executable workflows.
-The SDK brings those workflows into the app through an AI cursor that listens, guides, and acts.
+The SDK brings those workflows into the app through a Mia Shadow Cursor that listens, guides, and acts.
 ```
 
 ## 3. Problem
@@ -100,7 +100,7 @@ Needs:
 
 1. Ask for help using voice.
 2. Get spoken responses.
-3. See the AI cursor guide them.
+3. See the Mia Shadow Cursor direct them.
 4. Provide required inputs when asked.
 5. Confirm sensitive steps.
 6. Complete workflows without reading docs.
@@ -117,7 +117,7 @@ Map example app UI
 → Backend compiles workflow JSON
 → Human reviews and publishes
 → User asks for workflow through voice
-→ SDK executes approved workflow with AI cursor
+→ SDK executes approved workflow with the Mia Shadow Cursor
 → Assistant responds with voice output
 ```
 
@@ -196,12 +196,12 @@ The SDK/backend must support:
 7. Producing spoken response using TTS.
 8. Supporting interruption or cancellation where feasible.
 
-### 8.6 SDK and AI Cursor
+### 8.6 SDK and Mia Guide Layer
 
 The SDK must:
 
 1. Render a floating assistant UI.
-2. Show an AI cursor overlay.
+2. Show the Mia Shadow Cursor as the assistant presence.
 3. Highlight target elements.
 4. Scroll elements into view.
 5. Click elements when policy allows.
@@ -325,7 +325,7 @@ For the MVP, success means:
 1. UI map is generated for the example app.
 2. At least 2 workflows are uploaded, generated, reviewed, and published.
 3. Voice instruction triggers a published workflow.
-4. AI cursor visibly guides the user.
+4. The Mia Shadow Cursor visibly guides the user.
 5. At least one workflow asks for user input.
 6. At least one workflow includes confirmation.
 7. The assistant responds with spoken output.
@@ -372,8 +372,8 @@ Optional third workflow:
 | Qwen output is noisy | Use keyframe extraction, strict prompt, JSON validation, and human review. |
 | Element matching fails | Use Moss plus page/route filters and manual correction in console. |
 | Selectors break | Use `data-ai-id` recommendations and selector quality scoring. |
-| Voice integration takes too long | Provide fallback text input while keeping TTS output required. |
-| LiveKit setup slows MVP | Keep LiveKit behind an adapter and fail clearly when credentials are missing. |
+| Voice integration takes too long | Use Moss Voice Agents for realtime voice and keep backend responsible for token minting plus safe runtime resolution. |
+| Moss voice setup slows MVP | Keep voice configuration explicit and fail clearly when Moss voice agent credentials are missing. |
 | Moss integration uncertain | Keep Moss behind an adapter and fail clearly when credentials are missing. |
 | Qwen integration uncertain | Keep Qwen behind a model gateway adapter and validate every model response. |
 
@@ -382,8 +382,8 @@ Optional third workflow:
 These are not blockers for MVP but should be tracked:
 
 1. Which exact Qwen model endpoint will be used for video/keyframe understanding?
-2. Which STT provider will be used behind the runtime voice pipeline?
-3. Which TTS endpoint will be used for Qwen Voice?
+2. Which Moss voice agent will be used for the local demo app?
+3. Should optional backend TTS remain available for non-voice text responses?
 4. Will the UI mapper require authentication state for protected example app pages?
 5. Will workflow videos include narration, or only screen recording?
 6. Will users be allowed to upload multiple videos for the same workflow?

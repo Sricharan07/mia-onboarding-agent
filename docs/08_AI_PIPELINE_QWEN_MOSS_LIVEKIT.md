@@ -69,42 +69,23 @@ Use the official Moss project credentials:
 ```text
 MOSS_PROJECT_ID=
 MOSS_PROJECT_KEY=
+MOSS_VOICE_AGENT_ID=
 MOSS_INDEX_NAME=mia-onboarding
 ```
 
-## 2.4 Voice Transport Adapter
+## 2.4 Voice Session Service
 
-```ts
-export interface VoiceTransportAdapter {
-  createSession(input: {
-    appId: string;
-    sessionId: string;
-    identity: string;
-  }): Promise<{
-    token: string;
-    url: string;
-  }>;
-}
+Moss Voice Agents should be the real realtime voice implementation. The backend voice session service owns Moss token creation and typed event coordination only.
+
+The deployed Moss Python voice agent owns the media session, STT, LLM voice turn, and TTS. When the agent has a final user utterance, it calls:
+
+```text
+POST /api/v1/voice/sessions/:voiceSessionId/resolve
 ```
 
-LiveKit should be the real implementation.
+The backend then resolves the utterance against published workflows and emits safe SDK events.
 
-## 2.5 STT Adapter
-
-```ts
-export interface SpeechToTextAdapter {
-  transcribe(input: {
-    audioPath?: string;
-    audioBuffer?: Buffer;
-    mimeType?: string;
-  }): Promise<{
-    text: string;
-    confidence?: number;
-  }>;
-}
-```
-
-## 2.6 TTS Adapter
+## 2.5 Optional Text TTS Adapter
 
 ```ts
 export interface TextToSpeechAdapter {
@@ -119,7 +100,7 @@ export interface TextToSpeechAdapter {
 }
 ```
 
-Qwen Voice can be used here.
+Qwen Voice can be used for non-voice text responses when the SDK explicitly requests backend TTS. Moss voice sessions do not use this adapter.
 
 ## 3. Video Understanding Pipeline
 
@@ -408,19 +389,20 @@ Backend calls TTS adapter and returns:
 }
 ```
 
-## 8. LiveKit Runtime Session
+## 8. Moss Voice Runtime Session
 
-LiveKit handles realtime audio/session transport.
+Moss Voice Agents handle realtime audio/session transport, STT, voice LLM orchestration, and TTS.
 
 For MVP, implement:
 
-1. Token endpoint.
-2. SDK connection.
-3. Voice button starts session.
-4. Audio is sent to backend or STT pipeline.
-5. Backend returns intent result.
+1. `POST /api/v1/voice/sessions`.
+2. SDK LiveKit-compatible connection using the Moss `serverUrl` and token.
+3. Automatic voice startup through the Mia Shadow Cursor.
+4. Moss Python voice agent calls `/api/v1/voice/sessions/:voiceSessionId/resolve` with final utterances.
+5. Backend resolves final utterances through runtime and emits typed voice events.
+6. SDK executes only published workflow DSL returned by runtime.
 
-If full LiveKit integration is too slow, keep adapter and provide fallback text input, but TTS remains required.
+Do not add fallback voice behavior. Missing Moss voice agent configuration must fail clearly.
 
 ## 9. Provider Requirements
 

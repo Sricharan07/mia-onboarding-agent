@@ -12,10 +12,10 @@ The system should support:
 4. Shared types.
 5. UI mapper.
 6. Workflow video upload.
-7. Mock or real Qwen pipeline.
-8. Mock or real Moss indexing/search.
+7. Real Qwen pipeline.
+8. Real Moss indexing/search.
 9. Human workflow review.
-10. SDK with AI cursor execution.
+10. SDK with Mia Shadow Cursor execution.
 11. Runtime voice path with LiveKit adapter and TTS adapter.
 
 ## 2. Recommended Monorepo Structure
@@ -321,11 +321,11 @@ Implement SDK:
 
 1. Init API.
 2. Floating assistant UI.
-3. Text command fallback.
+3. Explicit text command API for non-voice configurations.
 4. Runtime context collection.
 5. Backend client.
 6. Workflow executor.
-7. AI cursor overlay.
+7. Mia Shadow Cursor.
 8. Highlighting.
 9. Step handlers.
 
@@ -396,7 +396,7 @@ Required validation:
 7. Review and publish.
 8. Open the example app.
 9. Ask agent to create customer.
-10. Agent speaks and AI cursor executes workflow.
+10. Agent speaks and Mia Shadow Cursor executes workflow.
 11. User provides customer name/email.
 12. Agent confirms save and completes.
 
@@ -424,27 +424,15 @@ QWEN_TEXT_ENDPOINT=/chat/completions
 QWEN_VIDEO_ENDPOINT=/chat/completions
 QWEN_MODEL=
 QWEN_VISION_MODEL=
-QWEN_VOICE_MODEL=
-QWEN_TTS_BASE_URL=https://dashscope-us.aliyuncs.com/api/v1
-QWEN_TTS_ENDPOINT=/services/aigc/multimodal-generation/generation
 
 MOSS_PROJECT_ID=
 MOSS_PROJECT_KEY=
+MOSS_VOICE_AGENT_ID=
 MOSS_INDEX_NAME=mia-onboarding
-
-LIVEKIT_URL=
-LIVEKIT_API_KEY=
-LIVEKIT_API_SECRET=
-
-STT_API_KEY=
-STT_BASE_URL=https://dashscope-us.aliyuncs.com/compatible-mode/v1
-STT_ENDPOINT=/chat/completions
-STT_MODEL=
 
 RUNTIME_LLM_MODEL=
 
-STT_PROVIDER=provider_name
-TTS_PROVIDER=qwen_voice
+VOICE_AGENT_PROVIDER=moss_voice_agent
 SEMANTIC_SEARCH_PROVIDER=moss
 VIDEO_UNDERSTANDING_PROVIDER=qwen
 ```

@@ -24,10 +24,8 @@ export type SystemReadiness = {
   database: ProviderReadiness;
   providers: {
     qwen: ProviderReadiness;
-    qwenTts: ProviderReadiness;
-    stt: ProviderReadiness;
     moss: ProviderReadiness;
-    livekit: ProviderReadiness;
+    mossVoiceAgent: ProviderReadiness;
   };
 };
 

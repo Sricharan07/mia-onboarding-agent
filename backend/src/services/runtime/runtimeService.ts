@@ -20,7 +20,13 @@ export class RuntimeService {
     private readonly tts: TextToSpeechAdapter
   ) {}
 
-  async resolve(input: { appId: string; sessionId: string; utterance: string; context: Omit<SDKRuntimeContext, "appId" | "sessionId"> }) {
+  async resolve(input: {
+    appId: string;
+    sessionId: string;
+    utterance: string;
+    context: Omit<SDKRuntimeContext, "appId" | "sessionId">;
+    includeTts?: boolean;
+  }) {
     const intentResult = await this.gateway.generateJson<RuntimeIntent>({
       schemaName: "RuntimeIntent",
       prompt: `You are an intent classifier for an in-product SaaS onboarding agent.
@@ -57,14 +63,12 @@ ${input.context.currentRoute}`
 Question: ${intent.query ?? input.utterance}
 Current route: ${input.context.currentRoute}`
       });
-      const audio = await this.tts.synthesize({ text: answer.text });
-      return { type: "answer", message: answer.text, tts: { text: answer.text, audioUrl: audio.audioUrl, mimeType: audio.mimeType } };
+      return this.withOptionalTts({ type: "answer", message: answer.text }, input.includeTts);
     }
 
     if (intent.type !== "workflow_request") {
       const message = intent.type === "cancel" ? "Okay, I stopped the current request." : "I could not find a saved workflow for that yet.";
-      const audio = await this.tts.synthesize({ text: message });
-      return { type: "no_match", message, tts: { text: message, audioUrl: audio.audioUrl, mimeType: audio.mimeType } };
+      return this.withOptionalTts({ type: "no_match", message }, input.includeTts);
     }
 
     const matches = await this.moss.search({
@@ -76,8 +80,7 @@ Current route: ${input.context.currentRoute}`
     const workflowId = matches[0]?.metadata?.workflowId;
     if (typeof workflowId !== "string") {
       const message = "I could not find a saved workflow for that yet.";
-      const audio = await this.tts.synthesize({ text: message });
-      return { type: "no_match", message, tts: { text: message, audioUrl: audio.audioUrl, mimeType: audio.mimeType } };
+      return this.withOptionalTts({ type: "no_match", message }, input.includeTts);
     }
 
     const workflow = this.repositories.getWorkflow(workflowId);
@@ -86,13 +89,17 @@ Current route: ${input.context.currentRoute}`
     }
 
     const message = `I can help you with ${workflow.name}. Let's start.`;
-    const audio = await this.tts.synthesize({ text: message });
-    return {
+    return this.withOptionalTts({
       type: "workflow",
       workflow: sanitizeWorkflowForRuntime(workflow),
-      message,
-      tts: { text: message, audioUrl: audio.audioUrl, mimeType: audio.mimeType }
-    };
+      message
+    }, input.includeTts);
+  }
+
+  private async withOptionalTts<T extends { message: string }>(result: T, includeTts = true): Promise<T | (T & { tts: { text: string; audioUrl?: string; mimeType?: string } })> {
+    if (!includeTts) return result;
+    const audio = await this.tts.synthesize({ text: result.message });
+    return { ...result, tts: { text: result.message, audioUrl: audio.audioUrl, mimeType: audio.mimeType } };
   }
 }
 

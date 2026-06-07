@@ -1,0 +1,3 @@
+moss-voice-agent-manager>=1.0.0b14
+httpx>=0.28.0
+python-dotenv>=1.0.1

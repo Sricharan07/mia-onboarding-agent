@@ -133,8 +133,7 @@ export function OverviewPage({
             <ServiceRow label="Database" value={readinessLabel(readiness?.database.status)} />
             <ServiceRow label="Qwen" value={readinessLabel(readiness?.providers.qwen.status)} />
             <ServiceRow label="Moss" value={readinessLabel(readiness?.providers.moss.status)} />
-            <ServiceRow label="LiveKit" value={readinessLabel(readiness?.providers.livekit.status)} />
-            <ServiceRow label="TTS/STT" value={readinessLabel(combineReadiness(readiness?.providers.qwenTts.status, readiness?.providers.stt.status))} />
+            <ServiceRow label="Moss Voice Agent" value={readinessLabel(readiness?.providers.mossVoiceAgent.status)} />
           </div>
         </Panel>
       </section>
@@ -148,13 +147,6 @@ function readinessLabel(status?: string): string {
   if (status === "missing_config") return "missing config";
   if (status === "error") return "error";
   return "unknown";
-}
-
-function combineReadiness(first?: string, second?: string): string | undefined {
-  if (first === "error" || second === "error") return "error";
-  if (first === "missing_config" || second === "missing_config") return "missing_config";
-  if (first === "ok" || second === "ok" || first === "unverified" || second === "unverified") return "unverified";
-  return undefined;
 }
 
 function EmptySetup({ onOpenSettings }: { onOpenSettings: () => void }) {

@@ -12,7 +12,7 @@ The SDK is responsible for:
 2. Capturing user voice instructions.
 3. Sending runtime context to backend.
 4. Receiving workflow instructions.
-5. Moving the AI cursor.
+5. Moving the Mia Shadow Cursor.
 6. Highlighting elements.
 7. Executing approved workflow steps.
 8. Asking the user for input.
@@ -55,9 +55,11 @@ export type SDKConfig = {
     metadata?: Record<string, unknown>;
   };
   ui?: {
-    launcherPosition?: "bottom-right" | "bottom-left";
-    showCursor?: boolean;
-    showHighlights?: boolean;
+    cursorIcon?: string;
+    cursorOffset?: { x: number; y: number };
+    theme?: "light" | "dark" | "auto";
+    bubbleMaxWidth?: number;
+    bubbleLingerMs?: number;
   };
 };
 ```
@@ -89,21 +91,20 @@ export type SDKRuntimeContext = {
 };
 ```
 
-## 5. Assistant UI
+## 5. Mia Shadow Cursor And Prompt UI
 
 The SDK should render:
 
-1. Floating launcher button.
-2. Voice recording state.
-3. Transcript preview.
-4. Assistant response bubble.
-5. Prompt overlay for `ask_user`.
-6. Confirmation dialog.
-7. Error message.
-8. Cancel button.
-9. Pause/resume controls if feasible.
+1. A Shadow DOM Mia cursor as the assistant presence.
+2. Cursor listening/thinking/speaking/guiding states.
+3. Cursor-attached assistant response bubbles.
+4. Minimal prompt overlay for `ask_user`.
+5. Confirmation dialog for sensitive actions.
+6. Error message only for fatal configuration or workflow failures.
 
-## 6. AI Cursor
+The SDK must not render an Ask Mia launcher, mic launcher, or normal voice popup.
+
+## 6. Mia Shadow Cursor
 
 The cursor is a visual overlay, not the real OS cursor.
 
@@ -119,13 +120,15 @@ It should:
 Recommended cursor states:
 
 ```ts
-export type CursorState =
+export type MiaCursorState =
   | "idle"
-  | "moving"
-  | "highlighting"
-  | "clicking"
-  | "typing"
-  | "waiting"
+  | "connecting"
+  | "listening"
+  | "thinking"
+  | "speaking"
+  | "guiding"
+  | "fading"
+  | "offline"
   | "error";
 ```
 
@@ -135,12 +138,12 @@ The SDK should implement a `WorkflowExecutor`.
 
 ```ts
 export class WorkflowExecutor {
-  constructor(options: {
-    workflow: Workflow;
-    backendClient: BackendClient;
-    cursor: CursorController;
-    ui: AssistantUIController;
-  });
+	  constructor(options: {
+	    workflow: Workflow;
+	    backendClient: BackendClient;
+	    cursor: MiaShadowCursor;
+	    promptUi: MiaPromptUI;
+	  });
 
   start(): Promise<void>;
   pause(): void;
@@ -340,11 +343,13 @@ User clicks or holds voice button
 → SDK receives workflow or answer
 ```
 
-The SDK should also support text input fallback:
+The SDK also exposes explicit text input for non-voice configurations and programmatic usage:
 
 ```ts
 AIOnboardingAgent.ask("Help me create a new customer");
 ```
+
+This is not a fallback from voice failure. If `enableVoice=true` and voice setup fails, the SDK shows a hard voice error and stops the voice session.
 
 ## 11.2 TTS Output
 

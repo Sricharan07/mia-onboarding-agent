@@ -120,9 +120,7 @@ export function SettingsPage({
           <ServiceRow label="Database" value={readinessLabel(readiness?.database.status)} />
           <ServiceRow label="Qwen" value={readinessLabel(readiness?.providers.qwen.status)} />
           <ServiceRow label="Moss" value={readinessLabel(readiness?.providers.moss.status)} />
-          <ServiceRow label="LiveKit" value={readinessLabel(readiness?.providers.livekit.status)} />
-          <ServiceRow label="Qwen Voice/TTS" value={readinessLabel(readiness?.providers.qwenTts.status)} />
-          <ServiceRow label="STT" value={readinessLabel(readiness?.providers.stt.status)} />
+          <ServiceRow label="Moss Voice Agent" value={readinessLabel(readiness?.providers.mossVoiceAgent.status)} />
         </div>
       </Panel>
     </div>

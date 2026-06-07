@@ -2,7 +2,7 @@
 
 This documentation pack defines the MVP for a local-development AI onboarding agent for SaaS products.
 
-The project turns recorded SaaS workflows into structured, human-reviewed, executable UI workflows. The frontend SDK then runs those workflows inside a sample SaaS application through an AI cursor, voice interface, and selector-based execution engine.
+The project turns recorded SaaS workflows into structured, human-reviewed, executable UI workflows. The frontend SDK then runs those workflows inside a sample SaaS application through a Mia Shadow Cursor, LiveKit voice session, minimal workflow prompts, and selector-based execution engine.
 
 ## Intended Consumer
 
@@ -31,7 +31,7 @@ It includes:
 11. Frontend SDK inside the example app.
 12. LiveKit-based runtime voice session.
 13. TTS voice output using Qwen Voice or a compatible TTS adapter.
-14. AI cursor execution using approved workflow steps.
+14. Mia Shadow Cursor execution using approved workflow steps.
 
 ## Explicit Non-Goals for MVP
 
@@ -80,7 +80,7 @@ A human reviews the workflow and publishes it.
 
 An end user speaks to the assistant inside the example app.
 
-The SDK streams audio through LiveKit. The backend transcribes the request, determines intent, searches Moss for matching workflows, returns the workflow, and the SDK executes it using the AI cursor.
+The SDK streams audio through LiveKit. The backend transcribes the request, determines intent, searches Moss for matching workflows, returns the workflow, and the SDK executes it using the Mia Shadow Cursor.
 
 ### Phase 3: Keep Workflows Reliable
 

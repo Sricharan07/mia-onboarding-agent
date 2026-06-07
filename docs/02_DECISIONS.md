@@ -10,8 +10,8 @@ This document records the main decisions for the MVP.
 | Cloud infrastructure | Excluded from MVP. No AWS integration. |
 | Video understanding | Qwen is the primary multimodal model. |
 | MiniMax | Optional experiment only. Not required for MVP. |
-| Runtime voice | LiveKit + STT + runtime LLM + workflow search + SDK execution + TTS. |
-| TTS | Required for MVP. Qwen Voice can provide natural speech output. |
+| Runtime voice | Moss Voice Agent + backend runtime resolution + SDK workflow execution. |
+| TTS | Moss Voice Agent owns spoken responses for voice mode. Backend TTS is optional for text mode only. |
 | Workflow format | Strict JSON workflow DSL. |
 | UI mapping | Runtime browser scan. |
 | Element descriptions | Hybrid rule-based + LLM-generated descriptions. Human editable. |
@@ -69,22 +69,21 @@ Use MiniMax only as an experiment or fallback after the core pipeline works.
 
 Do not use one omni model for everything.
 
-Use a modular voice pipeline:
+Use Moss Voice Agents as the realtime voice pipeline:
 
 ```text
-LiveKit → STT → Runtime LLM → Moss workflow search → SDK execution → TTS
+Browser SDK → Moss voice session → Moss STT/LLM/TTS → backend runtime resolver → SDK execution
 ```
 
 ### Rationale
 
-A modular pipeline is easier to debug and safer:
+This keeps the realtime media and speech loop inside Moss while preserving our workflow-first safety boundary:
 
-1. LiveKit handles realtime session transport.
-2. STT converts speech to text.
-3. Runtime LLM classifies intent and chooses the next backend action.
-4. Moss retrieves workflows and UI elements.
-5. SDK executes approved workflow steps.
-6. TTS speaks responses.
+1. Backend mints short-lived Moss participant tokens.
+2. Moss voice agent handles STT, LLM voice turn orchestration, and TTS.
+3. Moss voice agent calls the backend resolver with the final utterance.
+4. Backend resolves only published workflows or safe answers.
+5. SDK executes only approved workflow DSL returned by runtime.
 
 ### TTS Decision
 
@@ -311,10 +310,10 @@ Required adapters:
 1. `ModelGatewayAdapter`
 2. `VideoUnderstandingAdapter`
 3. `SemanticSearchAdapter`
-4. `VoiceTransportAdapter`
-5. `SpeechToTextAdapter`
-6. `TextToSpeechAdapter`
-7. `FileStorageAdapter`
+4. `TextToSpeechAdapter`
+5. `FileStorageAdapter`
+
+Moss voice transport is handled by the backend `VoiceSessionService` only for token minting and typed event coordination. The deployed Moss voice agent owns the media session, STT, LLM voice turn, and TTS.
 
 This keeps business logic isolated from provider SDKs and HTTP details.
 

@@ -58,9 +58,7 @@ Fields:
 4. Backend URL.
 5. Model provider status.
 6. Moss status.
-7. LiveKit status.
-8. TTS status.
-9. STT status.
+7. Moss Voice Agent status.
 
 Provider status is read from backend readiness and must not expose secrets.
 

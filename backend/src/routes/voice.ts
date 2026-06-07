@@ -10,15 +10,4 @@ export async function registerVoiceRoutes(app: FastifyInstance, dependencies: Ap
     const body = z.object({ text: z.string().min(1), voice: z.string().optional() }).parse(request.body);
     return dependencies.adapters.tts.synthesize(body);
   });
-
-  app.post("/api/v1/livekit/token", {
-    preHandler: (request, reply) => requireApiKeyScope(request, reply, dependencies, ["runtime:write"])
-  }, async (request) => {
-    const body = z.object({
-      appId: z.string(),
-      sessionId: z.string(),
-      identity: z.string()
-    }).parse(request.body);
-    return dependencies.adapters.livekit.createSession(body);
-  });
 }
