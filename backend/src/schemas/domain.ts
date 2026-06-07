@@ -197,6 +197,10 @@ export const uiElementRecordSchema = z.object({
   tags: z.array(z.string()),
   selectorQuality: z.enum(["strong", "medium", "weak"]),
   selectorWarnings: z.array(z.string()),
+  stateName: z.string().default("default"),
+  stateReason: z.string().optional(),
+  discoveredBy: z.enum(["route_scan", "auto_expansion", "manual_capture"]).default("route_scan"),
+  fingerprint: z.string().default(""),
   createdAt: z.string(),
   updatedAt: z.string()
 });

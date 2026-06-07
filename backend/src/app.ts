@@ -15,6 +15,7 @@ import { LiveKitVoiceTransportAdapter } from "./adapters/livekit.js";
 import { QwenTextToSpeechAdapter } from "./adapters/tts.js";
 import { LocalFileStorageAdapter } from "./adapters/storage.js";
 import { UiMapService } from "./services/ui-map/uiMapService.js";
+import { InteractiveUiMapScanService } from "./services/ui-map/interactiveScanService.js";
 import { WorkflowCompiler } from "./services/workflows/compiler.js";
 import { VideoProcessingService } from "./services/workflows/videoProcessingService.js";
 import { WorkflowService } from "./services/workflows/workflowService.js";
@@ -35,6 +36,9 @@ export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
   await app.register(multipart, { limits: { fileSize: 1024 * 1024 * 500 } });
 
   const dependencies = createDependencies(config);
+  app.addHook("onClose", async () => {
+    await dependencies.services.interactiveUiMap.closeAll();
+  });
   registerErrorHandler(app);
   registerLocalFileRoute(app, config);
   await registerRoutes(app, dependencies);
@@ -57,7 +61,8 @@ function createDependencies(config: AppConfig) {
     repositories,
     adapters: { gateway, moss, videoUnderstanding, livekit, tts, storage },
     services: {
-      uiMap: new UiMapService(repositories, moss),
+      uiMap: new UiMapService(config, repositories, moss),
+      interactiveUiMap: new InteractiveUiMapScanService(config, repositories, moss),
       videoProcessing: new VideoProcessingService(repositories, videoUnderstanding, compiler),
       workflow: new WorkflowService(repositories, moss),
       runtime: new RuntimeService(repositories, gateway, moss, tts),

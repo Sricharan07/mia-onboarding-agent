@@ -70,14 +70,14 @@ export class Repositories {
     return mapApp(row);
   }
 
-  createUiMapVersion(appId: string): { id: string; appId: string; version: string; status: string; createdAt: string } {
+  createUiMapVersion(appId: string, source = "runtime_browser_scan"): { id: string; appId: string; version: string; status: string; createdAt: string } {
     const now = nowIso();
     const id = createId("ui_map");
     const version = `local-${Date.now()}`;
     this.db.prepare(`
       INSERT INTO ui_map_versions (id, app_id, version, source, status, created_at)
-      VALUES (?, ?, ?, 'runtime_browser_scan', 'scanning', ?)
-    `).run(id, appId, version, now);
+      VALUES (?, ?, ?, ?, 'scanning', ?)
+    `).run(id, appId, version, source, now);
     return { id, appId, version, status: "scanning", createdAt: now };
   }
 
@@ -94,12 +94,23 @@ export class Repositories {
   }
 
   createPage(input: { appId: string; uiMapVersionId: string; name: string; route: string; url: string; title?: string; status: string; error?: string }): string {
+    const existing = this.getPageByVersionAndRoute(input.uiMapVersionId, input.route);
+    if (existing) return existing.id;
+
     const id = createId("page");
     this.db.prepare(`
       INSERT INTO pages (id, app_id, ui_map_version_id, name, route, url, title, status, error, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(id, input.appId, input.uiMapVersionId, input.name, input.route, input.url, input.title ?? null, input.status, input.error ?? null, nowIso());
     return id;
+  }
+
+  getPageByVersionAndRoute(uiMapVersionId: string, route: string): { id: string; route: string; name: string } | undefined {
+    return this.db.prepare(`
+      SELECT id, route, name FROM pages
+      WHERE ui_map_version_id = ? AND route = ?
+      ORDER BY created_at ASC LIMIT 1
+    `).get(uiMapVersionId, route) as { id: string; route: string; name: string } | undefined;
   }
 
   listPages(uiMapVersionId: string): unknown[] {
@@ -109,15 +120,22 @@ export class Repositories {
     `).all(uiMapVersionId);
   }
 
-  saveUiElement(record: UIElementRecord): void {
+  saveUiElement(record: UIElementRecord): boolean {
+    if (record.fingerprint) {
+      const existing = this.db.prepare("SELECT id FROM ui_elements WHERE ui_map_version_id = ? AND fingerprint = ? LIMIT 1")
+        .get(record.uiMapVersionId, record.fingerprint) as { id: string } | undefined;
+      if (existing) return false;
+    }
+
     this.db.prepare(`
       INSERT INTO ui_elements (
         id, element_id, app_id, ui_map_version_id, page_id, route, page_name, element_type,
         role, label, visible_text, accessible_name, placeholder, aria_label, input_name, input_type,
         description, selector, selector_type, fallback_selectors_json, nearby_text_json, tags_json,
-        selector_quality, selector_warnings_json, raw_json, created_at, updated_at
+        selector_quality, selector_warnings_json, state_name, state_reason, discovered_by, fingerprint,
+        raw_json, created_at, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       record.id,
       record.elementId,
@@ -143,10 +161,15 @@ export class Repositories {
       JSON.stringify(record.tags),
       record.selectorQuality,
       JSON.stringify(record.selectorWarnings),
+      record.stateName,
+      record.stateReason ?? null,
+      record.discoveredBy,
+      record.fingerprint,
       JSON.stringify(record),
       record.createdAt,
       record.updatedAt
     );
+    return true;
   }
 
   listElements(pageId: string, filters: { selectorQuality?: string; elementType?: string }): UIElementRecord[] {

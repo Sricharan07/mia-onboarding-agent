@@ -13,7 +13,12 @@ export type RawElement = {
   placeholder?: string;
   ariaLabel?: string;
   inputType?: string;
+  title?: string;
   href?: string;
+  sectionName?: string;
+  formName?: string;
+  dialogName?: string;
+  tableName?: string;
   boundingBox?: { x: number; y: number; width: number; height: number };
 };
 
@@ -25,13 +30,18 @@ export function buildUiElementRecord(input: {
   route: string;
   raw: RawElement;
   index: number;
+  stateName?: string;
+  stateReason?: string;
+  discoveredBy?: UIElementRecord["discoveredBy"];
 }): UIElementRecord {
   const selectorInfo = generateSelector(input.raw, input.index);
   const elementType = getElementType(input.raw);
-  const label = input.raw.label ?? input.raw.ariaLabel ?? input.raw.placeholder ?? input.raw.text ?? elementType;
+  const label = input.raw.label ?? input.raw.ariaLabel ?? input.raw.placeholder ?? input.raw.title ?? input.raw.text ?? elementType;
   const elementId = input.raw.dataAiId ?? input.raw.testId ?? generateElementId(input.pageName, label, elementType);
   const quality = scoreSelector(selectorInfo.selectorType, selectorInfo.selector);
   const now = nowIso();
+  const stateName = input.stateName ?? "default";
+  const discoveredBy = input.discoveredBy ?? "route_scan";
 
   return {
     id: createId("el"),
@@ -50,15 +60,19 @@ export function buildUiElementRecord(input: {
     ariaLabel: input.raw.ariaLabel,
     inputName: input.raw.name,
     inputType: input.raw.inputType,
-    description: generateDescription(elementType, label, input.pageName),
+    description: generateDescription(elementType, label, input.pageName, input.raw),
     selector: selectorInfo.selector,
     selectorType: selectorInfo.selectorType,
     fallbackSelectors: selectorInfo.fallbackSelectors,
-    nearbyText: input.raw.text ? [input.raw.text] : [],
+    nearbyText: [input.raw.text, input.raw.sectionName, input.raw.formName, input.raw.dialogName, input.raw.tableName].filter(Boolean) as string[],
     boundingBox: input.raw.boundingBox,
-    tags: deriveTags(label, input.pageName),
+    tags: deriveTags(label, input.pageName, stateName),
     selectorQuality: quality.quality,
     selectorWarnings: quality.warnings,
+    stateName,
+    stateReason: input.stateReason,
+    discoveredBy,
+    fingerprint: generateFingerprint(input.route, selectorInfo.selector, label, elementType),
     createdAt: now,
     updatedAt: now
   };
@@ -108,6 +122,7 @@ function getElementType(raw: RawElement): UIElementRecord["elementType"] {
   if (tag === "a") return "link";
   if (tag === "textarea") return "textarea";
   if (tag === "select") return "select";
+  if (raw.role === "combobox") return "select";
   if (tag === "input" && type === "checkbox") return "checkbox";
   if (tag === "input" && type === "radio") return "radio";
   if (tag === "input") return "input";
@@ -116,20 +131,30 @@ function getElementType(raw: RawElement): UIElementRecord["elementType"] {
   return "other";
 }
 
-function generateDescription(type: string, label: string, pageName: string): string {
-  if (type === "button") return `${label} button on the ${pageName} page.`;
-  if (type === "input" || type === "textarea") return `Input field for ${label} on the ${pageName} page.`;
-  if (type === "select") return `Dropdown for selecting ${label} on the ${pageName} page.`;
-  if (type === "link") return `Navigates to the ${label} section.`;
-  return `${label} element on the ${pageName} page.`;
+function generateDescription(type: string, label: string, pageName: string, raw: RawElement): string {
+  const context = raw.dialogName
+    ? `${raw.dialogName} dialog`
+    : raw.formName
+      ? `${raw.formName} form`
+      : raw.tableName
+        ? `${raw.tableName} table`
+        : raw.sectionName
+          ? `${raw.sectionName} section`
+          : `${pageName} page`;
+
+  if (type === "button") return `${label} button in ${context}.`;
+  if (type === "input" || type === "textarea") return `${label} input field in ${context}.`;
+  if (type === "select") return `${label} dropdown in ${context}.`;
+  if (type === "link") return `${label} link in ${context}.`;
+  return `${label} ${type} element in ${context}.`;
 }
 
 function generateElementId(pageName: string, label: string, type: string): string {
   return `${toSlug(pageName)}.${toSlug(label)}_${type}`;
 }
 
-function deriveTags(label: string, pageName: string): string[] {
-  return Array.from(new Set([...toSlug(label).split("_"), toSlug(pageName)])).filter(Boolean);
+function deriveTags(label: string, pageName: string, stateName: string): string[] {
+  return Array.from(new Set([...toSlug(label).split("_"), toSlug(pageName), ...toSlug(stateName).split("_")])).filter(Boolean);
 }
 
 function toSlug(value: string): string {
@@ -142,4 +167,8 @@ function escapeCssValue(value: string): string {
 
 function cssEscape(value: string): string {
   return value.replace(/[^a-zA-Z0-9_-]/g, "\\$&");
+}
+
+function generateFingerprint(route: string, selector: string, label: string, type: string): string {
+  return toSlug([route, selector, label, type].join("|"));
 }

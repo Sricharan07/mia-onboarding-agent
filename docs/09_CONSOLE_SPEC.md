@@ -74,13 +74,19 @@ Route:
 
 Features:
 
-1. Trigger scan.
+1. Trigger normal backend scan.
 2. Enter routes to scan.
 3. Show latest UI map version.
 4. Show scanned pages.
 5. Show page status.
 6. Show element count.
 7. Link to page detail.
+8. Start interactive authenticated mapping.
+9. Navigate the visible Playwright browser to a configured route.
+10. Capture current browser state after a developer opens hidden menus/modals.
+11. Finish or cancel the interactive mapping session.
+
+Interactive mapping is local-development oriented. The backend opens Playwright with `UI_SCAN_HEADLESS=false`, logs in with `.env` demo-account credentials when configured, and keeps the browser open until the operator finishes or cancels.
 
 ## 3.4 UI Map Page Detail
 
@@ -99,6 +105,7 @@ Shows table:
 | Label | Visible or accessible label. |
 | Description | Editable description. |
 | Selector | Primary selector. |
+| State | Captured page state and discovery source. |
 | Quality | strong/medium/weak. |
 | Warnings | Selector warnings. |
 | Recommendation | Suggested `data-ai-id`. |

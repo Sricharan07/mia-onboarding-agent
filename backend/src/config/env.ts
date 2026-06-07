@@ -8,6 +8,11 @@ const workspaceRoot = resolveWorkspaceRoot();
 const rootEnvPath = resolve(workspaceRoot, ".env");
 loadDotenv({ path: existsSync(rootEnvPath) ? rootEnvPath : undefined });
 
+const booleanStringSchema = z.preprocess((value) => {
+  if (typeof value !== "string") return value;
+  return ["1", "true", "yes", "on"].includes(value.toLowerCase());
+}, z.boolean());
+
 const envSchema = z.object({
   NODE_ENV: z.string().default("development"),
   BACKEND_HOST: z.string().default("0.0.0.0"),
@@ -34,7 +39,17 @@ const envSchema = z.object({
   STT_BASE_URL: z.string().optional(),
   STT_ENDPOINT: z.string().default("/chat/completions"),
   STT_MODEL: z.string().optional(),
-  RUNTIME_LLM_MODEL: z.string().optional()
+  RUNTIME_LLM_MODEL: z.string().optional(),
+  UI_SCAN_AUTH_MODE: z.enum(["none", "login_form"]).default("none"),
+  UI_SCAN_LOGIN_URL: z.string().optional(),
+  UI_SCAN_USERNAME: z.string().optional(),
+  UI_SCAN_PASSWORD: z.string().optional(),
+  UI_SCAN_USERNAME_SELECTOR: z.string().optional(),
+  UI_SCAN_PASSWORD_SELECTOR: z.string().optional(),
+  UI_SCAN_SUBMIT_SELECTOR: z.string().optional(),
+  UI_SCAN_SUCCESS_URL_PATTERN: z.string().optional(),
+  UI_SCAN_POST_LOGIN_WAIT_MS: z.coerce.number().int().nonnegative().default(1000),
+  UI_SCAN_HEADLESS: booleanStringSchema.default(true)
 });
 
 export type AppConfig = z.infer<typeof envSchema>;

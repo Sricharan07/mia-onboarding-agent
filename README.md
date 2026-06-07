@@ -35,6 +35,8 @@ Qwen, Moss, LiveKit, STT, and TTS credentials are required for provider-backed r
 
 Runtime-sensitive SDK/backend routes are protected with local scoped API keys. Create one from the console API Keys page and pass it to the SDK as `apiKey`.
 
+For authenticated UI ingestion, configure a dedicated demo account in `.env` with the `UI_SCAN_*` variables. Keep `UI_SCAN_HEADLESS=false` when using the console's interactive mapper so the Playwright browser is visible for manual dropdown/modal captures.
+
 ## Useful Commands
 
 ```bash

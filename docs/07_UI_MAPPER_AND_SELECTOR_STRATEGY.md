@@ -32,6 +32,17 @@ Why:
 
 Static code scanning is deferred.
 
+For authenticated SaaS dashboards, the primary MVP flow is an authenticated Playwright scan using a dedicated demo/test account. The backend logs in once, keeps the browser session, and scans configured routes.
+
+Hidden UI states are captured through guided local interaction:
+
+1. Backend opens a headed Playwright browser.
+2. Developer manually opens dropdowns, popovers, dialogs, sidebars, and row action menus.
+3. Console calls "Capture current state".
+4. Backend scans the currently visible DOM and merges new elements into the same UI map version.
+
+This avoids unsafe blind clicking and does not require SDK DOM streaming.
+
 ## 3. Route Configuration
 
 The mapper should accept routes:
@@ -77,6 +88,24 @@ Also extract containers where useful:
 2. Modals/dialogs.
 3. Tables/lists.
 4. Navigation sections.
+
+Each captured element should include state metadata:
+
+```text
+stateName
+stateReason
+discoveredBy
+fingerprint
+```
+
+Example states:
+
+```text
+default
+filters dropdown open
+row actions menu open
+invite user dialog open
+```
 
 ## 5. Element Metadata
 

@@ -233,7 +233,23 @@ But structure should allow later:
 4. Per-step authorization.
 5. Audit logs.
 
-## 14. Safety Acceptance Criteria
+## 14. UI Mapping Auth Safety
+
+Authenticated UI ingestion uses a dedicated demo/test account through backend Playwright.
+
+Rules:
+
+1. Credentials live only in `.env`.
+2. Credentials must not be sent in console request bodies.
+3. Credentials must not be logged.
+4. Use a demo/test account, not a real user account.
+5. MFA, SSO, and CAPTCHA are not automated in MVP.
+6. Interactive mapping is local-dev only unless a secure remote browser/VNC setup is added.
+7. The crawler must not blindly click arbitrary buttons to discover hidden UI.
+8. Hidden dropdowns, popovers, and modals should be captured through manual headed-browser state capture.
+9. Captured elements should include state metadata so reviewers know where an element came from.
+
+## 15. Safety Acceptance Criteria
 
 MVP passes if:
 

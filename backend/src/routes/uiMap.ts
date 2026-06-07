@@ -5,8 +5,10 @@ import { requireApiKeyScopeIfPresent } from "./auth.js";
 
 const scanSchema = z.object({
   routes: z.array(z.string()).min(1),
-  auth: z.object({ mode: z.string() }).optional()
+  auth: z.object({ mode: z.enum(["none", "login_form"]) }).optional()
 });
+
+const interactiveSessionParamsSchema = z.object({ sessionId: z.string().min(1) });
 
 export async function registerUiMapRoutes(app: FastifyInstance, dependencies: AppDependencies): Promise<void> {
   app.post("/api/v1/apps/:appId/ui-map/scan", async (request) => {
@@ -48,5 +50,49 @@ export async function registerUiMapRoutes(app: FastifyInstance, dependencies: Ap
     }).parse(request.body);
     dependencies.repositories.updateElement(params.elementId, body);
     return { ok: true };
+  });
+
+  app.get("/api/v1/ui-map/interactive-sessions", async () => ({
+    items: dependencies.services.interactiveUiMap.list()
+  }));
+
+  app.post("/api/v1/apps/:appId/ui-map/interactive-sessions", async (request) => {
+    const params = z.object({ appId: z.string() }).parse(request.params);
+    const body = scanSchema.parse(request.body);
+    return dependencies.services.interactiveUiMap.start({ appId: params.appId, ...body });
+  });
+
+  app.get("/api/v1/ui-map/interactive-sessions/:sessionId", async (request) => {
+    const params = interactiveSessionParamsSchema.parse(request.params);
+    return dependencies.services.interactiveUiMap.get(params.sessionId);
+  });
+
+  app.post("/api/v1/ui-map/interactive-sessions/:sessionId/goto", async (request) => {
+    const params = interactiveSessionParamsSchema.parse(request.params);
+    const body = z.object({
+      route: z.string().min(1),
+      captureDefault: z.boolean().optional()
+    }).parse(request.body);
+    return dependencies.services.interactiveUiMap.goto(params.sessionId, body);
+  });
+
+  app.post("/api/v1/ui-map/interactive-sessions/:sessionId/capture-state", async (request) => {
+    const params = interactiveSessionParamsSchema.parse(request.params);
+    const body = z.object({
+      stateName: z.string().min(1),
+      stateReason: z.string().optional()
+    }).parse(request.body);
+    return dependencies.services.interactiveUiMap.captureState(params.sessionId, body);
+  });
+
+  app.post("/api/v1/ui-map/interactive-sessions/:sessionId/finish", async (request) => {
+    const params = interactiveSessionParamsSchema.parse(request.params);
+    return dependencies.services.interactiveUiMap.finish(params.sessionId);
+  });
+
+  app.post("/api/v1/ui-map/interactive-sessions/:sessionId/cancel", async (request) => {
+    const params = interactiveSessionParamsSchema.parse(request.params);
+    const body = z.object({ reason: z.string().optional() }).parse(request.body ?? {});
+    return dependencies.services.interactiveUiMap.cancel(params.sessionId, body.reason);
   });
 }

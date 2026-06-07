@@ -79,8 +79,33 @@ export type UiElement = {
   tags: string[];
   selectorQuality: "strong" | "medium" | "weak";
   selectorWarnings: string[];
+  stateName?: string;
+  stateReason?: string;
+  discoveredBy?: "route_scan" | "auto_expansion" | "manual_capture";
+  fingerprint?: string;
   createdAt: string;
   updatedAt: string;
+};
+
+export type UiMapCaptureResult = {
+  pageId: string;
+  route: string;
+  url: string;
+  stateName: string;
+  scannedElements: number;
+  savedElements: number;
+  duplicateElements: number;
+  weakSelectors: number;
+};
+
+export type InteractiveUiMapSession = {
+  sessionId: string;
+  appId: string;
+  uiMapVersionId: string;
+  currentRoute: string;
+  createdAt: string;
+  initialCapture?: UiMapCaptureResult;
+  capture?: UiMapCaptureResult;
 };
 
 export type WorkflowJob = {
@@ -272,8 +297,31 @@ export class BackendApi {
     return this.request("/api/v1/apps", { method: "POST", body: input });
   }
 
-  scanUiMap(appId: string, routes: string[]): Promise<{ uiMapVersionId: string; status: string }> {
-    return this.request(`/api/v1/apps/${encodeURIComponent(appId)}/ui-map/scan`, { method: "POST", body: { routes } });
+  scanUiMap(appId: string, routes: string[], authMode: "none" | "login_form" = "none"): Promise<{ uiMapVersionId: string; status: string }> {
+    return this.request(`/api/v1/apps/${encodeURIComponent(appId)}/ui-map/scan`, { method: "POST", body: { routes, auth: { mode: authMode } } });
+  }
+
+  startInteractiveUiMapSession(appId: string, input: { routes: string[]; authMode: "none" | "login_form" }): Promise<InteractiveUiMapSession> {
+    return this.request(`/api/v1/apps/${encodeURIComponent(appId)}/ui-map/interactive-sessions`, {
+      method: "POST",
+      body: { routes: input.routes, auth: { mode: input.authMode } }
+    });
+  }
+
+  gotoInteractiveUiMapSession(sessionId: string, input: { route: string; captureDefault?: boolean }): Promise<InteractiveUiMapSession> {
+    return this.request(`/api/v1/ui-map/interactive-sessions/${encodeURIComponent(sessionId)}/goto`, { method: "POST", body: input });
+  }
+
+  captureInteractiveUiMapState(sessionId: string, input: { stateName: string; stateReason?: string }): Promise<InteractiveUiMapSession> {
+    return this.request(`/api/v1/ui-map/interactive-sessions/${encodeURIComponent(sessionId)}/capture-state`, { method: "POST", body: input });
+  }
+
+  finishInteractiveUiMapSession(sessionId: string): Promise<{ uiMapVersionId: string; status: string }> {
+    return this.request(`/api/v1/ui-map/interactive-sessions/${encodeURIComponent(sessionId)}/finish`, { method: "POST", body: {} });
+  }
+
+  cancelInteractiveUiMapSession(sessionId: string, reason?: string): Promise<{ uiMapVersionId: string; status: string }> {
+    return this.request(`/api/v1/ui-map/interactive-sessions/${encodeURIComponent(sessionId)}/cancel`, { method: "POST", body: { reason } });
   }
 
   listUiMapVersions(appId: string): Promise<Items<UiMapVersion>> {

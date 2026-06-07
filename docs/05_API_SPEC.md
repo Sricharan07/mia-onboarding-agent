@@ -239,6 +239,15 @@ Request:
 }
 ```
 
+Supported auth modes:
+
+```text
+none
+login_form
+```
+
+For `login_form`, credentials and selectors come from backend environment variables, not from the request body.
+
 Response:
 
 ```json
@@ -247,6 +256,76 @@ Response:
   "status": "scanning"
 }
 ```
+
+### POST `/api/v1/apps/:appId/ui-map/interactive-sessions`
+
+Starts a local headed Playwright mapping session. The browser remains open so the developer can manually open dropdowns, popovers, dialogs, and other hidden states before capturing them.
+
+Request:
+
+```json
+{
+  "routes": ["/dashboard", "/customers"],
+  "auth": {
+    "mode": "login_form"
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "sessionId": "ui_scan_session_123",
+  "appId": "app_example_app",
+  "uiMapVersionId": "ui_map_local_001",
+  "currentRoute": "/dashboard",
+  "createdAt": "2026-06-07T00:00:00.000Z",
+  "initialCapture": {
+    "pageId": "page_dashboard",
+    "route": "/dashboard",
+    "stateName": "default",
+    "scannedElements": 24,
+    "savedElements": 24,
+    "duplicateElements": 0,
+    "weakSelectors": 6
+  }
+}
+```
+
+### POST `/api/v1/ui-map/interactive-sessions/:sessionId/goto`
+
+Navigates the Playwright browser to a route and captures the default visible state.
+
+Request:
+
+```json
+{
+  "route": "/customers",
+  "captureDefault": true
+}
+```
+
+### POST `/api/v1/ui-map/interactive-sessions/:sessionId/capture-state`
+
+Captures the current visible DOM state from the open Playwright browser. Use this after manually opening a dropdown, modal, popover, sidebar, or table actions menu.
+
+Request:
+
+```json
+{
+  "stateName": "row actions menu open",
+  "stateReason": "Manual capture after opening customer row actions"
+}
+```
+
+### POST `/api/v1/ui-map/interactive-sessions/:sessionId/finish`
+
+Marks the UI map version completed and closes the Playwright browser.
+
+### POST `/api/v1/ui-map/interactive-sessions/:sessionId/cancel`
+
+Marks the UI map version failed and closes the Playwright browser.
 
 ### GET `/api/v1/apps/:appId/ui-map/versions`
 

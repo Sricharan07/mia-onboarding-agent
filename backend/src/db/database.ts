@@ -84,6 +84,10 @@ function migrate(db: Db): void {
       tags_json TEXT NOT NULL,
       selector_quality TEXT NOT NULL,
       selector_warnings_json TEXT NOT NULL,
+      state_name TEXT NOT NULL DEFAULT 'default',
+      state_reason TEXT,
+      discovered_by TEXT NOT NULL DEFAULT 'route_scan',
+      fingerprint TEXT NOT NULL DEFAULT '',
       raw_json TEXT NOT NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
@@ -179,4 +183,17 @@ function migrate(db: Db): void {
     CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON api_keys(prefix);
     CREATE INDEX IF NOT EXISTS idx_api_keys_active ON api_keys(prefix, revoked_at);
   `);
+
+  ensureColumn(db, "ui_elements", "state_name", "TEXT NOT NULL DEFAULT 'default'");
+  ensureColumn(db, "ui_elements", "state_reason", "TEXT");
+  ensureColumn(db, "ui_elements", "discovered_by", "TEXT NOT NULL DEFAULT 'route_scan'");
+  ensureColumn(db, "ui_elements", "fingerprint", "TEXT NOT NULL DEFAULT ''");
+
+  db.exec("CREATE INDEX IF NOT EXISTS idx_ui_elements_fingerprint ON ui_elements(ui_map_version_id, fingerprint);");
+}
+
+function ensureColumn(db: Db, table: string, column: string, definition: string): void {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (rows.some((row) => row.name === column)) return;
+  db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`).run();
 }
