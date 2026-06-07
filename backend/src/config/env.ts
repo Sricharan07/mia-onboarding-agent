@@ -1,0 +1,81 @@
+import { config as loadDotenv } from "dotenv";
+import { existsSync } from "node:fs";
+import { basename, resolve } from "node:path";
+import { z } from "zod";
+import { ConfigError } from "../utils/errors.js";
+
+const workspaceRoot = resolveWorkspaceRoot();
+const rootEnvPath = resolve(workspaceRoot, ".env");
+loadDotenv({ path: existsSync(rootEnvPath) ? rootEnvPath : undefined });
+
+const envSchema = z.object({
+  NODE_ENV: z.string().default("development"),
+  BACKEND_HOST: z.string().default("0.0.0.0"),
+  BACKEND_PORT: z.coerce.number().int().positive().default(4000),
+  DATABASE_URL: z.string().default("file:./data/sqlite/local.db"),
+  LOCAL_UPLOAD_DIR: z.string().default("./data/uploads"),
+  LOCAL_TTS_DIR: z.string().default("./data/tts"),
+  TRUEFOUNDRY_API_KEY: z.string().optional(),
+  TRUEFOUNDRY_BASE_URL: z.string().optional(),
+  TRUEFOUNDRY_TEXT_ENDPOINT: z.string().default("/v1/chat/completions"),
+  TRUEFOUNDRY_VIDEO_ENDPOINT: z.string().default("/v1/chat/completions"),
+  QWEN_API_KEY: z.string().optional(),
+  QWEN_MODEL: z.string().optional(),
+  QWEN_VISION_MODEL: z.string().optional(),
+  QWEN_VOICE_MODEL: z.string().optional(),
+  QWEN_TTS_BASE_URL: z.string().optional(),
+  QWEN_TTS_ENDPOINT: z.string().default("/v1/audio/speech"),
+  MOSS_API_KEY: z.string().optional(),
+  MOSS_BASE_URL: z.string().optional(),
+  MOSS_INDEX_ENDPOINT: z.string().default("/records/upsert"),
+  MOSS_SEARCH_ENDPOINT: z.string().default("/search"),
+  MOSS_DELETE_ENDPOINT: z.string().default("/records/delete"),
+  LIVEKIT_URL: z.string().optional(),
+  LIVEKIT_API_KEY: z.string().optional(),
+  LIVEKIT_API_SECRET: z.string().optional(),
+  STT_API_KEY: z.string().optional(),
+  STT_BASE_URL: z.string().optional(),
+  STT_ENDPOINT: z.string().default("/v1/audio/transcriptions"),
+  STT_MODEL: z.string().optional(),
+  RUNTIME_LLM_MODEL: z.string().optional()
+});
+
+export type AppConfig = z.infer<typeof envSchema>;
+
+export function loadConfig(): AppConfig {
+  const result = envSchema.safeParse(process.env);
+
+  if (!result.success) {
+    throw new ConfigError("Environment validation failed.", result.error.issues);
+  }
+
+  return normalizePaths(result.data);
+}
+
+export function requireConfig(config: AppConfig, keys: Array<keyof AppConfig>, provider: string): void {
+  const missing = keys.filter((key) => !config[key]);
+
+  if (missing.length > 0) {
+    throw new ConfigError(`${provider} is not configured. Missing: ${missing.join(", ")}.`);
+  }
+}
+
+function normalizePaths(config: AppConfig): AppConfig {
+  return {
+    ...config,
+    DATABASE_URL: config.DATABASE_URL.startsWith("file:")
+      ? `file:${resolveMaybeRelative(config.DATABASE_URL.slice("file:".length))}`
+      : resolveMaybeRelative(config.DATABASE_URL),
+    LOCAL_UPLOAD_DIR: resolveMaybeRelative(config.LOCAL_UPLOAD_DIR),
+    LOCAL_TTS_DIR: resolveMaybeRelative(config.LOCAL_TTS_DIR)
+  };
+}
+
+function resolveMaybeRelative(value: string): string {
+  if (value.startsWith("/")) return value;
+  return resolve(workspaceRoot, value);
+}
+
+function resolveWorkspaceRoot(): string {
+  return basename(process.cwd()) === "backend" ? resolve(process.cwd(), "..") : process.cwd();
+}

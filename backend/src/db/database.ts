@@ -1,0 +1,168 @@
+import Database from "better-sqlite3";
+import { dirname, resolve } from "node:path";
+import { mkdirSync } from "node:fs";
+import type { AppConfig } from "../config/env.js";
+
+export type Db = Database.Database;
+
+export function createDatabase(config: AppConfig): Db {
+  const dbPath = resolveDatabasePath(config.DATABASE_URL);
+  mkdirSync(dirname(dbPath), { recursive: true });
+
+  const db = new Database(dbPath);
+  db.pragma("journal_mode = WAL");
+  db.pragma("foreign_keys = ON");
+  migrate(db);
+  return db;
+}
+
+function resolveDatabasePath(databaseUrl: string): string {
+  if (databaseUrl.startsWith("file:")) {
+    return resolve(process.cwd(), databaseUrl.slice("file:".length));
+  }
+
+  return resolve(process.cwd(), databaseUrl);
+}
+
+function migrate(db: Db): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS apps (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      slug TEXT NOT NULL UNIQUE,
+      base_url TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS ui_map_versions (
+      id TEXT PRIMARY KEY,
+      app_id TEXT NOT NULL,
+      version TEXT NOT NULL,
+      source TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      completed_at TEXT,
+      error TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS pages (
+      id TEXT PRIMARY KEY,
+      app_id TEXT NOT NULL,
+      ui_map_version_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      route TEXT NOT NULL,
+      url TEXT NOT NULL,
+      title TEXT,
+      status TEXT NOT NULL,
+      error TEXT,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS ui_elements (
+      id TEXT PRIMARY KEY,
+      element_id TEXT NOT NULL,
+      app_id TEXT NOT NULL,
+      ui_map_version_id TEXT NOT NULL,
+      page_id TEXT NOT NULL,
+      route TEXT NOT NULL,
+      page_name TEXT NOT NULL,
+      element_type TEXT NOT NULL,
+      role TEXT,
+      label TEXT,
+      visible_text TEXT,
+      accessible_name TEXT,
+      placeholder TEXT,
+      aria_label TEXT,
+      input_name TEXT,
+      input_type TEXT,
+      description TEXT NOT NULL,
+      selector TEXT NOT NULL,
+      selector_type TEXT NOT NULL,
+      fallback_selectors_json TEXT NOT NULL,
+      nearby_text_json TEXT NOT NULL,
+      tags_json TEXT NOT NULL,
+      selector_quality TEXT NOT NULL,
+      selector_warnings_json TEXT NOT NULL,
+      raw_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS workflow_videos (
+      id TEXT PRIMARY KEY,
+      app_id TEXT NOT NULL,
+      filename TEXT NOT NULL,
+      local_path TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      size_bytes INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      uploaded_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS workflow_jobs (
+      id TEXT PRIMARY KEY,
+      app_id TEXT NOT NULL,
+      video_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      qwen_raw_output_json TEXT,
+      extracted_action_timeline_json TEXT,
+      error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS workflows (
+      id TEXT PRIMARY KEY,
+      workflow_id TEXT NOT NULL UNIQUE,
+      app_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL,
+      status TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      workflow_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS runtime_sessions (
+      id TEXT PRIMARY KEY,
+      app_id TEXT NOT NULL,
+      workflow_id TEXT NOT NULL,
+      client_session_id TEXT,
+      user_id TEXT,
+      status TEXT NOT NULL,
+      current_step_id TEXT,
+      values_json TEXT NOT NULL,
+      started_at TEXT NOT NULL,
+      completed_at TEXT,
+      error TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS execution_logs (
+      id TEXT PRIMARY KEY,
+      app_id TEXT,
+      session_id TEXT,
+      workflow_id TEXT,
+      step_id TEXT,
+      event_type TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS ai_request_logs (
+      id TEXT PRIMARY KEY,
+      provider TEXT NOT NULL,
+      purpose TEXT NOT NULL,
+      input_summary TEXT NOT NULL,
+      output_summary TEXT,
+      latency_ms INTEGER,
+      error TEXT,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ui_elements_app_route ON ui_elements(app_id, route);
+    CREATE INDEX IF NOT EXISTS idx_workflows_app_status ON workflows(app_id, status);
+    CREATE INDEX IF NOT EXISTS idx_execution_logs_filters ON execution_logs(app_id, workflow_id, session_id);
+  `);
+}

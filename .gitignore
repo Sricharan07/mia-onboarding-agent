@@ -9,6 +9,10 @@ build/
 .next/
 .vite/
 coverage/
+data/sqlite/
+data/uploads/
+data/tts/
+backend/data/
 
 *.log
 npm-debug.log*
