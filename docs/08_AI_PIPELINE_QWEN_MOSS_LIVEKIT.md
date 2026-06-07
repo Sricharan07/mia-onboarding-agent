@@ -1,4 +1,4 @@
-# AI Pipeline: Qwen, TrueFoundry, Moss, LiveKit, and TTS
+# AI Pipeline: Qwen, Moss, LiveKit, and TTS
 
 ## 1. Overview
 
@@ -10,7 +10,7 @@ Use separate adapters:
 
 ```text
 Qwen             → workflow video understanding
-TrueFoundry      → model gateway and governance
+Qwen             → runtime LLM / intent classification
 Moss             → semantic search
 LiveKit          → realtime voice/session transport
 STT Adapter      → speech-to-text
@@ -30,9 +30,7 @@ export interface ModelGatewayAdapter {
 }
 ```
 
-TrueFoundry should be the real implementation.
-
-A mock implementation should exist for local tests.
+Qwen should be the real implementation.
 
 ## 2.2 Video Understanding Adapter
 
@@ -64,7 +62,15 @@ export interface SemanticSearchAdapter {
 
 Moss should be the real implementation.
 
-A local in-memory implementation should exist for development fallback.
+Moss should remain behind this interface so retrieval can be tested independently.
+
+Use the official Moss project credentials:
+
+```text
+MOSS_PROJECT_ID=
+MOSS_PROJECT_KEY=
+MOSS_INDEX_NAME=mia-onboarding
+```
 
 ## 2.4 Voice Transport Adapter
 
@@ -129,7 +135,7 @@ Workflow video uploaded through console.
 1. Save uploaded video locally.
 2. Create workflow job.
 3. Extract keyframes if using frame-based processing.
-4. Send video or keyframes to Qwen through TrueFoundry.
+4. Send video or keyframes to Qwen directly through the Qwen adapter.
 5. Request structured JSON action timeline.
 6. Validate output.
 7. Store raw output and parsed timeline.
@@ -416,29 +422,11 @@ For MVP, implement:
 
 If full LiveKit integration is too slow, keep adapter and provide fallback text input, but TTS remains required.
 
-## 9. Stubs Required for Codex
+## 9. Provider Requirements
 
-Codex should implement stubs:
+Use real provider adapters for the MVP.
 
-### Mock Qwen
-
-Returns fixed extracted timeline for example workflow video.
-
-### Mock Moss
-
-In-memory search over indexed records using simple keyword scoring.
-
-### Mock TrueFoundry
-
-Pass-through to mock Qwen or configured provider.
-
-### Mock LiveKit
-
-Returns mock token and allows text-mode fallback.
-
-### Mock TTS
-
-Writes a placeholder audio file or returns a local beep/audio URL.
+If credentials are missing, the backend must fail with a clear configuration error.
 
 ## 10. Logging
 
@@ -447,7 +435,7 @@ Log all AI calls:
 ```ts
 export type AIRequestLog = {
   id: string;
-  provider: "qwen" | "runtime_llm" | "tts" | "moss" | "mock";
+  provider: "qwen" | "runtime_llm" | "tts" | "moss";
   purpose:
     | "video_understanding"
     | "description_generation"

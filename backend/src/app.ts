@@ -8,7 +8,7 @@ import type { AppConfig } from "./config/env.js";
 import { AppError } from "./utils/errors.js";
 import { createDatabase } from "./db/database.js";
 import { Repositories } from "./db/repositories.js";
-import { TrueFoundryModelGatewayAdapter } from "./adapters/truefoundry.js";
+import { QwenModelGatewayAdapter } from "./adapters/qwenGateway.js";
 import { QwenVideoUnderstandingAdapter } from "./adapters/qwen.js";
 import { MossSemanticSearchAdapter } from "./adapters/moss.js";
 import { LiveKitVoiceTransportAdapter } from "./adapters/livekit.js";
@@ -19,6 +19,9 @@ import { WorkflowCompiler } from "./services/workflows/compiler.js";
 import { VideoProcessingService } from "./services/workflows/videoProcessingService.js";
 import { WorkflowService } from "./services/workflows/workflowService.js";
 import { RuntimeService } from "./services/runtime/runtimeService.js";
+import { ApiKeyService } from "./services/auth/apiKeyService.js";
+import { UsageService } from "./services/metrics/usageService.js";
+import { ReadinessService } from "./services/system/readinessService.js";
 import { registerRoutes } from "./routes/index.js";
 
 export type AppDependencies = ReturnType<typeof createDependencies>;
@@ -41,7 +44,7 @@ export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
 function createDependencies(config: AppConfig) {
   const db = createDatabase(config);
   const repositories = new Repositories(db);
-  const gateway = new TrueFoundryModelGatewayAdapter(config);
+  const gateway = new QwenModelGatewayAdapter(config);
   const moss = new MossSemanticSearchAdapter(config);
   const videoUnderstanding = new QwenVideoUnderstandingAdapter(config, gateway);
   const livekit = new LiveKitVoiceTransportAdapter(config);
@@ -57,7 +60,10 @@ function createDependencies(config: AppConfig) {
       uiMap: new UiMapService(repositories, moss),
       videoProcessing: new VideoProcessingService(repositories, videoUnderstanding, compiler),
       workflow: new WorkflowService(repositories, moss),
-      runtime: new RuntimeService(repositories, gateway, moss, tts)
+      runtime: new RuntimeService(repositories, gateway, moss, tts),
+      apiKeys: new ApiKeyService(repositories),
+      usage: new UsageService(repositories),
+      readiness: new ReadinessService(config, repositories)
     }
   };
 }
@@ -114,6 +120,6 @@ function registerLocalFileRoute(app: FastifyInstance, config: AppConfig): void {
     if (!existsSync(path)) {
       return reply.status(404).send({ error: { code: "FILE_NOT_FOUND", message: "TTS file not found." } });
     }
-    return reply.type("audio/mpeg").send(createReadStream(path));
+    return reply.type("audio/wav").send(createReadStream(path));
   });
 }

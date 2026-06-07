@@ -1,9 +1,44 @@
 import type { Db } from "./database.js";
 import { createId, nowIso, slugToId } from "../utils/id.js";
 import { NotFoundError } from "../utils/errors.js";
-import type { AppRecord, UIElementRecord, Workflow } from "../schemas/domain.js";
+import type { AppRecord, UIElementRecord, Workflow, WorkflowStep } from "../schemas/domain.js";
 
 type Row = Record<string, unknown>;
+export type ApiKeyScope = "apps:read" | "ui-map:read" | "workflows:read" | "runtime:write" | "logs:write" | "logs:read" | "admin";
+
+export type ApiKeyRecord = {
+  id: string;
+  name: string;
+  prefix: string;
+  scopes: ApiKeyScope[];
+  createdAt: string;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+};
+
+export type ApiKeySecretRecord = ApiKeyRecord & {
+  keyHash: string;
+};
+
+export type UsageSummary = {
+  totals: {
+    sdkEvents: number;
+    workflowRuns: number;
+    aiRequests: number;
+    errors: number;
+    averageAiLatencyMs: number | null;
+  };
+  eventCounts: Array<{ eventType: string; count: number }>;
+  providerCounts: Array<{ provider: string; count: number }>;
+};
+
+export type UsageTimeseriesPoint = {
+  bucket: string;
+  sdkEvents: number;
+  workflowRuns: number;
+  aiRequests: number;
+  errors: number;
+};
 
 export class Repositories {
   constructor(private readonly db: Db) {}
@@ -177,6 +212,54 @@ export class Repositories {
     return row;
   }
 
+  listWorkflowJobs(appId: string): Array<{
+    id: string;
+    appId: string;
+    videoId: string;
+    filename: string;
+    status: string;
+    error: string | null;
+    createdAt: string;
+    updatedAt: string;
+    workflowId?: string;
+  }> {
+    const rows = this.db.prepare(`
+      SELECT
+        workflow_jobs.id,
+        workflow_jobs.app_id as appId,
+        workflow_jobs.video_id as videoId,
+        workflow_videos.filename as filename,
+        workflow_jobs.status,
+        workflow_jobs.error,
+        workflow_jobs.created_at as createdAt,
+        workflow_jobs.updated_at as updatedAt
+      FROM workflow_jobs
+      INNER JOIN workflow_videos ON workflow_videos.id = workflow_jobs.video_id
+      WHERE workflow_jobs.app_id = ?
+      ORDER BY workflow_jobs.created_at DESC
+    `).all(appId) as Array<{
+      id: string;
+      appId: string;
+      videoId: string;
+      filename: string;
+      status: string;
+      error: string | null;
+      createdAt: string;
+      updatedAt: string;
+    }>;
+
+    const workflowByJobId = new Map<string, string>();
+    const workflowRows = this.db.prepare("SELECT workflow_json FROM workflows WHERE app_id = ?").all(appId) as Array<{ workflow_json: string }>;
+    for (const row of workflowRows) {
+      const workflow = JSON.parse(row.workflow_json) as Workflow;
+      if (workflow.createdFrom?.jobId) {
+        workflowByJobId.set(workflow.createdFrom.jobId, workflow.workflowId);
+      }
+    }
+
+    return rows.map((row) => ({ ...row, workflowId: workflowByJobId.get(row.id) }));
+  }
+
   updateWorkflowJob(jobId: string, patch: { status: string; rawOutput?: unknown; timeline?: unknown; error?: string | null }): void {
     this.db.prepare(`
       UPDATE workflow_jobs
@@ -241,6 +324,49 @@ export class Repositories {
     return JSON.parse(row.workflow_json) as Workflow;
   }
 
+  addWorkflowStep(workflowId: string, step: WorkflowStep): Workflow {
+    const workflow = this.getWorkflow(workflowId);
+    return this.saveMutatedWorkflow({ ...workflow, steps: [...workflow.steps, step] });
+  }
+
+  updateWorkflowStep(workflowId: string, stepId: string, patch: Partial<WorkflowStep>): Workflow {
+    const workflow = this.getWorkflow(workflowId);
+    let found = false;
+    const steps = workflow.steps.map((step) => {
+      if (step.id !== stepId) return step;
+      found = true;
+      return { ...step, ...patch } as WorkflowStep;
+    });
+    if (!found) throw new NotFoundError(`Workflow step not found: ${stepId}`);
+    return this.saveMutatedWorkflow({ ...workflow, steps });
+  }
+
+  deleteWorkflowStep(workflowId: string, stepId: string): Workflow {
+    const workflow = this.getWorkflow(workflowId);
+    const steps = workflow.steps.filter((step) => step.id !== stepId);
+    if (steps.length === workflow.steps.length) throw new NotFoundError(`Workflow step not found: ${stepId}`);
+    return this.saveMutatedWorkflow({ ...workflow, steps });
+  }
+
+  reorderWorkflowSteps(workflowId: string, stepIds: string[]): Workflow {
+    const workflow = this.getWorkflow(workflowId);
+    const currentById = new Map(workflow.steps.map((step) => [step.id, step]));
+    if (stepIds.length !== workflow.steps.length || stepIds.some((stepId) => !currentById.has(stepId))) {
+      throw new NotFoundError("Workflow step reorder payload must include every existing step exactly once.");
+    }
+    return this.saveMutatedWorkflow({ ...workflow, steps: stepIds.map((stepId) => currentById.get(stepId)!) });
+  }
+
+  private saveMutatedWorkflow(workflow: Workflow): Workflow {
+    const next: Workflow = {
+      ...workflow,
+      status: workflow.status === "published" ? "needs_review" : workflow.status,
+      updatedAt: nowIso()
+    };
+    this.saveWorkflow(next);
+    return next;
+  }
+
   createRuntimeSession(input: { appId: string; workflowId: string; clientSessionId?: string; userId?: string }): { runtimeSessionId: string; status: string } {
     const id = createId("workflow_runtime");
     this.db.prepare(`
@@ -291,6 +417,131 @@ export class Repositories {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(createId("ai_log"), input.provider, input.purpose, input.inputSummary, input.outputSummary ?? null, input.latencyMs ?? null, input.error ?? null, nowIso());
   }
+
+  createApiKey(input: { name: string; prefix: string; keyHash: string; scopes: ApiKeyScope[] }): ApiKeyRecord {
+    const now = nowIso();
+    const id = createId("api_key");
+    this.db.prepare(`
+      INSERT INTO api_keys (id, name, prefix, key_hash, scopes_json, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(id, input.name, input.prefix, input.keyHash, JSON.stringify(input.scopes), now);
+    return this.getApiKeyById(id);
+  }
+
+  listApiKeys(): ApiKeyRecord[] {
+    return (this.db.prepare(`
+      SELECT id, name, prefix, scopes_json, created_at, last_used_at, revoked_at
+      FROM api_keys ORDER BY created_at DESC
+    `).all() as Row[]).map(mapApiKey);
+  }
+
+  getApiKeyById(id: string): ApiKeyRecord {
+    const row = this.db.prepare(`
+      SELECT id, name, prefix, scopes_json, created_at, last_used_at, revoked_at
+      FROM api_keys WHERE id = ?
+    `).get(id) as Row | undefined;
+    if (!row) throw new NotFoundError(`API key not found: ${id}`);
+    return mapApiKey(row);
+  }
+
+  getApiKeySecretByPrefix(prefix: string): ApiKeySecretRecord | undefined {
+    const row = this.db.prepare(`
+      SELECT id, name, prefix, key_hash, scopes_json, created_at, last_used_at, revoked_at
+      FROM api_keys WHERE prefix = ? LIMIT 1
+    `).get(prefix) as Row | undefined;
+    return row ? mapApiKeySecret(row) : undefined;
+  }
+
+  revokeApiKey(id: string): ApiKeyRecord {
+    const result = this.db.prepare("UPDATE api_keys SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ?")
+      .run(nowIso(), id);
+    if (result.changes === 0) throw new NotFoundError(`API key not found: ${id}`);
+    return this.getApiKeyById(id);
+  }
+
+  markApiKeyUsed(id: string): void {
+    this.db.prepare("UPDATE api_keys SET last_used_at = ? WHERE id = ?").run(nowIso(), id);
+  }
+
+  getUsageSummary(filters: { appId?: string; from?: string; to?: string }): UsageSummary {
+    const executionWhere = buildLogWhere("execution_logs", filters);
+    const aiWhere = buildAiWhere(filters);
+    const executionRows = this.db.prepare(`
+      SELECT event_type as eventType, COUNT(*) as count
+      FROM execution_logs ${executionWhere.where}
+      GROUP BY event_type ORDER BY count DESC
+    `).all(...executionWhere.params) as Array<{ eventType: string; count: number }>;
+    const providerRows = this.db.prepare(`
+      SELECT provider, COUNT(*) as count
+      FROM ai_request_logs ${aiWhere.where}
+      GROUP BY provider ORDER BY count DESC
+    `).all(...aiWhere.params) as Array<{ provider: string; count: number }>;
+    const executionTotals = this.db.prepare(`
+      SELECT
+        COUNT(*) as sdkEvents,
+        SUM(CASE WHEN event_type LIKE 'workflow_%' THEN 1 ELSE 0 END) as workflowRuns,
+        SUM(CASE WHEN event_type LIKE '%error%' OR event_type LIKE '%failed%' THEN 1 ELSE 0 END) as errors
+      FROM execution_logs ${executionWhere.where}
+    `).get(...executionWhere.params) as Row;
+    const aiTotals = this.db.prepare(`
+      SELECT
+        COUNT(*) as aiRequests,
+        AVG(latency_ms) as averageAiLatencyMs,
+        SUM(CASE WHEN error IS NOT NULL AND error != '' THEN 1 ELSE 0 END) as errors
+      FROM ai_request_logs ${aiWhere.where}
+    `).get(...aiWhere.params) as Row;
+
+    return {
+      totals: {
+        sdkEvents: Number(executionTotals.sdkEvents ?? 0),
+        workflowRuns: Number(executionTotals.workflowRuns ?? 0),
+        aiRequests: Number(aiTotals.aiRequests ?? 0),
+        errors: Number(executionTotals.errors ?? 0) + Number(aiTotals.errors ?? 0),
+        averageAiLatencyMs: aiTotals.averageAiLatencyMs === null || aiTotals.averageAiLatencyMs === undefined ? null : Math.round(Number(aiTotals.averageAiLatencyMs))
+      },
+      eventCounts: executionRows.map((row) => ({ eventType: row.eventType, count: Number(row.count) })),
+      providerCounts: providerRows.map((row) => ({ provider: row.provider, count: Number(row.count) }))
+    };
+  }
+
+  getUsageTimeseries(filters: { appId?: string; from?: string; to?: string; bucket?: "day" }): UsageTimeseriesPoint[] {
+    const executionWhere = buildLogWhere("execution_logs", filters);
+    const aiWhere = buildAiWhere(filters);
+    const points = new Map<string, UsageTimeseriesPoint>();
+    const ensure = (bucket: string) => {
+      const existing = points.get(bucket);
+      if (existing) return existing;
+      const point = { bucket, sdkEvents: 0, workflowRuns: 0, aiRequests: 0, errors: 0 };
+      points.set(bucket, point);
+      return point;
+    };
+
+    const executionRows = this.db.prepare(`
+      SELECT substr(created_at, 1, 10) as bucket, event_type as eventType, COUNT(*) as count
+      FROM execution_logs ${executionWhere.where}
+      GROUP BY bucket, event_type
+    `).all(...executionWhere.params) as Array<{ bucket: string; eventType: string; count: number }>;
+    for (const row of executionRows) {
+      const point = ensure(row.bucket);
+      point.sdkEvents += Number(row.count);
+      if (row.eventType.startsWith("workflow_")) point.workflowRuns += Number(row.count);
+      if (row.eventType.includes("error") || row.eventType.includes("failed")) point.errors += Number(row.count);
+    }
+
+    const aiRows = this.db.prepare(`
+      SELECT substr(created_at, 1, 10) as bucket, COUNT(*) as count,
+        SUM(CASE WHEN error IS NOT NULL AND error != '' THEN 1 ELSE 0 END) as errors
+      FROM ai_request_logs ${aiWhere.where}
+      GROUP BY bucket
+    `).all(...aiWhere.params) as Array<{ bucket: string; count: number; errors: number }>;
+    for (const row of aiRows) {
+      const point = ensure(row.bucket);
+      point.aiRequests += Number(row.count);
+      point.errors += Number(row.errors ?? 0);
+    }
+
+    return [...points.values()].sort((a, b) => a.bucket.localeCompare(b.bucket));
+  }
 }
 
 function mapApp(row: Row): AppRecord {
@@ -302,4 +553,59 @@ function mapApp(row: Row): AppRecord {
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at)
   };
+}
+
+function mapApiKey(row: Row): ApiKeyRecord {
+  return {
+    id: String(row.id),
+    name: String(row.name),
+    prefix: String(row.prefix),
+    scopes: JSON.parse(String(row.scopes_json)) as ApiKeyScope[],
+    createdAt: String(row.created_at),
+    lastUsedAt: row.last_used_at ? String(row.last_used_at) : null,
+    revokedAt: row.revoked_at ? String(row.revoked_at) : null
+  };
+}
+
+function mapApiKeySecret(row: Row): ApiKeySecretRecord {
+  return {
+    ...mapApiKey(row),
+    keyHash: String(row.key_hash)
+  };
+}
+
+function buildLogWhere(table: "execution_logs", filters: { appId?: string; from?: string; to?: string }): { where: string; params: unknown[] } {
+  const clauses: string[] = [];
+  const params: unknown[] = [];
+  if (filters.appId) {
+    clauses.push(`${table}.app_id = ?`);
+    params.push(filters.appId);
+  }
+  if (filters.from) {
+    clauses.push(`${table}.created_at >= ?`);
+    params.push(filters.from);
+  }
+  if (filters.to) {
+    clauses.push(`${table}.created_at <= ?`);
+    params.push(filters.to);
+  }
+  return { where: clauses.length ? `WHERE ${clauses.join(" AND ")}` : "", params };
+}
+
+function buildAiWhere(filters: { appId?: string; from?: string; to?: string }): { where: string; params: unknown[] } {
+  const clauses: string[] = [];
+  const params: unknown[] = [];
+  if (filters.appId) {
+    clauses.push("(input_summary LIKE ? OR output_summary LIKE ?)");
+    params.push(`%${filters.appId}%`, `%${filters.appId}%`);
+  }
+  if (filters.from) {
+    clauses.push("created_at >= ?");
+    params.push(filters.from);
+  }
+  if (filters.to) {
+    clauses.push("created_at <= ?");
+    params.push(filters.to);
+  }
+  return { where: clauses.length ? `WHERE ${clauses.join(" AND ")}` : "", params };
 }

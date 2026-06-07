@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { extname } from "node:path";
 import type { AppConfig } from "../config/env.js";
 import { requireConfig } from "../config/env.js";
 import type { AnalyzeVideoInput, GenerateJsonInput, GenerateTextInput, ModelGatewayAdapter } from "./interfaces.js";
@@ -13,22 +14,28 @@ type ChatCompletionResponse = {
   }>;
 };
 
-export class TrueFoundryModelGatewayAdapter implements ModelGatewayAdapter {
+export class QwenModelGatewayAdapter implements ModelGatewayAdapter {
   constructor(private readonly config: AppConfig) {}
 
   async generateText(input: GenerateTextInput): Promise<{ text: string; raw: unknown }> {
-    requireConfig(this.config, ["TRUEFOUNDRY_BASE_URL", "TRUEFOUNDRY_API_KEY"], "TrueFoundry");
+    requireConfig(this.config, ["QWEN_BASE_URL", "QWEN_API_KEY"], "Qwen model gateway");
+    const model = input.model ?? this.config.RUNTIME_LLM_MODEL ?? this.config.QWEN_MODEL;
+    if (!model) {
+      throw new AppError("CONFIG_ERROR", "Qwen model gateway is not configured. Missing: RUNTIME_LLM_MODEL or QWEN_MODEL.", 500);
+    }
+
     const raw = await requestJson<ChatCompletionResponse>({
-      url: joinUrl(this.config.TRUEFOUNDRY_BASE_URL!, this.config.TRUEFOUNDRY_TEXT_ENDPOINT),
-      headers: { authorization: `Bearer ${this.config.TRUEFOUNDRY_API_KEY}` },
+      url: joinUrl(this.config.QWEN_BASE_URL!, this.config.QWEN_TEXT_ENDPOINT),
+      headers: { authorization: `Bearer ${this.config.QWEN_API_KEY}` },
       body: {
-        model: input.model ?? this.config.RUNTIME_LLM_MODEL ?? this.config.QWEN_MODEL,
+        model,
         messages: [
           ...(input.system ? [{ role: "system", content: input.system }] : []),
           { role: "user", content: input.prompt }
         ]
       }
     });
+
     return { text: extractText(raw), raw };
   }
 
@@ -42,29 +49,36 @@ export class TrueFoundryModelGatewayAdapter implements ModelGatewayAdapter {
   }
 
   async analyzeImagesOrVideo<T>(input: AnalyzeVideoInput): Promise<{ data: T; raw: unknown }> {
-    requireConfig(this.config, ["TRUEFOUNDRY_BASE_URL", "TRUEFOUNDRY_API_KEY"], "TrueFoundry video gateway");
+    requireConfig(this.config, ["QWEN_BASE_URL", "QWEN_API_KEY"], "Qwen video gateway");
+    const model = input.model ?? this.config.QWEN_VISION_MODEL ?? this.config.QWEN_MODEL;
+    if (!model) {
+      throw new AppError("CONFIG_ERROR", "Qwen video gateway is not configured. Missing: QWEN_VISION_MODEL or QWEN_MODEL.", 500);
+    }
+
     const videoBase64 = readFileSync(input.videoPath).toString("base64");
     const raw = await requestJson<ChatCompletionResponse>({
-      url: joinUrl(this.config.TRUEFOUNDRY_BASE_URL!, this.config.TRUEFOUNDRY_VIDEO_ENDPOINT),
-      headers: { authorization: `Bearer ${this.config.TRUEFOUNDRY_API_KEY}` },
+      url: joinUrl(this.config.QWEN_BASE_URL!, this.config.QWEN_VIDEO_ENDPOINT),
+      headers: { authorization: `Bearer ${this.config.QWEN_API_KEY}` },
       body: {
-        model: input.model ?? this.config.QWEN_VISION_MODEL ?? this.config.QWEN_MODEL,
+        model,
         messages: [
           {
             role: "user",
             content: [
-              { type: "text", text: input.prompt },
               {
-                type: "input_video",
-                input_video: {
-                  data: videoBase64
-                }
-              }
+                type: "video_url",
+                video_url: {
+                  url: `data:${mimeTypeForVideo(input.videoPath)};base64,${videoBase64}`
+                },
+                fps: 2
+              },
+              { type: "text", text: input.prompt }
             ]
           }
         ]
       }
     });
+
     return { data: parseProviderJson<T>(extractText(raw)), raw };
   }
 }
@@ -72,7 +86,7 @@ export class TrueFoundryModelGatewayAdapter implements ModelGatewayAdapter {
 function extractText(raw: ChatCompletionResponse): string {
   const text = raw.choices?.[0]?.message?.content;
   if (!text) {
-    throw new AppError("PROVIDER_ERROR", "Provider response did not include text content.", 502, raw);
+    throw new AppError("PROVIDER_ERROR", "Qwen response did not include text content.", 502, raw);
   }
   return text;
 }
@@ -82,6 +96,14 @@ function parseProviderJson<T>(text: string): T {
   try {
     return JSON.parse(trimmed) as T;
   } catch (error) {
-    throw new AppError("PROVIDER_JSON_ERROR", "Provider returned invalid JSON.", 502, { text, error: error instanceof Error ? error.message : String(error) });
+    throw new AppError("PROVIDER_JSON_ERROR", "Qwen returned invalid JSON.", 502, { text, error: error instanceof Error ? error.message : String(error) });
   }
+}
+
+function mimeTypeForVideo(path: string): string {
+  const extension = extname(path).toLowerCase();
+  if (extension === ".webm") return "video/webm";
+  if (extension === ".mov") return "video/quicktime";
+  if (extension === ".m4v") return "video/x-m4v";
+  return "video/mp4";
 }

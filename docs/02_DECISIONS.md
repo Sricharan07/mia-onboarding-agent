@@ -290,7 +290,6 @@ Local database
 Local file storage
 Moss semantic index
 LiveKit dev setup
-TrueFoundry model gateway
 Qwen model API
 Frontend SDK
 ```
@@ -299,7 +298,7 @@ Frontend SDK
 
 Local setup means the product, backend, storage, and example app run locally.
 
-External model APIs are still allowed during development through TrueFoundry.
+External Qwen APIs are allowed during development through the Qwen adapter.
 
 If full offline AI is required later, model choices must be revisited.
 
@@ -317,7 +316,7 @@ Required adapters:
 6. `TextToSpeechAdapter`
 7. `FileStorageAdapter`
 
-This lets Codex implement local stubs first and real integrations later.
+This keeps business logic isolated from provider SDKs and HTTP details.
 
 ## 10. Coding Decision
 

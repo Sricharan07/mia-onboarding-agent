@@ -35,7 +35,6 @@ External/dev adapters:
 ```text
 Qwen              → workflow video understanding
 Moss              → semantic search index
-TrueFoundry       → model gateway/control layer
 LiveKit           → realtime voice/session transport
 Qwen Voice / TTS  → spoken assistant responses
 ```
@@ -109,7 +108,7 @@ Responsibilities:
 1. Store UI maps.
 2. Store workflow videos locally.
 3. Create video-processing jobs.
-4. Call Qwen through TrueFoundry.
+4. Call Qwen through the Qwen adapter.
 5. Match video actions to UI elements using Moss.
 6. Compile workflow JSON.
 7. Serve console APIs.
@@ -154,21 +153,7 @@ Moss is not the source of truth.
 
 When Moss returns an ID, backend must load full record from local database.
 
-## 2.7 TrueFoundry
-
-TrueFoundry is the model gateway and control layer.
-
-Responsibilities:
-
-1. Route model calls.
-2. Control model provider configuration.
-3. Track errors and latency.
-4. Add governance and safety policies.
-5. Provide fallback routing where configured.
-
-Backend should not call provider APIs directly from business logic. Use adapters.
-
-## 2.8 Qwen
+## 2.7 Qwen
 
 Qwen is the primary workflow video understanding model.
 
@@ -181,7 +166,9 @@ Responsibilities:
 
 Qwen does not decide final workflow execution.
 
-## 2.9 LiveKit
+Backend should not call provider APIs directly from business logic. Use adapters.
+
+## 2.8 LiveKit
 
 LiveKit is the realtime voice transport.
 
@@ -192,7 +179,7 @@ Responsibilities:
 3. Support realtime assistant events.
 4. Support interruption/cancel events.
 
-## 2.10 TTS / Qwen Voice
+## 2.9 TTS / Qwen Voice
 
 TTS is required for MVP.
 
@@ -289,7 +276,6 @@ backend/src/
     logs/
   adapters/
     qwen/
-    truefoundry/
     moss/
     livekit/
     stt/
@@ -435,6 +421,6 @@ If SDK cannot find element:
 
 ## 8. Implementation Principle
 
-Build every external dependency behind an interface and include a local mock implementation.
+Build every external dependency behind an interface.
 
-This lets the project run even without all API keys.
+If API keys or endpoints are missing, fail with a clear configuration error instead of silently changing provider behavior.

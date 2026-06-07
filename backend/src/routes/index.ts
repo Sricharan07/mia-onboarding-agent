@@ -6,8 +6,14 @@ import { registerWorkflowRoutes } from "./workflows.js";
 import { registerRuntimeRoutes } from "./runtime.js";
 import { registerVoiceRoutes } from "./voice.js";
 import { registerLogRoutes } from "./logs.js";
+import { registerApiKeyHook } from "./auth.js";
+import { registerApiKeyRoutes } from "./apiKeys.js";
+import { registerMetricRoutes } from "./metrics.js";
+import { registerSystemRoutes } from "./system.js";
 
 export async function registerRoutes(app: FastifyInstance, dependencies: AppDependencies): Promise<void> {
+  registerApiKeyHook(app, dependencies);
+
   app.get("/api/v1/health", async () => ({
     ok: true,
     service: "ai-onboarding-backend",
@@ -15,6 +21,9 @@ export async function registerRoutes(app: FastifyInstance, dependencies: AppDepe
     time: new Date().toISOString()
   }));
 
+  await registerSystemRoutes(app, dependencies);
+  await registerApiKeyRoutes(app, dependencies);
+  await registerMetricRoutes(app, dependencies);
   await registerAppRoutes(app, dependencies);
   await registerUiMapRoutes(app, dependencies);
   await registerWorkflowRoutes(app, dependencies);

@@ -3,6 +3,7 @@ export type ExecutionPolicy = "auto" | "requires_confirmation" | "manual_only" |
 export type SDKConfig = {
   appId: string;
   backendUrl: string;
+  apiKey?: string;
   enableVoice: boolean;
   enableTTS: boolean;
   user?: {

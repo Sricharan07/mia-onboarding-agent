@@ -1,8 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { AppDependencies } from "../app.js";
-import { workflowSchema } from "../schemas/domain.js";
+import { workflowSchema, workflowStepSchema } from "../schemas/domain.js";
 import { ValidationAppError } from "../utils/errors.js";
+import { requireApiKeyScopeIfPresent } from "./auth.js";
 
 export async function registerWorkflowRoutes(app: FastifyInstance, dependencies: AppDependencies): Promise<void> {
   app.post("/api/v1/apps/:appId/workflow-videos", async (request) => {
@@ -26,7 +27,16 @@ export async function registerWorkflowRoutes(app: FastifyInstance, dependencies:
     });
   });
 
-  app.get("/api/v1/workflow-jobs/:jobId", async (request) => {
+  app.get("/api/v1/apps/:appId/workflow-jobs", {
+    preHandler: (request, reply) => requireApiKeyScopeIfPresent(request, reply, dependencies, ["workflows:read"])
+  }, async (request) => {
+    const params = z.object({ appId: z.string() }).parse(request.params);
+    return { items: dependencies.repositories.listWorkflowJobs(params.appId) };
+  });
+
+  app.get("/api/v1/workflow-jobs/:jobId", {
+    preHandler: (request, reply) => requireApiKeyScopeIfPresent(request, reply, dependencies, ["workflows:read"])
+  }, async (request) => {
     const params = z.object({ jobId: z.string() }).parse(request.params);
     const job = dependencies.repositories.getWorkflowJob(params.jobId);
     return {
@@ -46,13 +56,17 @@ export async function registerWorkflowRoutes(app: FastifyInstance, dependencies:
     return { jobId: params.jobId, status: "analyzing" };
   });
 
-  app.get("/api/v1/apps/:appId/workflows", async (request) => {
+  app.get("/api/v1/apps/:appId/workflows", {
+    preHandler: (request, reply) => requireApiKeyScopeIfPresent(request, reply, dependencies, ["workflows:read"])
+  }, async (request) => {
     const params = z.object({ appId: z.string() }).parse(request.params);
     const query = z.object({ status: z.string().optional() }).parse(request.query);
     return { items: dependencies.repositories.listWorkflows(params.appId, query.status) };
   });
 
-  app.get("/api/v1/workflows/:workflowId", async (request) => {
+  app.get("/api/v1/workflows/:workflowId", {
+    preHandler: (request, reply) => requireApiKeyScopeIfPresent(request, reply, dependencies, ["workflows:read"])
+  }, async (request) => {
     const params = z.object({ workflowId: z.string() }).parse(request.params);
     return dependencies.repositories.getWorkflow(params.workflowId);
   });
@@ -81,5 +95,28 @@ export async function registerWorkflowRoutes(app: FastifyInstance, dependencies:
     const params = z.object({ workflowId: z.string() }).parse(request.params);
     const workflow = dependencies.services.workflow.archiveWorkflow(params.workflowId);
     return { workflowId: workflow.workflowId, status: workflow.status };
+  });
+
+  app.post("/api/v1/workflows/:workflowId/steps", async (request) => {
+    const params = z.object({ workflowId: z.string() }).parse(request.params);
+    const body = workflowStepSchema.parse(request.body);
+    return dependencies.services.workflow.addStep(params.workflowId, body);
+  });
+
+  app.patch("/api/v1/workflows/:workflowId/steps/:stepId", async (request) => {
+    const params = z.object({ workflowId: z.string(), stepId: z.string() }).parse(request.params);
+    const body = z.record(z.string(), z.unknown()).parse(request.body);
+    return dependencies.services.workflow.updateStep(params.workflowId, params.stepId, body);
+  });
+
+  app.delete("/api/v1/workflows/:workflowId/steps/:stepId", async (request) => {
+    const params = z.object({ workflowId: z.string(), stepId: z.string() }).parse(request.params);
+    return dependencies.services.workflow.deleteStep(params.workflowId, params.stepId);
+  });
+
+  app.post("/api/v1/workflows/:workflowId/steps/reorder", async (request) => {
+    const params = z.object({ workflowId: z.string() }).parse(request.params);
+    const body = z.object({ stepIds: z.array(z.string()).min(1) }).parse(request.body);
+    return dependencies.services.workflow.reorderSteps(params.workflowId, body.stepIds);
   });
 }

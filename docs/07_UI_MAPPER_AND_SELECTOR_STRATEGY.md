@@ -366,7 +366,7 @@ Navigates to the {label} section.
 
 ## 11.3 LLM Description Prompt
 
-Use a small LLM through TrueFoundry only when needed.
+Use a small Qwen model only when needed.
 
 Prompt:
 
@@ -525,5 +525,5 @@ async function scanApp(config: ScanConfig): Promise<UIMapVersion> {
 5. Creates fallback selector when stable selector does not exist.
 6. Scores selector quality.
 7. Shows weak selector warnings in console.
-8. Indexes searchable element records in Moss or mock Moss.
+8. Indexes searchable element records in Moss.
 9. Stores full UI map in local DB.

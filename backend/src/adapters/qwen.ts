@@ -15,7 +15,6 @@ export class QwenVideoUnderstandingAdapter implements VideoUnderstandingAdapter 
       uiMapSummary?: string;
     };
   }): Promise<{ timeline: ExtractedActionTimeline; raw: unknown }> {
-    requireConfig(this.config, ["QWEN_MODEL"], "Qwen video understanding");
     const prompt = buildPrompt(input.appContext);
     const result = await this.gateway.analyzeImagesOrVideo<unknown>({
       videoPath: input.videoPath,

@@ -29,6 +29,7 @@ import { AIOnboardingAgent } from "@local/ai-onboarding-sdk";
 AIOnboardingAgent.init({
   appId: "app_example_app",
   backendUrl: "http://localhost:4000",
+  apiKey: "mia_...",
   enableVoice: true,
   enableTTS: true,
   user: {
@@ -44,6 +45,7 @@ AIOnboardingAgent.init({
 export type SDKConfig = {
   appId: string;
   backendUrl: string;
+  apiKey?: string;
   enableVoice: boolean;
   enableTTS: boolean;
   user?: {

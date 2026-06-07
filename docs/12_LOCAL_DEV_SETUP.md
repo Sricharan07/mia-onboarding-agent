@@ -14,11 +14,10 @@ Console frontend
 Local backend
 Local database
 Local file storage
-Moss semantic index or mock Moss
-LiveKit dev setup or mock LiveKit
-TrueFoundry model gateway or mock gateway
-Qwen model API or mock Qwen
-TTS provider or mock TTS
+Moss semantic index
+LiveKit dev setup
+Qwen model API
+TTS provider
 Frontend SDK
 ```
 
@@ -57,24 +56,30 @@ LOCAL_TTS_DIR=./data/tts
 APP_ID=app_example_app
 APP_BASE_URL=http://localhost:3000
 
-TRUEFOUNDRY_API_KEY=
-TRUEFOUNDRY_BASE_URL=
-
 QWEN_API_KEY=
+QWEN_BASE_URL=https://dashscope-us.aliyuncs.com/compatible-mode/v1
+QWEN_TEXT_ENDPOINT=/chat/completions
+QWEN_VIDEO_ENDPOINT=/chat/completions
 QWEN_MODEL=
+QWEN_VISION_MODEL=
 QWEN_VOICE_MODEL=
+QWEN_TTS_BASE_URL=https://dashscope-us.aliyuncs.com/api/v1
+QWEN_TTS_ENDPOINT=/services/aigc/multimodal-generation/generation
 
-MOSS_API_KEY=
-MOSS_BASE_URL=
+MOSS_PROJECT_ID=
+MOSS_PROJECT_KEY=
+MOSS_INDEX_NAME=mia-onboarding
 
 LIVEKIT_URL=
 LIVEKIT_API_KEY=
 LIVEKIT_API_SECRET=
 
-STT_PROVIDER=mock
-TTS_PROVIDER=mock
-SEMANTIC_SEARCH_PROVIDER=mock
-VIDEO_UNDERSTANDING_PROVIDER=mock
+STT_API_KEY=
+STT_BASE_URL=https://dashscope-us.aliyuncs.com/compatible-mode/v1
+STT_ENDPOINT=/chat/completions
+STT_MODEL=
+
+RUNTIME_LLM_MODEL=
 ```
 
 ## 4. Recommended Scripts
@@ -132,69 +137,21 @@ These can be gitignored.
 
 ## 7. Provider Modes
 
-Every external provider should support mock mode.
+The MVP uses real provider adapters.
 
 ```text
-VIDEO_UNDERSTANDING_PROVIDER=mock|qwen
-SEMANTIC_SEARCH_PROVIDER=mock|moss
-TTS_PROVIDER=mock|qwen_voice
-STT_PROVIDER=mock|provider_name
-VOICE_TRANSPORT_PROVIDER=mock|livekit
-MODEL_GATEWAY_PROVIDER=mock|truefoundry
+VIDEO_UNDERSTANDING_PROVIDER=qwen
+SEMANTIC_SEARCH_PROVIDER=moss
+TTS_PROVIDER=qwen_voice
+STT_PROVIDER=provider_name
+VOICE_TRANSPORT_PROVIDER=livekit
 ```
 
-## 8. Mock Mode Behavior
+## 8. Provider Failure Behavior
 
-## 8.1 Mock Qwen
-
-If uploaded filename contains:
-
-```text
-customer
-```
-
-Return Create Customer timeline.
-
-If filename contains:
-
-```text
-invite
-```
-
-Return Invite Teammate timeline.
-
-Otherwise return generic empty timeline.
-
-## 8.2 Mock Moss
-
-Use in-memory or local DB search.
-
-Search strategy:
-
-1. Lowercase query.
-2. Tokenize.
-3. Score records by token overlap.
-4. Apply filters.
-5. Return top matches.
-
-## 8.3 Mock TTS
-
-Return static audio file or generate placeholder.
-
-If generating audio is too much, return:
-
-```json
-{
-  "audioUrl": "/local-files/tts/mock.wav",
-  "mimeType": "audio/wav"
-}
-```
+If credentials or endpoints are missing, the backend must return a clear configuration error.
 
 Also return text so UI can show response.
-
-## 8.4 Mock LiveKit
-
-Return mock token and allow text fallback.
 
 ## 9. Example Data Seed
 
@@ -262,7 +219,7 @@ Check:
 
 ```text
 workflow is published
-workflow is indexed in Moss/mock Moss
+workflow is indexed in Moss
 backend URL is correct
 appId matches
 ```

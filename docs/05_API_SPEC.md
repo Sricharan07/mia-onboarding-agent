@@ -80,6 +80,96 @@ Response:
 }
 ```
 
+### GET `/api/v1/system/readiness`
+
+Returns database and provider readiness without running credit-consuming model, voice, transcription, indexing, or room operations.
+
+Response:
+
+```json
+{
+  "database": {
+    "configured": true,
+    "reachable": true,
+    "status": "ok",
+    "message": "SQLite database is reachable."
+  },
+  "providers": {
+    "qwen": {
+      "configured": true,
+      "reachable": true,
+      "status": "ok",
+      "message": "Qwen model endpoint is reachable."
+    },
+    "qwenTts": {
+      "configured": true,
+      "reachable": null,
+      "status": "unverified",
+      "message": "Qwen Voice/TTS is configured. No-credit live operation was not run."
+    },
+    "stt": {
+      "configured": true,
+      "reachable": null,
+      "status": "unverified",
+      "message": "STT is configured. No-credit live operation was not run."
+    },
+    "moss": {
+      "configured": true,
+      "reachable": null,
+      "status": "unverified",
+      "message": "Moss is configured. No-credit live operation was not run."
+    },
+    "livekit": {
+      "configured": true,
+      "reachable": null,
+      "status": "unverified",
+      "message": "LiveKit is configured. No-credit live operation was not run."
+    }
+  }
+}
+```
+
+## 3.1 Local API Keys
+
+Local API keys protect SDK/runtime-sensitive routes. Store only hashed secrets; return the raw key only once on creation.
+
+Supported scopes:
+
+```text
+apps:read
+ui-map:read
+workflows:read
+runtime:write
+logs:write
+logs:read
+admin
+```
+
+Keys can be sent with `Authorization: Bearer mia_...` or `x-api-key: mia_...`.
+
+Local console routes remain usable without an API key in development. If a request does include an API key, read APIs enforce the matching read scope.
+
+### GET `/api/v1/api-keys`
+
+List API keys without raw secrets.
+
+### POST `/api/v1/api-keys`
+
+Request:
+
+```json
+{
+  "name": "Local SDK key",
+  "scopes": ["runtime:write", "logs:write"]
+}
+```
+
+Response includes `key` once.
+
+### DELETE `/api/v1/api-keys/:keyId`
+
+Revokes an API key.
+
 ## 4. Apps
 
 ### GET `/api/v1/apps`
@@ -276,6 +366,30 @@ Response:
 }
 ```
 
+### GET `/api/v1/apps/:appId/workflow-jobs`
+
+List workflow video processing jobs for the console.
+
+Response:
+
+```json
+{
+  "items": [
+    {
+      "id": "job_create_customer",
+      "appId": "app_example_app",
+      "videoId": "video_create_customer",
+      "filename": "create-customer.mp4",
+      "status": "needs_review",
+      "error": null,
+      "createdAt": "2026-06-07T00:00:00.000Z",
+      "updatedAt": "2026-06-07T00:00:00.000Z",
+      "workflowId": "create_customer"
+    }
+  ]
+}
+```
+
 ### GET `/api/v1/workflow-jobs/:jobId`
 
 Get job status.
@@ -420,6 +534,30 @@ Response:
 }
 ```
 
+### POST `/api/v1/workflows/:workflowId/steps`
+
+Add a workflow DSL step and revalidate the full workflow.
+
+### PATCH `/api/v1/workflows/:workflowId/steps/:stepId`
+
+Patch a workflow DSL step and revalidate the full workflow. Editing a published workflow changes status back to `needs_review`.
+
+### DELETE `/api/v1/workflows/:workflowId/steps/:stepId`
+
+Delete a workflow DSL step. The workflow must remain valid.
+
+### POST `/api/v1/workflows/:workflowId/steps/reorder`
+
+Request:
+
+```json
+{
+  "stepIds": ["step_1", "step_2", "step_3"]
+}
+```
+
+The payload must include every existing step exactly once.
+
 ## 8. Runtime Intent Resolution
 
 ### POST `/api/v1/runtime/resolve`
@@ -559,7 +697,7 @@ Response:
 
 Implementation note:
 
-For local MVP, this can return a generated file URL or a mock audio file until Qwen Voice integration is complete.
+For local MVP, this returns a generated audio file URL from the configured TTS provider.
 
 ## 11. LiveKit Token
 
@@ -586,14 +724,7 @@ Response:
 }
 ```
 
-If LiveKit is stubbed, return:
-
-```json
-{
-  "token": "mock",
-  "url": "mock"
-}
-```
+If LiveKit credentials are missing, return a configuration error.
 
 ## 12. Logs
 
@@ -652,6 +783,24 @@ Response:
 }
 ```
 
+## 12.1 Usage Metrics
+
+### GET `/api/v1/metrics/usage`
+
+Aggregates execution logs and AI request logs.
+
+Query params:
+
+```text
+?appId=app_example_app
+?from=2026-06-01T00:00:00.000Z
+?to=2026-06-07T00:00:00.000Z
+```
+
+### GET `/api/v1/metrics/usage/timeseries`
+
+Returns daily usage buckets.
+
 ## 13. Backend Implementation Notes
 
 Codex should:
@@ -659,7 +808,7 @@ Codex should:
 1. Use schema validation for every request.
 2. Return typed errors.
 3. Keep all external calls behind adapters.
-4. Implement local stubs before real integrations.
+4. Keep external calls behind real provider adapters.
 5. Store raw Qwen output for debugging.
 6. Store full workflow JSON in database.
 7. Index Moss only after local DB writes succeed.

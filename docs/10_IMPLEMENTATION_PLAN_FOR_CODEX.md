@@ -40,7 +40,7 @@ ai-onboarding-agent/
     adapters/
       qwen/
       moss/
-      truefoundry/
+      qwen/
       livekit/
       tts/
       stt/
@@ -198,7 +198,7 @@ Tasks:
 4. Score selector quality.
 5. Generate descriptions.
 6. Save UI map through backend API or direct service.
-7. Index records in mock Moss adapter.
+7. Index records in Moss.
 
 Acceptance:
 
@@ -209,18 +209,19 @@ Acceptance:
 
 ## Phase 5: Moss Adapter
 
-Implement interface and mock first.
+Implement the real Moss adapter.
 
 ```ts
 SemanticSearchAdapter
 ```
 
-Mock search:
+Search:
 
-1. Store records in memory or SQLite table.
-2. Tokenize searchable text.
-3. Return approximate keyword matches.
-4. Same API as real Moss adapter.
+1. Use `@moss-dev/moss`.
+2. Authenticate with `MOSS_PROJECT_ID` and `MOSS_PROJECT_KEY`.
+3. Store records in `MOSS_INDEX_NAME`.
+4. Convert `SemanticRecord` to Moss `DocumentInfo`.
+5. Query with Moss metadata filters.
 
 Acceptance:
 
@@ -262,7 +263,7 @@ Acceptance:
 2. Job is created.
 3. Job can be processed.
 
-## Phase 8: Qwen / Mock Qwen Pipeline
+## Phase 8: Qwen Pipeline
 
 Implement:
 
@@ -270,13 +271,7 @@ Implement:
 VideoUnderstandingAdapter
 ```
 
-Start with mock:
-
-1. For a filename containing `customer`, return Create Customer timeline.
-2. For a filename containing `invite`, return Invite Teammate timeline.
-3. Otherwise return generic timeline.
-
-Then integrate real Qwen behind TrueFoundry if API keys are available.
+Integrate real Qwen directly through the Qwen adapter.
 
 Acceptance:
 
@@ -354,16 +349,13 @@ Acceptance:
 
 1. “Help me create a new customer” resolves workflow.
 2. No-match response works.
-3. Answer response can be stubbed.
+3. Answer response works through the runtime Qwen model.
 
 ## Phase 13: TTS
 
 Implement TTS adapter.
 
-Start mock:
-
-1. Generate local placeholder audio or return known audio file.
-2. Return audio URL.
+Use the configured TTS provider and return an audio URL.
 
 Then connect Qwen Voice if available.
 
@@ -426,24 +418,35 @@ LOCAL_TTS_DIR=./data/tts
 APP_ID=app_example_app
 APP_BASE_URL=http://localhost:3000
 
-TRUEFOUNDRY_API_KEY=
-TRUEFOUNDRY_BASE_URL=
-
 QWEN_API_KEY=
+QWEN_BASE_URL=https://dashscope-us.aliyuncs.com/compatible-mode/v1
+QWEN_TEXT_ENDPOINT=/chat/completions
+QWEN_VIDEO_ENDPOINT=/chat/completions
 QWEN_MODEL=
+QWEN_VISION_MODEL=
 QWEN_VOICE_MODEL=
+QWEN_TTS_BASE_URL=https://dashscope-us.aliyuncs.com/api/v1
+QWEN_TTS_ENDPOINT=/services/aigc/multimodal-generation/generation
 
-MOSS_API_KEY=
-MOSS_BASE_URL=
+MOSS_PROJECT_ID=
+MOSS_PROJECT_KEY=
+MOSS_INDEX_NAME=mia-onboarding
 
 LIVEKIT_URL=
 LIVEKIT_API_KEY=
 LIVEKIT_API_SECRET=
 
-STT_PROVIDER=mock
-TTS_PROVIDER=mock
-SEMANTIC_SEARCH_PROVIDER=mock
-VIDEO_UNDERSTANDING_PROVIDER=mock
+STT_API_KEY=
+STT_BASE_URL=https://dashscope-us.aliyuncs.com/compatible-mode/v1
+STT_ENDPOINT=/chat/completions
+STT_MODEL=
+
+RUNTIME_LLM_MODEL=
+
+STT_PROVIDER=provider_name
+TTS_PROVIDER=qwen_voice
+SEMANTIC_SEARCH_PROVIDER=moss
+VIDEO_UNDERSTANDING_PROVIDER=qwen
 ```
 
 ## 6. Implementation Guardrails
@@ -461,8 +464,8 @@ Codex must not:
 
 Codex should:
 
-1. Implement stubs first.
-2. Keep interfaces clean.
-3. Add tests.
-4. Make validation deterministic.
-5. Keep local setup simple.
+1. Keep interfaces clean.
+2. Add tests.
+3. Make validation deterministic.
+4. Keep local setup simple.
+5. Fail clearly when provider credentials are missing.

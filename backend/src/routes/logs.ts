@@ -1,9 +1,12 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { AppDependencies } from "../app.js";
+import { requireApiKeyScope, requireApiKeyScopeIfPresent } from "./auth.js";
 
 export async function registerLogRoutes(app: FastifyInstance, dependencies: AppDependencies): Promise<void> {
-  app.post("/api/v1/logs/execution", async (request) => {
+  app.post("/api/v1/logs/execution", {
+    preHandler: (request, reply) => requireApiKeyScope(request, reply, dependencies, ["logs:write"])
+  }, async (request) => {
     const body = z.object({
       appId: z.string().optional(),
       sessionId: z.string().optional(),
@@ -16,7 +19,9 @@ export async function registerLogRoutes(app: FastifyInstance, dependencies: AppD
     return { ok: true };
   });
 
-  app.get("/api/v1/logs", async (request) => {
+  app.get("/api/v1/logs", {
+    preHandler: (request, reply) => requireApiKeyScopeIfPresent(request, reply, dependencies, ["logs:read"])
+  }, async (request) => {
     const query = z.object({
       appId: z.string().optional(),
       workflowId: z.string().optional(),

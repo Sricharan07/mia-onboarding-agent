@@ -62,7 +62,10 @@ export class BackendClient {
   private async request<T>(path: string, input: { method: string; body?: unknown }): Promise<T> {
     const response = await fetch(`${this.config.backendUrl.replace(/\/+$/, "")}${path}`, {
       method: input.method,
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        ...(this.config.apiKey ? { authorization: `Bearer ${this.config.apiKey}` } : {})
+      },
       body: input.body === undefined ? undefined : JSON.stringify(input.body)
     });
     const json = await response.json();

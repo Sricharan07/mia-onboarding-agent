@@ -57,7 +57,7 @@ The MVP does not include:
 5. `05_API_SPEC.md`
 6. `06_FRONTEND_SDK_SPEC.md`
 7. `07_UI_MAPPER_AND_SELECTOR_STRATEGY.md`
-8. `08_AI_PIPELINE_QWEN_TRUEFOUNDRY_MOSS_LIVEKIT.md`
+8. `08_AI_PIPELINE_QWEN_MOSS_LIVEKIT.md`
 9. `09_CONSOLE_SPEC.md`
 10. `10_IMPLEMENTATION_PLAN_FOR_CODEX.md`
 11. `11_TESTING_AND_ACCEPTANCE.md`
@@ -101,7 +101,6 @@ If selectors are weak, the console recommends adding `data-ai-id` or `data-testi
 | Workflow DSL   | Strict JSON format representing executable workflows.                                |
 | Qwen           | Primary multimodal model for workflow video understanding.                           |
 | Moss           | Semantic search index for UI elements and workflows.                                 |
-| TrueFoundry    | AI gateway and model control layer.                                                  |
 | LiveKit        | Realtime voice/session transport layer.                                              |
 | Qwen Voice     | TTS provider for spoken assistant responses.                                         |
 
@@ -111,9 +110,9 @@ When implementing, follow the docs in this order:
 
 1. Create monorepo structure.
 2. Implement shared TypeScript schemas first.
-3. Implement local backend with stub adapters.
+3. Implement local backend with real provider adapters.
 4. Implement UI mapper and database persistence.
 5. Implement console screens.
 6. Implement SDK overlay and workflow execution.
-7. Implement model/Moss/LiveKit integrations behind interfaces.
+7. Implement Qwen/Moss/LiveKit integrations behind interfaces.
 8. Add tests for schemas, workflow execution, mapper extraction, and API routes.

@@ -5,7 +5,7 @@
 The MVP must prove that the complete workflow works locally:
 
 ```text
-UI map → video upload → Qwen/mock extraction → Moss matching → workflow review → publish → voice/text trigger → SDK cursor execution → TTS response
+UI map → video upload → Qwen extraction → Moss matching → workflow review → publish → voice/text trigger → SDK cursor execution → TTS response
 ```
 
 ## 2. Unit Tests
@@ -40,9 +40,9 @@ Test:
 2. Input description template.
 3. Nearby text included where useful.
 4. Empty label produces generic but safe description.
-5. LLM description can be mocked.
+5. LLM description handles provider errors clearly.
 
-## 2.4 Moss Mock Search
+## 2.4 Moss Search
 
 Test:
 
@@ -99,8 +99,8 @@ Acceptance:
 
 Scenario:
 
-1. Upload mock Create Customer video.
-2. Process job with mock Qwen.
+1. Upload Create Customer workflow video.
+2. Process job with Qwen.
 3. Match actions using Moss.
 4. Compile workflow.
 5. Mark as `needs_review`.
@@ -187,7 +187,7 @@ Description: Opens the customer creation form from the Customers page.
 
 Expected result:
 
-1. Qwen/mock generated action timeline.
+1. Qwen generated action timeline.
 2. Moss matched New Customer button.
 3. Workflow JSON generated.
 
@@ -233,10 +233,10 @@ Passes if:
 3. Apps can be created.
 4. UI map endpoints work.
 5. Video upload works.
-6. Workflow job processing works with mock Qwen.
+6. Workflow job processing works with Qwen.
 7. Workflows can be reviewed/published.
 8. Runtime resolve works.
-9. TTS endpoint returns playable or mock audio.
+9. TTS endpoint returns playable audio.
 
 ## 5.2 Console
 
@@ -307,4 +307,4 @@ Acceptable for MVP:
 5. Only the example app harness is supported.
 6. Workflows can be simple linear flows.
 7. UI mapper can miss hidden modals unless route or interaction opens them.
-8. TTS can use placeholder voice if provider is unavailable, but the product must still call the TTS path.
+8. TTS must use the configured provider and fail clearly if provider credentials are unavailable.

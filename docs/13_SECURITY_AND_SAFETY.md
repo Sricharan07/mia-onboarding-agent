@@ -193,7 +193,37 @@ Required:
 
 ## 13. Authorization for MVP
 
-For local MVP, simple API key or app id is enough.
+For local MVP, use local scoped API keys for SDK/runtime-sensitive backend routes.
+
+Keys:
+
+1. Are created from the console.
+2. Are stored only as hashes in SQLite.
+3. Are shown in raw form only once on creation.
+4. Can be revoked.
+5. Can be sent with `Authorization: Bearer` or `x-api-key`.
+
+Protected routes include:
+
+1. Runtime intent resolution.
+2. Runtime workflow sessions.
+3. LiveKit token generation.
+4. TTS generation.
+5. Execution log ingestion.
+
+Local console read routes remain usable without a key during MVP development. If a key is supplied, the backend validates the key and enforces the matching read scope.
+
+Supported scopes:
+
+```text
+apps:read
+ui-map:read
+workflows:read
+runtime:write
+logs:write
+logs:read
+admin
+```
 
 But structure should allow later:
 

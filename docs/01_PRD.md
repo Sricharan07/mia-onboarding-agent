@@ -373,9 +373,9 @@ Optional third workflow:
 | Element matching fails | Use Moss plus page/route filters and manual correction in console. |
 | Selectors break | Use `data-ai-id` recommendations and selector quality scoring. |
 | Voice integration takes too long | Provide fallback text input while keeping TTS output required. |
-| LiveKit setup slows MVP | Abstract voice transport behind adapter and implement a local mock adapter. |
-| Moss integration uncertain | Create a local mock search adapter with same interface. |
-| TrueFoundry integration uncertain | Create a model gateway interface with stub provider first. |
+| LiveKit setup slows MVP | Keep LiveKit behind an adapter and fail clearly when credentials are missing. |
+| Moss integration uncertain | Keep Moss behind an adapter and fail clearly when credentials are missing. |
+| Qwen integration uncertain | Keep Qwen behind a model gateway adapter and validate every model response. |
 
 ## 14. Open Questions
 

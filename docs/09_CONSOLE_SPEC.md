@@ -60,8 +60,9 @@ Fields:
 6. Moss status.
 7. LiveKit status.
 8. TTS status.
+9. STT status.
 
-For MVP, many settings can read from env and show read-only.
+Provider status is read from backend readiness and must not expose secrets.
 
 ## 3.3 UI Mapping
 
@@ -221,6 +222,41 @@ Shows:
 3. SDK events.
 4. Job errors.
 5. Filter by workflow/session/status.
+
+## 3.10 Usage
+
+Route:
+
+```text
+/usage
+```
+
+Shows backend metrics from execution and AI request logs:
+
+1. SDK events.
+2. Workflow runs.
+3. AI requests.
+4. Error count.
+5. Average AI latency.
+6. Event counts.
+7. Provider counts.
+8. Daily usage buckets.
+
+## 3.11 API Keys
+
+Route:
+
+```text
+/api-keys
+```
+
+Features:
+
+1. Create scoped local API keys.
+2. Show raw key only once after creation.
+3. List key name, prefix, scopes, created time, last used time, and revoked state.
+4. Revoke keys.
+5. Never show stored raw secrets.
 
 ## 4. Workflow Review UX
 
