@@ -13,8 +13,16 @@ export class WorkflowService {
 
   updateWorkflow(workflowId: string, patch: Partial<Workflow>): void {
     const current = this.repositories.getWorkflow(workflowId);
-    const next = workflowSchema.parse({ ...current, ...patch, workflowId: current.workflowId, appId: current.appId, updatedAt: nowIso() });
+    const next = workflowSchema.parse({
+      ...current,
+      ...patch,
+      workflowId: current.workflowId,
+      appId: current.appId,
+      status: patch.status ?? (current.status === "published" ? "needs_review" : current.status),
+      updatedAt: nowIso()
+    });
     this.repositories.saveWorkflow(next);
+    this.syncWorkflowJobStatus(next, next.status);
   }
 
   approveWorkflow(workflowId: string, input: { reviewedBy: string; notes?: string }): Workflow {
@@ -30,6 +38,7 @@ export class WorkflowService {
       updatedAt: nowIso()
     });
     this.repositories.saveWorkflow(next);
+    this.syncWorkflowJobStatus(next, "approved");
     return next;
   }
 
@@ -40,6 +49,7 @@ export class WorkflowService {
     }
     const next = workflowSchema.parse({ ...workflow, status: "published", updatedAt: nowIso() });
     this.repositories.saveWorkflow(next);
+    this.syncWorkflowJobStatus(next, "published");
     await this.moss.index({
       id: `workflow_${next.workflowId}`,
       kind: "workflow",
@@ -67,6 +77,7 @@ export class WorkflowService {
     const workflow = this.repositories.getWorkflow(workflowId);
     const next = workflowSchema.parse({ ...workflow, status: "archived", updatedAt: nowIso() });
     this.repositories.saveWorkflow(next);
+    this.syncWorkflowJobStatus(next, "archived");
     return next;
   }
 
@@ -74,6 +85,7 @@ export class WorkflowService {
     const workflow = this.repositories.getWorkflow(workflowId);
     const next = this.validateStepMutation({ ...workflow, steps: [...workflow.steps, workflowStepSchema.parse(step)] });
     this.repositories.saveWorkflow(next);
+    this.syncWorkflowJobStatus(next, next.status);
     return next;
   }
 
@@ -88,6 +100,7 @@ export class WorkflowService {
     if (!found) throw new AppError("WORKFLOW_STEP_NOT_FOUND", `Workflow step not found: ${stepId}`, 404);
     const next = this.validateStepMutation({ ...workflow, steps });
     this.repositories.saveWorkflow(next);
+    this.syncWorkflowJobStatus(next, next.status);
     return next;
   }
 
@@ -97,6 +110,7 @@ export class WorkflowService {
     if (steps.length === workflow.steps.length) throw new AppError("WORKFLOW_STEP_NOT_FOUND", `Workflow step not found: ${stepId}`, 404);
     const next = this.validateStepMutation({ ...workflow, steps });
     this.repositories.saveWorkflow(next);
+    this.syncWorkflowJobStatus(next, next.status);
     return next;
   }
 
@@ -109,6 +123,7 @@ export class WorkflowService {
     }
     const next = this.validateStepMutation({ ...workflow, steps: stepIds.map((stepId) => currentById.get(stepId)!) });
     this.repositories.saveWorkflow(next);
+    this.syncWorkflowJobStatus(next, next.status);
     return next;
   }
 
@@ -118,5 +133,11 @@ export class WorkflowService {
       status: workflow.status === "published" ? "needs_review" : workflow.status,
       updatedAt: nowIso()
     });
+  }
+
+  private syncWorkflowJobStatus(workflow: Workflow, status: string): void {
+    const jobId = workflow.createdFrom?.jobId;
+    if (!jobId) return;
+    this.repositories.updateWorkflowJob(jobId, { status, error: null });
   }
 }

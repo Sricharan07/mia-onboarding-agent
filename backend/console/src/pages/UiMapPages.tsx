@@ -117,16 +117,16 @@ export function UiMapPage({
     <div className="page-grid">
       <Panel title="Trigger UI mapping scan" action={<StatusPill tone={latestUiMap ? "green" : "gray"} label={latestUiMap?.version ?? "No map"} />}>
         <div className="scan-form">
-          <div className="empty-state">
+          <div className="empty-state scan-callout">
             Demo CRM ingestion: use auth mode <strong>None</strong>, route <code>/dashboard/crm</code>, then capture states for calendar modal and opportunity drawer.
           </div>
           <label>
             Routes to scan
-            <textarea value={routes} onChange={(event) => setRoutes(event.target.value)} rows={5} />
+            <textarea className="scan-routes" value={routes} onChange={(event) => setRoutes(event.target.value)} rows={5} />
           </label>
           <label>
             Auth mode
-            <select value={authMode} onChange={(event) => setAuthMode(event.target.value as "none" | "login_form")}>
+            <select className="scan-select" value={authMode} onChange={(event) => setAuthMode(event.target.value as "none" | "login_form")}>
               <option value="none">None</option>
               <option value="login_form">Login form from backend env</option>
             </select>

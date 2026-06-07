@@ -245,7 +245,7 @@ export class Repositories {
     createdAt: string;
     updatedAt: string;
     workflowId?: string;
-  }> {
+    }> {
     const rows = this.db.prepare(`
       SELECT
         workflow_jobs.id,
@@ -272,15 +272,33 @@ export class Repositories {
     }>;
 
     const workflowByJobId = new Map<string, string>();
+    const workflowStatusByJobId = new Map<string, string>();
     const workflowRows = this.db.prepare("SELECT workflow_json FROM workflows WHERE app_id = ?").all(appId) as Array<{ workflow_json: string }>;
     for (const row of workflowRows) {
       const workflow = JSON.parse(row.workflow_json) as Workflow;
       if (workflow.createdFrom?.jobId) {
         workflowByJobId.set(workflow.createdFrom.jobId, workflow.workflowId);
+        workflowStatusByJobId.set(workflow.createdFrom.jobId, workflow.status);
       }
     }
 
-    return rows.map((row) => ({ ...row, workflowId: workflowByJobId.get(row.id) }));
+    return rows.map((row) => ({
+      ...row,
+      workflowId: workflowByJobId.get(row.id),
+      status: workflowStatusByJobId.get(row.id) ?? row.status
+    }));
+  }
+
+  getWorkflowMetadataByJobId(appId: string, jobId: string): { workflowId?: string; workflowStatus?: string } {
+    const workflowRows = this.db.prepare("SELECT workflow_json FROM workflows WHERE app_id = ?").all(appId) as Array<{ workflow_json: string }>;
+    for (const row of workflowRows) {
+      const workflow = JSON.parse(row.workflow_json) as Workflow;
+      if (workflow.createdFrom?.jobId === jobId) {
+        return { workflowId: workflow.workflowId, workflowStatus: workflow.status };
+      }
+    }
+
+    return {};
   }
 
   updateWorkflowJob(jobId: string, patch: { status: string; rawOutput?: unknown; timeline?: unknown; error?: string | null }): void {

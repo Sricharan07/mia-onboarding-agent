@@ -39,11 +39,12 @@ export async function registerWorkflowRoutes(app: FastifyInstance, dependencies:
   }, async (request) => {
     const params = z.object({ jobId: z.string() }).parse(request.params);
     const job = dependencies.repositories.getWorkflowJob(params.jobId);
+    const metadata = dependencies.repositories.getWorkflowMetadataByJobId(String(job.app_id), params.jobId);
     return {
       id: job.id,
       appId: job.app_id,
       videoId: job.video_id,
-      status: job.status,
+      status: metadata.workflowStatus ?? job.status,
       error: job.error ?? null
     };
   });

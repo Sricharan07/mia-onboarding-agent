@@ -621,6 +621,10 @@ code {
   padding: 0 16px;
 }
 
+.panel-content > * + * {
+  margin-top: 16px;
+}
+
 .panel-content:has(> table) {
   overflow-x: auto;
   padding: 0;
@@ -1078,9 +1082,89 @@ textarea:focus {
 
 .scan-form {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
-  gap: 14px;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  align-items: start;
+  gap: 14px 16px;
+}
+
+.scan-form > .scan-callout {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  min-height: 72px;
+  border: 1px solid rgba(134, 239, 172, 0.16);
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(34, 197, 94, 0.08), rgba(34, 197, 94, 0.02)),
+    color-mix(in oklch, var(--card), transparent 10%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+  color: var(--text-2);
+  padding: 14px 16px;
+  text-align: left;
+}
+
+.scan-form > .scan-callout strong {
+  color: var(--green-text);
+  font-weight: 600;
+}
+
+.scan-form > .scan-callout code {
+  color: var(--green-text);
+  font-size: 12px;
+}
+
+.scan-form > label {
+  min-width: 0;
+}
+
+.scan-form > label:has(.scan-select) {
+  align-self: start;
+}
+
+.scan-routes {
+  min-height: 132px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.scan-select {
+  appearance: none;
+  min-height: 44px;
+  border-color: var(--border-strong);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0)),
+    var(--input);
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--text-3) 50%),
+    linear-gradient(135deg, var(--text-3) 50%, transparent 50%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0)),
+    var(--input);
+  background-position:
+    calc(100% - 18px) calc(50% - 2px),
+    calc(100% - 13px) calc(50% - 2px),
+    0 0,
+    0 0;
+  background-repeat: no-repeat;
+  background-size: 5px 5px, 5px 5px, auto, auto;
+  padding-right: 42px;
+}
+
+.scan-select:hover {
+  border-color: rgba(255, 255, 255, 0.18);
+  background-color: color-mix(in oklch, var(--input), white 2%);
+}
+
+.scan-select:focus {
+  border-color: rgba(134, 239, 172, 0.38);
+  box-shadow: 0 0 0 3px rgba(134, 239, 172, 0.08);
+}
+
+.scan-form .button.primary {
+  min-height: 44px;
+  align-self: end;
+  white-space: nowrap;
 }
 
 .filter-row {
