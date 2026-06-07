@@ -1,5 +1,7 @@
 import z from "zod";
 
+import type { crmOpportunitySchema } from "@/lib/crm-types";
+
 export const opportunitySchema = z.object({
   id: z.string(),
   account: z.string(),
@@ -11,4 +13,4 @@ export const opportunitySchema = z.object({
 
 export const opportunitiesSchema = z.array(opportunitySchema);
 
-export type OpportunityRow = z.infer<typeof opportunitySchema>;
+export type OpportunityRow = z.infer<typeof crmOpportunitySchema>;

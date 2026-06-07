@@ -396,3 +396,49 @@ For every Mia-guided step:
 3. Add one activity log entry for completed actions.
 4. Move Mia spotlight to the next target.
 5. Keep the change obvious enough that a viewer can understand it without explanation.
+
+---
+
+# Workflow 8: Follow Up After a CRM Meeting
+
+## Story Issue
+
+Ashwin needs to complete a CRM follow-up after a scheduled pricing workshop. Mia should help him mark the meeting complete, find the related opportunity, add a call outcome note, and persist the next step.
+
+| Step | Employee Click | Mia Guidance | Visible UI Update | Demo Data Update |
+|---|---|---|---|---|
+| 1 | Click `View Calendar` | Mia says: `Open today’s CRM calendar and complete the workshop follow-up.` | Calendar modal opens with scheduled meetings | `calendar.open = true` |
+| 2 | Click `Mark complete` on `Pricing workshop with BlueHaven Systems` | Mia says: `Meeting completed. Now update the opportunity record.` | Meeting badge changes `scheduled -> completed`; button changes to `Reopen` | `meeting_pricing_workshop.status = "completed"` |
+| 3 | Close calendar modal | Mia says: `Search for BlueHaven Systems in the opportunities table.` | CRM table is visible again | `calendar.open = false` |
+| 4 | Search `BlueHaven Systems` | Mia says: `Open the BlueHaven opportunity from the row action.` | Table filters to matching BlueHaven rows | `opportunity.search = "BlueHaven Systems"` |
+| 5 | Click pencil action on the BlueHaven opportunity | Mia says: `Add the call outcome and update the next step.` | Opportunity drawer opens | `opportunityDrawer.open = true` |
+| 6 | Add note `Pricing workshop completed. Send revised proposal by Friday.` | Mia says: `The note has been added to the CRM timeline.` | Note appears in `Notes and activity` | `opportunity.notes += call outcome note` |
+| 7 | Update `Next step` and click `Save changes` | Mia says: `Next step saved. Refresh to verify persistence.` | Drawer values save; table and KPI state refresh | `opportunity.nextStep = "Send revised proposal by Friday."` |
+| 8 | Refresh page | Mia says: `The meeting and opportunity updates persisted.` | Completed meeting and opportunity note remain visible | `data/crm-state.json` contains saved state |
+
+Visible data diff:
+
+```ts
+{
+  before: {
+    meeting_pricing_workshop: "scheduled",
+    opportunityNote: null,
+  },
+  after: {
+    meeting_pricing_workshop: "completed",
+    opportunityNote: "Pricing workshop completed. Send revised proposal by Friday.",
+  },
+}
+```
+
+Activity log row:
+
+```ts
+{
+  id: "activity_bluehaven_follow_up",
+  title: "Added note to BlueHaven Systems",
+  actor: "Sales Ops",
+  timestamp: "Just now",
+  type: "employee_action",
+}
+```

@@ -1,28 +1,43 @@
-import { CalendarDays, CalendarRange } from "lucide-react";
+import * as React from "react";
 
+import { CalendarCheck2, CalendarDays, CalendarRange } from "lucide-react";
+
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import type { CrmMeeting } from "@/lib/crm-types";
 import { cn } from "@/lib/utils";
 
-const proposalSent = 12;
-const proposalGoal = 18;
-const proposalProgressPercentage = Math.round((proposalSent / proposalGoal) * 100);
 const proposalGoalBarCount = 42;
-const activeProposalBars = Math.round((proposalSent / proposalGoal) * proposalGoalBarCount);
 
-const proposalGoalBars = Array.from({ length: proposalGoalBarCount }, (_, index) => ({
-  id: `proposal-goal-${index + 1}`,
-  active: index < activeProposalBars,
-}));
+export function TaskReminders({
+  meetings,
+  proposalSent,
+  proposalGoal,
+  onCompleteMeeting,
+}: {
+  meetings: CrmMeeting[];
+  proposalSent: number;
+  proposalGoal: number;
+  onCompleteMeeting: (meetingId: string) => Promise<void>;
+}) {
+  const [calendarOpen, setCalendarOpen] = React.useState(false);
+  const primaryMeeting = meetings[0];
+  const proposalProgressPercentage = Math.round((proposalSent / proposalGoal) * 100);
+  const activeProposalBars = Math.round((proposalSent / proposalGoal) * proposalGoalBarCount);
+  const proposalGoalBars = Array.from({ length: proposalGoalBarCount }, (_, index) => ({
+    id: `proposal-goal-${index + 1}`,
+    active: index < activeProposalBars,
+  }));
 
-export function TaskReminders() {
   return (
     <section className="grid grid-cols-1 gap-4 xl:grid-cols-12">
       <Card className="xl:col-span-8">
         <CardHeader>
           <CardTitle>Upcoming Meetings</CardTitle>
           <CardAction>
-            <Button variant="outline" size="sm">
+            <Button variant="outline" size="sm" onClick={() => setCalendarOpen(true)}>
               <CalendarDays data-icon="inline-start" />
               View Calendar
             </Button>
@@ -58,9 +73,11 @@ export function TaskReminders() {
                   </div>
                   <div className="min-w-0">
                     <div className="truncate font-medium text-primary-foreground text-xs leading-none">
-                      Product demo with Tim
+                      {primaryMeeting?.title ?? "No meetings scheduled"}
                     </div>
-                    <div className="truncate text-[10px] text-primary-foreground/75">Weblabs Studio</div>
+                    <div className="truncate text-[10px] text-primary-foreground/75">
+                      {primaryMeeting?.account ?? "Calendar clear"}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -98,6 +115,44 @@ export function TaskReminders() {
           </p>
         </CardContent>
       </Card>
+
+      <Dialog open={calendarOpen} onOpenChange={setCalendarOpen}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>CRM Calendar</DialogTitle>
+            <DialogDescription>
+              Review upcoming meetings and toggle completion for repeatable demo flows.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            {meetings.map((meeting) => (
+              <div
+                key={meeting.id}
+                className="flex flex-col gap-3 rounded-lg border p-3 md:flex-row md:items-center md:justify-between"
+              >
+                <div className="space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="font-medium">{meeting.title}</div>
+                    <Badge variant="outline">{meeting.status}</Badge>
+                  </div>
+                  <div className="text-muted-foreground text-sm">
+                    {meeting.account} · {meeting.date} · {meeting.time}
+                  </div>
+                  <p className="text-muted-foreground text-xs">
+                    {meeting.status === "completed"
+                      ? "Reopen this meeting if you need to redo the follow-up."
+                      : "Mark it complete after the call finishes."}
+                  </p>
+                </div>
+                <Button variant="outline" size="sm" onClick={() => onCompleteMeeting(meeting.id)}>
+                  <CalendarCheck2 />
+                  {meeting.status === "completed" ? "Reopen" : "Mark complete"}
+                </Button>
+              </div>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

@@ -1,13 +1,14 @@
 "use client";
 
+import * as React from "react";
+
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { type ChartConfig, ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-
-const pipelineChartValues = [34, 38, 31, 47, 42, 51, 44, 40, 58, 46, 43, 49] as const;
+import type { CrmPipelineSeries } from "@/lib/crm-types";
 
 const pipelineChartConfig = {
   qualified: {
@@ -19,22 +20,16 @@ const pipelineChartConfig = {
 const axisMonthFormatter = new Intl.DateTimeFormat("en-US", { month: "short" });
 const tooltipMonthFormatter = new Intl.DateTimeFormat("en-US", { month: "short", year: "2-digit" });
 
-function getRollingMonthData(values: readonly number[]) {
-  return values.map((qualified, index) => {
-    const date = new Date();
-    date.setMonth(date.getMonth() - (values.length - 1 - index));
-
-    return {
-      date: date.toISOString(),
-      qualified,
-    };
-  });
-}
-
-export function PipelineActivity() {
-  const pipelineChartData = getRollingMonthData(pipelineChartValues);
+export function PipelineActivity({ pipelineSeries }: { pipelineSeries: CrmPipelineSeries }) {
+  const [range, setRange] = React.useState<"last-30-days" | "last-quarter" | "last-12-months">("last-12-months");
+  const pipelineChartData =
+    range === "last-30-days"
+      ? pipelineSeries.last30Days
+      : range === "last-quarter"
+        ? pipelineSeries.lastQuarter
+        : pipelineSeries.last12Months;
   const totalQualified = pipelineChartData.reduce((sum, item) => sum + item.qualified, 0);
-  const discoveryCallsBooked = 184;
+  const discoveryCallsBooked = pipelineSeries.discoveryCallsBooked;
   const discoveryProgress = Math.round((discoveryCallsBooked / totalQualified) * 100);
 
   return (
@@ -43,7 +38,7 @@ export function PipelineActivity() {
         <CardHeader>
           <CardTitle>Qualified Lead Flow</CardTitle>
           <CardAction>
-            <Select defaultValue="last-12-months">
+            <Select value={range} onValueChange={(value) => setRange(value as typeof range)}>
               <SelectTrigger size="sm" className="min-w-40">
                 <SelectValue placeholder="Select range" />
               </SelectTrigger>
