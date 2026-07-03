@@ -223,6 +223,16 @@ export class Repositories {
     return rows.map((row) => JSON.parse(row.raw_json) as UIElementRecord);
   }
 
+  listUiElementsForApp(appId: string): UIElementRecord[] {
+    const rows = this.db.prepare(`
+      SELECT raw_json
+      FROM ui_elements
+      WHERE app_id = ?
+      ORDER BY updated_at DESC
+    `).all(appId) as Array<{ raw_json: string }>;
+    return rows.map((row) => JSON.parse(row.raw_json) as UIElementRecord);
+  }
+
   updateElement(elementId: string, input: { description?: string; tags?: string[] }): void {
     const row = this.db.prepare("SELECT id, raw_json FROM ui_elements WHERE element_id = ? ORDER BY created_at DESC LIMIT 1").get(elementId) as { id: string; raw_json: string } | undefined;
     if (!row) throw new NotFoundError(`Element not found: ${elementId}`);
@@ -316,7 +326,7 @@ export class Repositories {
   updateWorkflowJob(jobId: string, patch: { status: string; rawOutput?: unknown; timeline?: unknown; error?: string | null }): void {
     this.db.prepare(`
       UPDATE workflow_jobs
-      SET status = ?, qwen_raw_output_json = COALESCE(?, qwen_raw_output_json),
+      SET status = ?, provider_raw_output_json = COALESCE(?, provider_raw_output_json),
           extracted_action_timeline_json = COALESCE(?, extracted_action_timeline_json),
           error = ?, updated_at = ?
       WHERE id = ?
@@ -369,6 +379,13 @@ export class Repositories {
         version: workflow.version
       };
     });
+  }
+
+  listFullWorkflows(appId: string, status?: string): Workflow[] {
+    const rows = status
+      ? this.db.prepare("SELECT workflow_json FROM workflows WHERE app_id = ? AND status = ? ORDER BY updated_at DESC").all(appId, status)
+      : this.db.prepare("SELECT workflow_json FROM workflows WHERE app_id = ? ORDER BY updated_at DESC").all(appId);
+    return (rows as Array<{ workflow_json: string }>).map((row) => JSON.parse(row.workflow_json) as Workflow);
   }
 
   getWorkflow(workflowId: string): Workflow {

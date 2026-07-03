@@ -4,6 +4,7 @@ import type { SemanticSearchAdapter } from "../../adapters/interfaces.js";
 import { scanVisibleElements } from "./domScanner.js";
 import { buildUiElementRecord } from "./selector.js";
 import type { SemanticRecord, UIElementRecord } from "../../schemas/domain.js";
+import { uiElementToSemanticRecord } from "../semantic/semanticRecords.js";
 
 export type UiElementDiscoveredBy = UIElementRecord["discoveredBy"];
 
@@ -21,7 +22,7 @@ export type CapturePageResult = {
 export class UiMapPageCaptureService {
   constructor(
     private readonly repositories: Repositories,
-    private readonly moss: SemanticSearchAdapter
+    private readonly semanticSearch: SemanticSearchAdapter
   ) {}
 
   async captureCurrentPage(input: {
@@ -76,10 +77,10 @@ export class UiMapPageCaptureService {
       }
 
       savedElements += 1;
-      semanticRecords.push(toSemanticRecord(record));
+      semanticRecords.push(uiElementToSemanticRecord(record));
     }
 
-    await this.moss.upsertMany(semanticRecords);
+    await this.semanticSearch.upsertMany(semanticRecords);
 
     return {
       pageId,
@@ -99,32 +100,4 @@ function routeFromUrl(url: string, baseUrl: string): string {
   const base = new URL(baseUrl);
   if (current.origin !== base.origin) return current.pathname + current.search;
   return current.pathname + current.search || "/";
-}
-
-function toSemanticRecord(record: UIElementRecord) {
-  return {
-    id: record.id,
-    kind: "ui_element" as const,
-    appId: record.appId,
-    searchableText: [
-      `Page: ${record.pageName}`,
-      `Route: ${record.route}`,
-      `State: ${record.stateName}`,
-      `Element type: ${record.elementType}`,
-      `Label: ${record.label ?? ""}`,
-      `Description: ${record.description}`,
-      `Tags: ${record.tags.join(", ")}`
-    ].join("\n"),
-    metadata: {
-      kind: "ui_element",
-      appId: record.appId,
-      elementId: record.elementId,
-      route: record.route,
-      pageName: record.pageName,
-      stateName: record.stateName,
-      discoveredBy: record.discoveredBy,
-      elementType: record.elementType,
-      selectorQuality: record.selectorQuality
-    }
-  };
 }

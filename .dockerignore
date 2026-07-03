@@ -1,0 +1,13 @@
+.git
+.env
+.env.*
+!.env.example
+node_modules
+backend/dist
+sdk/dist
+backend/console
+example
+docs
+data
+*.log
+npm-debug.log*

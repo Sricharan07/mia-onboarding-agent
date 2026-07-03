@@ -23,9 +23,8 @@ export type ProviderReadiness = {
 export type SystemReadiness = {
   database: ProviderReadiness;
   providers: {
-    qwen: ProviderReadiness;
-    moss: ProviderReadiness;
-    livekit: ProviderReadiness;
+    gemini: ProviderReadiness;
+    semanticSearch: ProviderReadiness;
   };
 };
 

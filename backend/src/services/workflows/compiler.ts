@@ -6,7 +6,7 @@ import { createId, nowIso } from "../../utils/id.js";
 export class WorkflowCompiler {
   constructor(
     private readonly repositories: Repositories,
-    private readonly moss: SemanticSearchAdapter
+    private readonly semanticSearch: SemanticSearchAdapter
   ) {}
 
   async compile(input: { appId: string; timeline: ExtractedActionTimeline; videoId: string; jobId: string }): Promise<Workflow> {
@@ -90,7 +90,7 @@ export class WorkflowCompiler {
     const query = [step.action, step.observedElement, step.page, step.visualContext].filter(Boolean).join(" ");
     const filters: Record<string, string> = { appId, kind: "ui_element" };
     if (step.route) filters.route = step.route;
-    const results = await this.moss.search({ query, filters, limit: 8 });
+    const results = await this.semanticSearch.search({ query, filters, limit: 8 });
 
     for (const result of results) {
       const elementId = result.metadata?.elementId;

@@ -32,7 +32,7 @@ export function MiaOnboardingAgent() {
       backendUrl,
       apiKey,
       enableVoice: process.env.NEXT_PUBLIC_MIA_ENABLE_VOICE !== "false",
-      enableTTS: process.env.NEXT_PUBLIC_MIA_ENABLE_TTS === "true",
+      enableScreenShare: process.env.NEXT_PUBLIC_MIA_ENABLE_SCREEN === "true",
       user: {
         id: process.env.NEXT_PUBLIC_MIA_DEMO_USER_ID ?? "demo-crm-user",
         role: "demo-user",

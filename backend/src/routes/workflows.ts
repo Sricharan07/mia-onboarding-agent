@@ -74,14 +74,14 @@ export async function registerWorkflowRoutes(app: FastifyInstance, dependencies:
   app.patch("/api/v1/workflows/:workflowId", async (request) => {
     const params = z.object({ workflowId: z.string() }).parse(request.params);
     const body = workflowSchema.partial().parse(request.body);
-    dependencies.services.workflow.updateWorkflow(params.workflowId, body);
+    await dependencies.services.workflow.updateWorkflow(params.workflowId, body);
     return { ok: true };
   });
 
   app.post("/api/v1/workflows/:workflowId/approve", async (request) => {
     const params = z.object({ workflowId: z.string() }).parse(request.params);
     const body = z.object({ reviewedBy: z.string().min(1), notes: z.string().optional() }).parse(request.body);
-    const workflow = dependencies.services.workflow.approveWorkflow(params.workflowId, body);
+    const workflow = await dependencies.services.workflow.approveWorkflow(params.workflowId, body);
     return { workflowId: workflow.workflowId, status: workflow.status };
   });
 
@@ -93,30 +93,30 @@ export async function registerWorkflowRoutes(app: FastifyInstance, dependencies:
 
   app.post("/api/v1/workflows/:workflowId/archive", async (request) => {
     const params = z.object({ workflowId: z.string() }).parse(request.params);
-    const workflow = dependencies.services.workflow.archiveWorkflow(params.workflowId);
+    const workflow = await dependencies.services.workflow.archiveWorkflow(params.workflowId);
     return { workflowId: workflow.workflowId, status: workflow.status };
   });
 
   app.post("/api/v1/workflows/:workflowId/steps", async (request) => {
     const params = z.object({ workflowId: z.string() }).parse(request.params);
     const body = workflowStepSchema.parse(request.body);
-    return dependencies.services.workflow.addStep(params.workflowId, body);
+    return await dependencies.services.workflow.addStep(params.workflowId, body);
   });
 
   app.patch("/api/v1/workflows/:workflowId/steps/:stepId", async (request) => {
     const params = z.object({ workflowId: z.string(), stepId: z.string() }).parse(request.params);
     const body = z.record(z.string(), z.unknown()).parse(request.body);
-    return dependencies.services.workflow.updateStep(params.workflowId, params.stepId, body);
+    return await dependencies.services.workflow.updateStep(params.workflowId, params.stepId, body);
   });
 
   app.delete("/api/v1/workflows/:workflowId/steps/:stepId", async (request) => {
     const params = z.object({ workflowId: z.string(), stepId: z.string() }).parse(request.params);
-    return dependencies.services.workflow.deleteStep(params.workflowId, params.stepId);
+    return await dependencies.services.workflow.deleteStep(params.workflowId, params.stepId);
   });
 
   app.post("/api/v1/workflows/:workflowId/steps/reorder", async (request) => {
     const params = z.object({ workflowId: z.string() }).parse(request.params);
     const body = z.object({ stepIds: z.array(z.string()).min(1) }).parse(request.body);
-    return dependencies.services.workflow.reorderSteps(params.workflowId, body.stepIds);
+    return await dependencies.services.workflow.reorderSteps(params.workflowId, body.stepIds);
   });
 }

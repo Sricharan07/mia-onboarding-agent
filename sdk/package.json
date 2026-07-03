@@ -10,7 +10,6 @@
     "test": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "livekit-client": "^2.19.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {

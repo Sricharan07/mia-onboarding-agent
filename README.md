@@ -1,14 +1,13 @@
 # MIA Onboarding Agent
 
-Local-first AI onboarding agent foundation for SaaS products.
+Open-source, self-hosted AI onboarding agent for SaaS products.
 
 ## What Exists Now
 
-- `docs/` is the source of truth.
-- `example/demo-crm/` is preserved for later and is not implemented in this pass.
-- `backend/` contains the TypeScript backend foundation, SQLite persistence, API routes, UI mapper, workflow processing, and real provider adapters.
-- `backend/console/` contains the local backend-connected console UI.
-- `sdk/` contains the browser SDK foundation for runtime context, the Mia Shadow Cursor, minimal workflow prompts, LiveKit voice connection, and workflow execution.
+- `backend/` contains the TypeScript backend, SQLite persistence, API routes, UI mapper, workflow processing, Gemini Live token minting, and provider adapters.
+- `backend/console/` contains the backend-connected console UI.
+- `sdk/` contains the browser SDK with Mia cursor, Gemini Live voice/screen streaming, runtime context, and workflow execution.
+- `example/demo-crm+sdk/` demonstrates the SDK inside a host app.
 
 ## Local Setup
 
@@ -21,7 +20,44 @@ npm run dev:backend
 
 The backend listens on `http://localhost:4000` by default.
 
-To run the local console:
+Set `CORS_ORIGIN` to your host app origin in production, for example `https://app.example.com`. Use comma-separated origins for multiple apps.
+
+Required minimum provider config:
+
+```bash
+GEMINI_API_KEY=...
+BOOTSTRAP_ADMIN_TOKEN=long-random-bootstrap-token
+OPENAI_API_KEY=...
+```
+
+Create the first admin API key:
+
+```bash
+curl -X POST http://localhost:4000/api/v1/api-keys \
+  -H "content-type: application/json" \
+  -H "x-bootstrap-admin-token: $BOOTSTRAP_ADMIN_TOKEN" \
+  -d '{"name":"local admin","scopes":["admin"]}'
+```
+
+Create an SDK key with `runtime:write` and `logs:write`, then pass it to the SDK as `apiKey`.
+
+Rebuild the local semantic index for an existing app after scans/workflow imports:
+
+```bash
+curl -X POST http://localhost:4000/api/v1/apps/$APP_ID/semantic-index/rebuild \
+  -H "authorization: Bearer $ADMIN_API_KEY"
+```
+
+## Docker
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+The backend container stores SQLite, uploads, and LanceDB semantic index files in the `mia-data` volume.
+
+## Console
 
 ```bash
 cd backend/console
@@ -31,32 +67,11 @@ npm run dev
 
 The console defaults to `http://localhost:4000` and can be pointed at another backend URL from Settings.
 
-Qwen and Moss credentials are required for provider-backed routes. Moss is used for indexing and retrieval. Voice uses a local LiveKit Agents worker: the backend mints LiveKit participant tokens, while the Python worker owns STT, voice LLM turns, and TTS. Missing credentials fail with explicit config errors.
+Gemini, OpenAI embeddings, and LanceDB local storage are required for provider-backed routes. Missing credentials fail with explicit config errors.
 
-Runtime-sensitive SDK/backend routes are protected with local scoped API keys. Create one from the console API Keys page and pass it to the SDK as `apiKey`.
+Runtime-sensitive SDK/backend routes are protected with scoped API keys. API key management requires an `admin` key after the bootstrap key is created.
 
 For authenticated UI ingestion, configure a dedicated demo account in `.env` with the `UI_SCAN_*` variables. Keep `UI_SCAN_HEADLESS=false` when using the console's interactive mapper so the Playwright browser is visible for manual dropdown/modal captures.
-
-To run the SDK-enabled demo CRM without changing `example/demo-crm`:
-
-```bash
-npm run build -w sdk
-cd example/demo-crm+sdk
-cp .env.example .env.local
-npm install
-npm run dev -- --port 3001
-```
-
-Set `NEXT_PUBLIC_MIA_API_KEY` to a scoped local API key with `runtime:write` and `logs:write`. The SDK demo enables voice by default and renders only the custom Mia Shadow Cursor, not an Ask Mia button. Set `NEXT_PUBLIC_MIA_ENABLE_VOICE=false` only if you want to disable voice locally. `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, and `OPENAI_API_KEY` must be valid for voice startup; setup fails clearly and does not fall back to text.
-
-To run the LiveKit voice agent worker locally:
-
-```bash
-cd voice-agent
-./run-local.sh
-```
-
-Set `voice-agent/.env` with `MIA_BACKEND_URL`, `MIA_BACKEND_API_KEY`, `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `OPENAI_API_KEY`, and optional `OPENAI_STT_MODEL`. The API key needs `runtime:write`.
 
 ## Useful Commands
 

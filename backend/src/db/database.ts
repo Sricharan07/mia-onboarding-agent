@@ -109,7 +109,7 @@ function migrate(db: Db): void {
       app_id TEXT NOT NULL,
       video_id TEXT NOT NULL,
       status TEXT NOT NULL,
-      qwen_raw_output_json TEXT,
+      provider_raw_output_json TEXT,
       extracted_action_timeline_json TEXT,
       error TEXT,
       created_at TEXT NOT NULL,
@@ -188,6 +188,7 @@ function migrate(db: Db): void {
   ensureColumn(db, "ui_elements", "state_reason", "TEXT");
   ensureColumn(db, "ui_elements", "discovered_by", "TEXT NOT NULL DEFAULT 'route_scan'");
   ensureColumn(db, "ui_elements", "fingerprint", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "workflow_jobs", "provider_raw_output_json", "TEXT");
 
   db.exec("CREATE INDEX IF NOT EXISTS idx_ui_elements_fingerprint ON ui_elements(ui_map_version_id, fingerprint);");
 }

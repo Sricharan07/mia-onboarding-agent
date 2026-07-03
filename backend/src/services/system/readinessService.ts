@@ -11,9 +11,8 @@ export type ProviderReadiness = {
 export type SystemReadiness = {
   database: ProviderReadiness;
   providers: {
-    qwen: ProviderReadiness;
-    moss: ProviderReadiness;
-    livekit: ProviderReadiness;
+    gemini: ProviderReadiness;
+    semanticSearch: ProviderReadiness;
   };
 };
 
@@ -27,9 +26,8 @@ export class ReadinessService {
     return {
       database: this.database(),
       providers: {
-        qwen: await this.qwen(),
-        moss: this.configOnly("Moss", ["MOSS_PROJECT_ID", "MOSS_PROJECT_KEY", "MOSS_INDEX_NAME"]),
-        livekit: this.configOnly("LiveKit Voice Agent", ["LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"])
+        gemini: this.configOnly("Gemini", ["GEMINI_API_KEY", "GEMINI_TEXT_MODEL", "GEMINI_VISION_MODEL", "GEMINI_LIVE_MODEL"]),
+        semanticSearch: this.configOnly("Semantic search", ["OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_EMBEDDING_MODEL", "SEMANTIC_INDEX_DIR"])
       }
     };
   }
@@ -40,23 +38,6 @@ export class ReadinessService {
       return { configured: true, reachable: true, status: "ok", message: "SQLite database is reachable." };
     } catch (error) {
       return { configured: true, reachable: false, status: "error", message: error instanceof Error ? error.message : "SQLite database check failed." };
-    }
-  }
-
-  private async qwen(): Promise<ProviderReadiness> {
-    const missing = this.missing(["QWEN_API_KEY", "QWEN_BASE_URL"]);
-    if (missing.length > 0) return missingConfig("Qwen", missing);
-
-    try {
-      const response = await fetch(`${this.config.QWEN_BASE_URL!.replace(/\/+$/, "")}/models`, {
-        headers: { authorization: `Bearer ${this.config.QWEN_API_KEY}` }
-      });
-      if (!response.ok) {
-        return { configured: true, reachable: false, status: "error", message: `Qwen model list returned HTTP ${response.status}.` };
-      }
-      return { configured: true, reachable: true, status: "ok", message: "Qwen model endpoint is reachable." };
-    } catch (error) {
-      return { configured: true, reachable: false, status: "error", message: error instanceof Error ? error.message : "Qwen readiness check failed." };
     }
   }
 

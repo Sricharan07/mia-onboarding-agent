@@ -118,9 +118,8 @@ export function SettingsPage({
       <Panel title="Provider readiness">
         <div className="service-grid">
           <ServiceRow label="Database" value={readinessLabel(readiness?.database.status)} />
-          <ServiceRow label="Qwen" value={readinessLabel(readiness?.providers.qwen.status)} />
-          <ServiceRow label="Moss" value={readinessLabel(readiness?.providers.moss.status)} />
-          <ServiceRow label="LiveKit Voice Agent" value={readinessLabel(readiness?.providers.livekit.status)} />
+          <ServiceRow label="Gemini" value={readinessLabel(readiness?.providers.gemini.status)} />
+          <ServiceRow label="Semantic search" value={readinessLabel(readiness?.providers.semanticSearch.status)} />
         </div>
       </Panel>
     </div>

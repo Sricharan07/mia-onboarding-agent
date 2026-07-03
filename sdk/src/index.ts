@@ -2,22 +2,20 @@ import { BackendClient } from "./client/backendClient.js";
 import { collectRuntimeContext } from "./context/collectRuntimeContext.js";
 import { MiaShadowCursor } from "./cursor/MiaShadowCursor.js";
 import { WorkflowExecutor } from "./execution/WorkflowExecutor.js";
-import type { MiaStatus, ResolveResponse, SDKConfig, VoiceSessionEvent } from "./types/index.js";
+import type { GeminiLiveEvent, MiaStatus, ResolveResponse, SDKConfig } from "./types/index.js";
 import { MiaPromptUI } from "./ui/MiaPromptUI.js";
-import { LiveKitVoiceClient } from "./voice/livekitClient.js";
+import { GeminiLiveClient } from "./voice/geminiLiveClient.js";
 
 class AIOnboardingAgentInstance {
   private config?: SDKConfig;
   private backendClient?: BackendClient;
   private cursor?: MiaShadowCursor;
   private promptUi?: MiaPromptUI;
-  private voice?: LiveKitVoiceClient;
+  private voice?: GeminiLiveClient;
   private sessionId = `sdk_session_${crypto.randomUUID()}`;
-  private speakingMeter?: number;
   private pendingWorkflowInput?: {
     resolve: (value: string) => void;
     prompt: string;
-    voiceSessionId: string;
     settled: boolean;
   };
   private suppressNextAssistantResponse = false;
@@ -33,7 +31,7 @@ class AIOnboardingAgentInstance {
     this.cursor.setBubbleMaxWidth(config.ui?.bubbleMaxWidth ?? 320);
     this.cursor.setBubbleLingerMs(config.ui?.bubbleLingerMs ?? 3000);
     this.promptUi = new MiaPromptUI();
-    this.voice = new LiveKitVoiceClient(this.backendClient);
+    this.voice = new GeminiLiveClient(this.backendClient);
     void this.backendClient.logExecution({
       sessionId: this.sessionId,
       eventType: "session_started",
@@ -61,11 +59,15 @@ class AIOnboardingAgentInstance {
       throw new Error("AIOnboardingAgent.init(config) must be called before ask().");
     }
     const context = collectRuntimeContext(this.config, this.sessionId);
+    if (this.config.enableVoice && this.voice instanceof GeminiLiveClient && this.voice.isConnected()) {
+      this.voice.sendText(text);
+      return;
+    }
     this.setStatus("thinking");
     this.cursor.setState("thinking");
     this.cursor.setBubbleText("Thinking...");
     const result = await this.backendClient.resolve({ sessionId: this.sessionId, utterance: text, context });
-    await this.handleResolveResult(result, { playTts: true });
+    await this.handleResolveResult(result);
   }
 
   async startVoice(): Promise<void> {
@@ -80,8 +82,9 @@ class AIOnboardingAgentInstance {
     this.cursor.setState("connecting");
     await this.voice.connect({
       sessionId: this.sessionId,
-      identity: this.config.user?.id ?? this.sessionId,
       context,
+      enableScreenShare: Boolean(this.config.enableScreenShare),
+      getContext: () => collectRuntimeContext(this.config!, this.sessionId),
       onInputLevel: (level) => this.cursor?.setListeningLevel(level),
       onStage: (stage) => this.cursor?.setBubbleText(stage),
       onEvent: (event) => void this.handleVoiceEvent(event)
@@ -90,7 +93,6 @@ class AIOnboardingAgentInstance {
 
   async stopVoice(): Promise<void> {
     await this.voice?.disconnect();
-    this.stopSpeakingMeter();
     this.setStatus("ended");
     this.cursor?.setState("offline");
     this.cursor?.setBubbleText("Mia voice ended");
@@ -101,12 +103,11 @@ class AIOnboardingAgentInstance {
     await this.startVoice();
   }
 
-  private async handleResolveResult(result: ResolveResponse, options: { playTts: boolean }): Promise<void> {
+  private async handleResolveResult(result: ResolveResponse): Promise<void> {
     if (!this.config || !this.backendClient || !this.promptUi || !this.cursor) {
       throw new Error("AIOnboardingAgent.init(config) must be called before handling runtime results.");
     }
     this.cursor.setBubbleText(result.message);
-    if (options.playTts) await this.playTts(result.tts);
     if (result.type === "workflow") {
       this.setStatus("guiding");
       const executor = new WorkflowExecutor({
@@ -125,7 +126,7 @@ class AIOnboardingAgentInstance {
     }
   }
 
-  private async handleVoiceEvent(event: VoiceSessionEvent): Promise<void> {
+  private async handleVoiceEvent(event: GeminiLiveEvent): Promise<void> {
     if (!this.cursor) return;
     if (event.type === "session_ready" || event.type === "listening") {
       this.setStatus("listening");
@@ -147,13 +148,17 @@ class AIOnboardingAgentInstance {
       this.config?.onTranscript?.({ role: "user", text: event.text });
       return;
     }
+    if (event.type === "transcript_assistant") {
+      this.config?.onTranscript?.({ role: "assistant", text: event.text });
+      return;
+    }
     if (event.type === "assistant_response") {
       if (this.suppressNextAssistantResponse) {
         this.suppressNextAssistantResponse = false;
         return;
       }
       this.config?.onTranscript?.({ role: "assistant", text: event.message });
-      await this.handleResolveResult(event.result, { playTts: false });
+      await this.handleResolveResult(event.result);
       return;
     }
     if (event.type === "error") {
@@ -173,29 +178,12 @@ class AIOnboardingAgentInstance {
     }
   }
 
-  private async playTts(tts?: { text: string; audioUrl?: string; mimeType?: string }): Promise<void> {
-    if (!this.config?.enableTTS || !tts) return;
-    const audioUrl = tts.audioUrl ?? (await this.backendClient?.synthesize(tts.text))?.audioUrl;
-    if (!audioUrl) return;
-    const absoluteUrl = audioUrl.startsWith("http") ? audioUrl : `${this.config.backendUrl.replace(/\/+$/, "")}${audioUrl}`;
-    const audio = new Audio(absoluteUrl);
-    this.startSpeakingMeter();
-    await new Promise<void>((resolve) => {
-      audio.onended = () => resolve();
-      audio.onerror = () => resolve();
-      void audio.play().catch(() => resolve());
-    });
-    this.stopSpeakingMeter();
-    if (this.config.enableVoice) this.cursor?.setState("listening");
-  }
-
   private async requestWorkflowInput(input: { prompt: string; inputType?: string; choices?: string[] }): Promise<string> {
     if (!this.config || !this.backendClient || !this.cursor || !this.promptUi) {
       throw new Error("AIOnboardingAgent.init(config) must be called before collecting workflow input.");
     }
 
-    const voiceSessionId = this.voice?.getVoiceSessionId();
-    if (!this.config.enableVoice || !voiceSessionId) {
+    if (!this.config.enableVoice || !this.voice?.isConnected()) {
       return this.promptUi.ask(input.prompt, input.inputType, input.choices);
     }
 
@@ -210,20 +198,15 @@ class AIOnboardingAgentInstance {
       this.pendingWorkflowInput = {
         resolve,
         prompt: input.prompt,
-        voiceSessionId,
         settled: false
       };
     });
 
     try {
-      await this.backendClient.beginVoiceInputCapture(voiceSessionId, { prompt: input.prompt });
       return await inputPromise;
     } finally {
-      if (this.pendingWorkflowInput?.voiceSessionId === voiceSessionId) {
-        this.pendingWorkflowInput = undefined;
-      }
+      this.pendingWorkflowInput = undefined;
       this.promptUi.clear();
-      await this.backendClient.endVoiceInputCapture(voiceSessionId).catch(() => undefined);
     }
   }
 
@@ -245,22 +228,6 @@ class AIOnboardingAgentInstance {
     this.config?.onStatusChange?.(status);
   }
 
-  private startSpeakingMeter(): void {
-    this.stopSpeakingMeter();
-    let t = 0;
-    this.speakingMeter = window.setInterval(() => {
-      t += 0.22;
-      const wave = Math.abs(Math.sin(t)) * 0.42;
-      const jitter = Math.random() * 0.1;
-      this.cursor?.setSpeakingLevel(Math.min(1, 0.18 + wave + jitter));
-    }, 60);
-  }
-
-  private stopSpeakingMeter(): void {
-    if (this.speakingMeter) window.clearInterval(this.speakingMeter);
-    this.speakingMeter = undefined;
-    this.cursor?.setSpeakingLevel(0);
-  }
 }
 
 export const AIOnboardingAgent = new AIOnboardingAgentInstance();

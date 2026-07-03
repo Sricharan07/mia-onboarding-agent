@@ -9,7 +9,7 @@ export type SDKConfig = {
   backendUrl: string;
   apiKey?: string;
   enableVoice: boolean;
-  enableTTS: boolean;
+  enableScreenShare?: boolean;
   user?: {
     id?: string;
     email?: string;
@@ -83,27 +83,27 @@ export type Workflow = {
 };
 
 export type ResolveResponse =
-  | { type: "workflow"; workflow: Workflow; message: string; tts?: { text: string; audioUrl?: string; mimeType?: string } }
-  | { type: "answer"; message: string; tts?: { text: string; audioUrl?: string; mimeType?: string } }
-  | { type: "no_match"; message: string; tts?: { text: string; audioUrl?: string; mimeType?: string } };
+  | { type: "workflow"; workflow: Workflow; message: string }
+  | { type: "answer"; message: string }
+  | { type: "no_match"; message: string };
 
-export type VoiceSessionResponse = {
-  voiceSessionId: string;
-  serverUrl: string;
+export type GeminiLiveTokenResponse = {
   token: string;
-  roomName: string;
-  status: VoiceSessionStatus;
+  model: string;
+  expiresAt: string;
+  websocketUrl: string;
 };
 
-export type VoiceSessionEvent =
-  | { type: "session_ready"; voiceSessionId: string; status: VoiceSessionStatus; roomName: string }
-  | { type: "listening"; voiceSessionId: string; status: VoiceSessionStatus }
-  | { type: "transcript_user"; voiceSessionId: string; text: string; isFinal: true }
-  | { type: "thinking"; voiceSessionId: string; status: VoiceSessionStatus }
-  | { type: "assistant_response"; voiceSessionId: string; message: string; result: ResolveResponse }
-  | { type: "workflow_resolved"; voiceSessionId: string; result: Extract<ResolveResponse, { type: "workflow" }> }
-  | { type: "error"; voiceSessionId: string; message: string; code?: string }
-  | { type: "ended"; voiceSessionId: string; status: VoiceSessionStatus };
+export type GeminiLiveEvent =
+  | { type: "session_ready"; status: VoiceSessionStatus }
+  | { type: "listening"; status: VoiceSessionStatus }
+  | { type: "thinking"; status: VoiceSessionStatus }
+  | { type: "transcript_user"; text: string; isFinal: true }
+  | { type: "transcript_assistant"; text: string; isFinal: boolean }
+  | { type: "assistant_response"; message: string; result: ResolveResponse }
+  | { type: "workflow_resolved"; result: Extract<ResolveResponse, { type: "workflow" }> }
+  | { type: "error"; message: string; code?: string }
+  | { type: "ended"; status: VoiceSessionStatus };
 
 export type SDKEvent =
   | { type: "session_started"; sessionId: string }

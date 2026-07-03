@@ -35,9 +35,9 @@ export class InteractiveUiMapScanService {
   constructor(
     private readonly config: AppConfig,
     private readonly repositories: Repositories,
-    moss: SemanticSearchAdapter
+    semanticSearch: SemanticSearchAdapter
   ) {
-    this.capture = new UiMapPageCaptureService(repositories, moss);
+    this.capture = new UiMapPageCaptureService(repositories, semanticSearch);
   }
 
   async start(input: {

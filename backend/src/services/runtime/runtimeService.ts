@@ -1,5 +1,5 @@
 import type { Repositories } from "../../db/repositories.js";
-import type { ModelGatewayAdapter, SemanticSearchAdapter, TextToSpeechAdapter } from "../../adapters/interfaces.js";
+import type { ModelGatewayAdapter, SemanticSearchAdapter } from "../../adapters/interfaces.js";
 import type { SDKRuntimeContext, Workflow } from "../../schemas/domain.js";
 import { AppError, NotFoundError } from "../../utils/errors.js";
 import { z } from "zod";
@@ -16,8 +16,7 @@ export class RuntimeService {
   constructor(
     private readonly repositories: Repositories,
     private readonly gateway: ModelGatewayAdapter,
-    private readonly moss: SemanticSearchAdapter,
-    private readonly tts: TextToSpeechAdapter
+    private readonly semanticSearch: SemanticSearchAdapter
   ) {}
 
   async resolve(input: {
@@ -63,15 +62,15 @@ ${input.context.currentRoute}`
 Question: ${intent.query ?? input.utterance}
 Current route: ${input.context.currentRoute}`
       });
-      return this.withOptionalTts({ type: "answer", message: answer.text }, input.includeTts);
+      return { type: "answer", message: answer.text };
     }
 
     if (intent.type !== "workflow_request") {
       const message = intent.type === "cancel" ? "Okay, I stopped the current request." : "I could not find a saved workflow for that yet.";
-      return this.withOptionalTts({ type: "no_match", message }, input.includeTts);
+      return { type: "no_match", message };
     }
 
-    const matches = await this.moss.search({
+    const matches = await this.semanticSearch.search({
       query: `${intent.query ?? input.utterance}\nCurrent route: ${input.context.currentRoute}`,
       filters: { kind: "workflow", appId: input.appId, status: "published" },
       limit: 5
@@ -80,15 +79,15 @@ Current route: ${input.context.currentRoute}`
     const workflow = this.findExecutableWorkflow(matches, input.appId);
     if (!workflow) {
       const message = "I could not find a saved workflow for that yet.";
-      return this.withOptionalTts({ type: "no_match", message }, input.includeTts);
+      return { type: "no_match", message };
     }
 
     const message = `I can help you with ${workflow.name}. Let's start.`;
-    return this.withOptionalTts({
+    return {
       type: "workflow",
       workflow: sanitizeWorkflowForRuntime(workflow),
       message
-    }, input.includeTts);
+    };
   }
 
   private findExecutableWorkflow(matches: Array<{ metadata?: Record<string, unknown> }>, appId: string): Workflow | undefined {
@@ -101,19 +100,13 @@ Current route: ${input.context.currentRoute}`
         if (workflow.status === "published" && workflow.appId === appId) return workflow;
       } catch (error) {
         if (error instanceof NotFoundError) {
-          console.warn(`[runtime] Moss returned stale workflowId=${workflowId}; skipping.`);
+          console.warn(`[runtime] Semantic search returned stale workflowId=${workflowId}; skipping.`);
           continue;
         }
         throw error;
       }
     }
     return undefined;
-  }
-
-  private async withOptionalTts<T extends { message: string }>(result: T, includeTts = true): Promise<T | (T & { tts: { text: string; audioUrl?: string; mimeType?: string } })> {
-    if (!includeTts) return result;
-    const audio = await this.tts.synthesize({ text: result.message });
-    return { ...result, tts: { text: result.message, audioUrl: audio.audioUrl, mimeType: audio.mimeType } };
   }
 }
 

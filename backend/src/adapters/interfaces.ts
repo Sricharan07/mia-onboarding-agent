@@ -52,17 +52,6 @@ export interface SemanticSearchAdapter {
   deleteByFilter(filter: Record<string, string>): Promise<void>;
 }
 
-export interface TextToSpeechAdapter {
-  synthesize(input: {
-    text: string;
-    voice?: string;
-  }): Promise<{
-    audioPath?: string;
-    audioUrl?: string;
-    mimeType: string;
-  }>;
-}
-
 export interface FileStorageAdapter {
   saveBuffer(input: { buffer: Buffer; filename: string; directory: string }): Promise<{ path: string; sizeBytes: number }>;
 }

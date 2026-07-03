@@ -14,9 +14,9 @@ export class UiMapService {
   constructor(
     private readonly config: AppConfig,
     private readonly repositories: Repositories,
-    private readonly moss: SemanticSearchAdapter
+    private readonly semanticSearch: SemanticSearchAdapter
   ) {
-    this.capture = new UiMapPageCaptureService(repositories, moss);
+    this.capture = new UiMapPageCaptureService(repositories, semanticSearch);
   }
 
   async scanApp(input: { appId: string; routes: string[]; auth?: { mode: UiScanAuthMode } }): Promise<{ uiMapVersionId: string; status: string }> {

@@ -25,6 +25,10 @@ export class ApiKeyService {
     return this.repositories.listApiKeys();
   }
 
+  hasActiveKeys(): boolean {
+    return this.list().some((key) => !key.revokedAt);
+  }
+
   revoke(id: string): ApiKeyRecord {
     return this.repositories.revokeApiKey(id);
   }

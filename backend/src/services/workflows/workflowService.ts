@@ -4,20 +4,22 @@ import { workflowSchema, workflowStepSchema } from "../../schemas/domain.js";
 import { AppError } from "../../utils/errors.js";
 import { nowIso } from "../../utils/id.js";
 import type { SemanticSearchAdapter } from "../../adapters/interfaces.js";
+import { workflowToSemanticRecord } from "../semantic/semanticRecords.js";
 
 export class WorkflowService {
   constructor(
     private readonly repositories: Repositories,
-    private readonly moss: SemanticSearchAdapter
+    private readonly semanticSearch: SemanticSearchAdapter
   ) {}
 
-  updateWorkflow(workflowId: string, patch: Partial<Workflow>): void {
+  async updateWorkflow(workflowId: string, patch: Partial<Workflow>): Promise<void> {
     const current = this.repositories.getWorkflow(workflowId);
     const next = workflowSchema.parse({ ...current, ...patch, workflowId: current.workflowId, appId: current.appId, updatedAt: nowIso() });
     this.repositories.saveWorkflow(next);
+    await this.syncWorkflowIndex(next);
   }
 
-  approveWorkflow(workflowId: string, input: { reviewedBy: string; notes?: string }): Workflow {
+  async approveWorkflow(workflowId: string, input: { reviewedBy: string; notes?: string }): Promise<Workflow> {
     const workflow = this.repositories.getWorkflow(workflowId);
     const next = workflowSchema.parse({
       ...workflow,
@@ -30,6 +32,7 @@ export class WorkflowService {
       updatedAt: nowIso()
     });
     this.repositories.saveWorkflow(next);
+    await this.syncWorkflowIndex(next);
     return next;
   }
 
@@ -41,44 +44,27 @@ export class WorkflowService {
     this.assertPublishable(workflow);
     const next = workflowSchema.parse({ ...workflow, status: "published", updatedAt: nowIso() });
     this.repositories.saveWorkflow(next);
-    await this.moss.index({
-      id: `workflow_${next.workflowId}`,
-      kind: "workflow",
-      appId: next.appId,
-      searchableText: [
-        `Workflow: ${next.name}`,
-        `Description: ${next.description}`,
-        `Trigger phrases: ${next.triggerPhrases.join(", ")}`,
-        `Steps: ${next.steps.map((step) => step.label ?? step.type).join(", ")}`
-      ].join("\n"),
-      metadata: {
-        kind: "workflow",
-        appId: next.appId,
-        workflowId: next.workflowId,
-        name: next.name,
-        status: next.status,
-        triggerPhrases: next.triggerPhrases,
-        routes: next.requiredContext.startingRoutes
-      }
-    });
+    await this.syncWorkflowIndex(next);
     return next;
   }
 
-  archiveWorkflow(workflowId: string): Workflow {
+  async archiveWorkflow(workflowId: string): Promise<Workflow> {
     const workflow = this.repositories.getWorkflow(workflowId);
     const next = workflowSchema.parse({ ...workflow, status: "archived", updatedAt: nowIso() });
     this.repositories.saveWorkflow(next);
+    await this.syncWorkflowIndex(next);
     return next;
   }
 
-  addStep(workflowId: string, step: WorkflowStep): Workflow {
+  async addStep(workflowId: string, step: WorkflowStep): Promise<Workflow> {
     const workflow = this.repositories.getWorkflow(workflowId);
     const next = this.validateStepMutation({ ...workflow, steps: [...workflow.steps, workflowStepSchema.parse(step)] });
     this.repositories.saveWorkflow(next);
+    await this.syncWorkflowIndex(next);
     return next;
   }
 
-  updateStep(workflowId: string, stepId: string, patch: Partial<WorkflowStep>): Workflow {
+  async updateStep(workflowId: string, stepId: string, patch: Partial<WorkflowStep>): Promise<Workflow> {
     const workflow = this.repositories.getWorkflow(workflowId);
     let found = false;
     const steps = workflow.steps.map((step) => {
@@ -89,19 +75,21 @@ export class WorkflowService {
     if (!found) throw new AppError("WORKFLOW_STEP_NOT_FOUND", `Workflow step not found: ${stepId}`, 404);
     const next = this.validateStepMutation({ ...workflow, steps });
     this.repositories.saveWorkflow(next);
+    await this.syncWorkflowIndex(next);
     return next;
   }
 
-  deleteStep(workflowId: string, stepId: string): Workflow {
+  async deleteStep(workflowId: string, stepId: string): Promise<Workflow> {
     const workflow = this.repositories.getWorkflow(workflowId);
     const steps = workflow.steps.filter((step) => step.id !== stepId);
     if (steps.length === workflow.steps.length) throw new AppError("WORKFLOW_STEP_NOT_FOUND", `Workflow step not found: ${stepId}`, 404);
     const next = this.validateStepMutation({ ...workflow, steps });
     this.repositories.saveWorkflow(next);
+    await this.syncWorkflowIndex(next);
     return next;
   }
 
-  reorderSteps(workflowId: string, stepIds: string[]): Workflow {
+  async reorderSteps(workflowId: string, stepIds: string[]): Promise<Workflow> {
     const workflow = this.repositories.getWorkflow(workflowId);
     const uniqueIds = new Set(stepIds);
     const currentById = new Map(workflow.steps.map((step) => [step.id, step]));
@@ -110,7 +98,21 @@ export class WorkflowService {
     }
     const next = this.validateStepMutation({ ...workflow, steps: stepIds.map((stepId) => currentById.get(stepId)!) });
     this.repositories.saveWorkflow(next);
+    await this.syncWorkflowIndex(next);
     return next;
+  }
+
+  private async syncWorkflowIndex(workflow: Workflow): Promise<void> {
+    if (workflow.status === "published") {
+      await this.semanticSearch.index(workflowToSemanticRecord(workflow));
+      return;
+    }
+
+    await this.semanticSearch.deleteByFilter({
+      kind: "workflow",
+      appId: workflow.appId,
+      workflowId: workflow.workflowId
+    });
   }
 
   private validateStepMutation(workflow: Workflow): Workflow {

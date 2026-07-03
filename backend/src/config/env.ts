@@ -6,7 +6,7 @@ import { ConfigError } from "../utils/errors.js";
 
 const workspaceRoot = resolveWorkspaceRoot();
 const rootEnvPath = resolve(workspaceRoot, ".env");
-loadDotenv({ path: existsSync(rootEnvPath) ? rootEnvPath : undefined });
+loadDotenv({ path: existsSync(rootEnvPath) ? rootEnvPath : undefined, quiet: true });
 
 const booleanStringSchema = z.preprocess((value) => {
   if (typeof value !== "string") return value;
@@ -17,25 +17,26 @@ const envSchema = z.object({
   NODE_ENV: z.string().default("development"),
   BACKEND_HOST: z.string().default("0.0.0.0"),
   BACKEND_PORT: z.coerce.number().int().positive().default(4000),
+  TRUST_PROXY: booleanStringSchema.default(false),
+  CORS_ORIGIN: z.string().default("*"),
   DATABASE_URL: z.string().default("file:./data/sqlite/local.db"),
   LOCAL_UPLOAD_DIR: z.string().default("./data/uploads"),
-  LOCAL_TTS_DIR: z.string().default("./data/tts"),
-  QWEN_API_KEY: z.string().optional(),
-  QWEN_BASE_URL: z.string().optional(),
-  QWEN_TEXT_ENDPOINT: z.string().default("/chat/completions"),
-  QWEN_VIDEO_ENDPOINT: z.string().default("/chat/completions"),
-  QWEN_MODEL: z.string().optional(),
-  QWEN_VISION_MODEL: z.string().optional(),
-  QWEN_VOICE_MODEL: z.string().optional(),
-  QWEN_TTS_BASE_URL: z.string().optional(),
-  QWEN_TTS_ENDPOINT: z.string().default("/services/aigc/multimodal-generation/generation"),
-  MOSS_PROJECT_ID: z.string().optional(),
-  MOSS_PROJECT_KEY: z.string().optional(),
-  MOSS_INDEX_NAME: z.string().default("mia-onboarding"),
-  LIVEKIT_URL: z.string().default("ws://localhost:7880"),
-  LIVEKIT_API_KEY: z.string().default("devkey"),
-  LIVEKIT_API_SECRET: z.string().default("secret"),
-  LIVEKIT_AGENT_NAME: z.string().default("mia-onboarding-agent"),
+  BOOTSTRAP_ADMIN_TOKEN: z.string().optional(),
+  RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
+  RATE_LIMIT_MAX: z.coerce.number().int().positive().default(300),
+  GEMINI_LIVE_TOKEN_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(30),
+  GEMINI_API_KEY: z.string().optional(),
+  GEMINI_BASE_URL: z.string().default("https://generativelanguage.googleapis.com"),
+  GEMINI_TEXT_MODEL: z.string().default("gemini-2.5-flash"),
+  GEMINI_VISION_MODEL: z.string().default("gemini-2.5-flash"),
+  GEMINI_LIVE_MODEL: z.string().default("gemini-3.1-flash-live-preview"),
+  GEMINI_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().max(60 * 60 * 20).default(30 * 60),
+  GEMINI_NEW_SESSION_TTL_SECONDS: z.coerce.number().int().positive().max(60 * 60 * 20).default(60),
+  OPENAI_API_KEY: z.string().optional(),
+  OPENAI_BASE_URL: z.string().default("https://api.openai.com/v1"),
+  OPENAI_EMBEDDING_MODEL: z.string().default("text-embedding-3-small"),
+  OPENAI_EMBEDDING_DIMENSIONS: z.coerce.number().int().positive().default(1536),
+  SEMANTIC_INDEX_DIR: z.string().default("./data/lancedb"),
   RUNTIME_LLM_MODEL: z.string().optional(),
   UI_SCAN_AUTH_MODE: z.enum(["none", "login_form"]).default("none"),
   UI_SCAN_LOGIN_URL: z.string().optional(),
@@ -76,7 +77,7 @@ function normalizePaths(config: AppConfig): AppConfig {
       ? `file:${resolveMaybeRelative(config.DATABASE_URL.slice("file:".length))}`
       : resolveMaybeRelative(config.DATABASE_URL),
     LOCAL_UPLOAD_DIR: resolveMaybeRelative(config.LOCAL_UPLOAD_DIR),
-    LOCAL_TTS_DIR: resolveMaybeRelative(config.LOCAL_TTS_DIR)
+    SEMANTIC_INDEX_DIR: resolveMaybeRelative(config.SEMANTIC_INDEX_DIR)
   };
 }
 

@@ -1,4 +1,4 @@
-import type { ResolveResponse, SDKConfig, SDKRuntimeContext, VoiceSessionEvent, VoiceSessionResponse } from "../types/index.js";
+import type { GeminiLiveTokenResponse, ResolveResponse, SDKConfig, SDKRuntimeContext } from "../types/index.js";
 
 export class BackendClient {
   constructor(private readonly config: SDKConfig) {}
@@ -8,7 +8,6 @@ export class BackendClient {
       appId: this.config.appId,
       sessionId: input.sessionId,
       utterance: input.utterance,
-      includeTts: this.config.enableTTS,
       context: {
         currentUrl: input.context.currentUrl,
         currentRoute: input.context.currentRoute,
@@ -40,67 +39,11 @@ export class BackendClient {
     });
   }
 
-  async createVoiceSession(input: { clientSessionId: string; identity: string; context: SDKRuntimeContext }): Promise<VoiceSessionResponse> {
-    return this.post("/api/v1/voice/sessions", {
+  async createGeminiLiveToken(input: { clientSessionId: string }): Promise<GeminiLiveTokenResponse> {
+    return this.post("/api/v1/gemini/live-token", {
       appId: this.config.appId,
-      clientSessionId: input.clientSessionId,
-      identity: input.identity,
-      context: {
-        currentUrl: input.context.currentUrl,
-        currentRoute: input.context.currentRoute,
-        pageTitle: input.context.pageTitle,
-        focusedElement: input.context.focusedElement ?? null,
-        hoveredElement: input.context.hoveredElement ?? null,
-        visibleElements: input.context.visibleElements ?? [],
-        userMetadata: input.context.userMetadata
-      },
-      userMetadata: this.config.user?.metadata
+      clientSessionId: input.clientSessionId
     });
-  }
-
-  async endVoiceSession(voiceSessionId: string): Promise<{ voiceSessionId: string; status: string }> {
-    return this.post(`/api/v1/voice/sessions/${encodeURIComponent(voiceSessionId)}/end`, {});
-  }
-
-  async beginVoiceInputCapture(voiceSessionId: string, input: { prompt: string }): Promise<{ voiceSessionId: string; status: string }> {
-    return this.post(`/api/v1/voice/sessions/${encodeURIComponent(voiceSessionId)}/input-capture`, input);
-  }
-
-  async endVoiceInputCapture(voiceSessionId: string): Promise<{ voiceSessionId: string; status: string }> {
-    return this.request(`/api/v1/voice/sessions/${encodeURIComponent(voiceSessionId)}/input-capture`, { method: "DELETE" });
-  }
-
-  async streamVoiceEvents(voiceSessionId: string, onEvent: (event: VoiceSessionEvent) => void, signal?: AbortSignal): Promise<void> {
-    const url = `${this.config.backendUrl.replace(/\/+$/, "")}/api/v1/voice/sessions/${encodeURIComponent(voiceSessionId)}/events`;
-    const response = await fetchWithBackendError(url, {
-      method: "GET",
-      headers: {
-        ...(this.config.apiKey ? { authorization: `Bearer ${this.config.apiKey}` } : {})
-      },
-      signal
-    }, this.config.backendUrl);
-    if (!response.ok || !response.body) {
-      throw new Error(`Voice event stream failed: ${response.status} ${response.statusText}`);
-    }
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        onEvent(JSON.parse(trimmed) as VoiceSessionEvent);
-      }
-    }
-  }
-
-  async synthesize(text: string): Promise<{ audioUrl?: string; mimeType?: string }> {
-    return this.post("/api/v1/tts", { text });
   }
 
   private async post<T>(path: string, body: unknown): Promise<T> {
