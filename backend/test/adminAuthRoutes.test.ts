@@ -54,6 +54,101 @@ test("admin routes require an admin API key after bootstrap", async () => {
   }
 });
 
+test("console users sign in with email and password and authorize admin routes", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mia-console-auth-"));
+  const app = await buildApp(testConfig(dir));
+
+  try {
+    const initialStatus = await app.inject({ method: "GET", url: "/api/v1/console/auth/status" });
+    assert.equal(initialStatus.statusCode, 200);
+    assert.deepEqual(initialStatus.json(), { setupRequired: true, authenticated: false });
+
+    const rejectedSetup = await app.inject({
+      method: "POST",
+      url: "/api/v1/console/auth/setup",
+      payload: { name: "Local Admin", email: "admin@example.com", password: "very-secure-password" }
+    });
+    assert.equal(rejectedSetup.statusCode, 401);
+
+    const setup = await app.inject({
+      method: "POST",
+      url: "/api/v1/console/auth/setup",
+      headers: { "x-bootstrap-admin-token": "bootstrap-secret" },
+      payload: { name: "Local Admin", email: "admin@example.com", password: "very-secure-password" }
+    });
+    assert.equal(setup.statusCode, 200);
+    const setupBody = setup.json<{ token: string; user: { email: string; name: string } }>();
+    assert.match(setupBody.token, /^mia_console_/);
+    assert.equal(setupBody.user.email, "admin@example.com");
+    assert.equal(setupBody.user.name, "Local Admin");
+
+    const status = await app.inject({
+      method: "GET",
+      url: "/api/v1/console/auth/status",
+      headers: { authorization: `Bearer ${setupBody.token}` }
+    });
+    assert.equal(status.statusCode, 200);
+    assert.equal(status.json<{ setupRequired: boolean; authenticated: boolean }>().setupRequired, false);
+    assert.equal(status.json<{ setupRequired: boolean; authenticated: boolean }>().authenticated, true);
+
+    const createdApp = await app.inject({
+      method: "POST",
+      url: "/api/v1/apps",
+      headers: { authorization: `Bearer ${setupBody.token}` },
+      payload: { name: "Console app", slug: "console-app", baseUrl: "http://localhost:3000" }
+    });
+    assert.equal(createdApp.statusCode, 200);
+    const appId = createdApp.json<{ id: string }>().id;
+
+    const sdkKey = await app.inject({
+      method: "POST",
+      url: "/api/v1/api-keys",
+      headers: { authorization: `Bearer ${setupBody.token}` },
+      payload: {
+        name: "SDK key",
+        scopes: ["runtime:write", "logs:write"],
+        appId,
+        allowedOrigins: ["http://localhost:3000"]
+      }
+    });
+    assert.equal(sdkKey.statusCode, 200);
+
+    const logout = await app.inject({
+      method: "POST",
+      url: "/api/v1/console/auth/logout",
+      headers: { authorization: `Bearer ${setupBody.token}` },
+      payload: {}
+    });
+    assert.equal(logout.statusCode, 200);
+
+    const revokedList = await app.inject({
+      method: "GET",
+      url: "/api/v1/apps",
+      headers: { authorization: `Bearer ${setupBody.token}` }
+    });
+    assert.equal(revokedList.statusCode, 401);
+
+    const login = await app.inject({
+      method: "POST",
+      url: "/api/v1/console/auth/login",
+      payload: { email: "admin@example.com", password: "very-secure-password" }
+    });
+    assert.equal(login.statusCode, 200);
+    const loginToken = login.json<{ token: string }>().token;
+
+    const authenticatedList = await app.inject({
+      method: "GET",
+      url: "/api/v1/apps",
+      headers: { authorization: `Bearer ${loginToken}` }
+    });
+    assert.equal(authenticatedList.statusCode, 200);
+    assert.equal(authenticatedList.json<{ items: unknown[] }>().items.length, 1);
+  } finally {
+    await app.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("workflow metadata patch accepts only editable fields", async () => {
   const dir = mkdtempSync(join(tmpdir(), "mia-workflow-routes-"));
   const config = testConfig(dir);
@@ -307,6 +402,7 @@ function testConfig(dir: string): AppConfig {
     DATABASE_URL: `file:${join(dir, "local.db")}`,
     LOCAL_UPLOAD_DIR: join(dir, "uploads"),
     BOOTSTRAP_ADMIN_TOKEN: "bootstrap-secret",
+    CONSOLE_SESSION_TTL_SECONDS: 28800,
     RATE_LIMIT_WINDOW_MS: 60_000,
     RATE_LIMIT_MAX: 300,
     GEMINI_LIVE_TOKEN_RATE_LIMIT_MAX: 30,

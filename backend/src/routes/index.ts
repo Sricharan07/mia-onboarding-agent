@@ -9,6 +9,7 @@ import { registerLogRoutes } from "./logs.js";
 import { registerApiKeyHook } from "./auth.js";
 import { registerRateLimitHook } from "./rateLimit.js";
 import { registerApiKeyRoutes } from "./apiKeys.js";
+import { registerConsoleAuthRoutes } from "./consoleAuth.js";
 import { registerMetricRoutes } from "./metrics.js";
 import { registerSystemRoutes } from "./system.js";
 import { registerSemanticIndexRoutes } from "./semanticIndex.js";
@@ -25,6 +26,7 @@ export async function registerRoutes(app: FastifyInstance, dependencies: AppDepe
   }));
 
   await registerSystemRoutes(app, dependencies);
+  await registerConsoleAuthRoutes(app, dependencies);
   await registerApiKeyRoutes(app, dependencies);
   await registerMetricRoutes(app, dependencies);
   await registerSemanticIndexRoutes(app, dependencies);

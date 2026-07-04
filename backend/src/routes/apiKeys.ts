@@ -35,6 +35,8 @@ export async function registerApiKeyRoutes(app: FastifyInstance, dependencies: A
 }
 
 function authorizeApiKeyCreate(request: FastifyRequest, dependencies: AppDependencies): void {
+  if (request.consoleSession?.role === "admin") return;
+
   if (dependencies.services.apiKeys.hasActiveKeys()) {
     dependencies.services.apiKeys.requireScope(request.apiKey, ["admin"]);
     return;

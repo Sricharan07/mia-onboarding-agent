@@ -4,6 +4,7 @@ import {
   BackendApi,
   type AppRecord,
   type BackendHealth,
+  type ConsoleAuthUser,
   type ExecutionLog,
   type SystemReadiness,
   type UiElement,
@@ -26,15 +27,16 @@ import { UploadWorkflowPage, WorkflowJobsPage, WorkflowReviewPage, WorkflowsPage
 import type { LoadState, RouteId } from "./types";
 
 const defaultBackendUrl = window.localStorage.getItem("mia-console-backend-url") ?? "http://localhost:4000";
-const defaultAdminApiKey = window.localStorage.getItem("mia-console-admin-api-key") ?? "";
-const defaultBootstrapToken = window.localStorage.getItem("mia-console-bootstrap-token") ?? "";
+const defaultConsoleSessionToken = window.sessionStorage.getItem("mia-console-session-token") ?? "";
 
 function App() {
-  const [authenticated, setAuthenticated] = useState(() => Boolean(defaultAdminApiKey || defaultBootstrapToken));
+  const [authenticated, setAuthenticated] = useState(() => Boolean(defaultConsoleSessionToken));
+  const [authChecked, setAuthChecked] = useState(false);
+  const [setupRequired, setSetupRequired] = useState(false);
   const [activeRoute, setActiveRoute] = useState<RouteId>("overview");
   const [backendUrl, setBackendUrl] = useState(defaultBackendUrl);
-  const [adminApiKey, setAdminApiKey] = useState(defaultAdminApiKey);
-  const [bootstrapToken, setBootstrapToken] = useState(defaultBootstrapToken);
+  const [sessionToken, setSessionToken] = useState(defaultConsoleSessionToken);
+  const [consoleUser, setConsoleUser] = useState<ConsoleAuthUser | null>(null);
   const [health, setHealth] = useState<BackendHealth | null>(null);
   const [readiness, setReadiness] = useState<SystemReadiness | null>(null);
   const [loadState, setLoadState] = useState<LoadState>("idle");
@@ -52,7 +54,7 @@ function App() {
   const [selectedWorkflow, setSelectedWorkflow] = useState<Workflow | null>(null);
   const [logs, setLogs] = useState<ExecutionLog[]>([]);
 
-  const api = useMemo(() => new BackendApi(backendUrl, { apiKey: adminApiKey, bootstrapToken }), [backendUrl, adminApiKey, bootstrapToken]);
+  const api = useMemo(() => new BackendApi(backendUrl, { sessionToken }), [backendUrl, sessionToken]);
   const selectedApp = apps.find((app) => app.id === selectedAppId) ?? null;
   const latestUiMap = uiMapVersions[0] ?? null;
   const selectedPage = pages.find((page) => page.id === selectedPageId) ?? pages[0] ?? null;
@@ -67,6 +69,15 @@ function App() {
     const message = cause instanceof Error ? cause.message : fallback;
     setError(message);
     showToast(message);
+  };
+
+  const clearSession = () => {
+    window.sessionStorage.removeItem("mia-console-session-token");
+    window.localStorage.removeItem("mia-console-admin-api-key");
+    window.localStorage.removeItem("mia-console-bootstrap-token");
+    setSessionToken("");
+    setConsoleUser(null);
+    setAuthenticated(false);
   };
 
   const refresh = async (preferredAppId = selectedAppId) => {
@@ -136,16 +147,42 @@ function App() {
   };
 
   useEffect(() => {
-    if (authenticated) {
-      if (!adminApiKey) {
-        setActiveRoute("api-keys");
-        setLoadState("ready");
-        return;
+    let cancelled = false;
+
+    const checkAuth = async () => {
+      try {
+        const status = await new BackendApi(backendUrl, sessionToken ? { sessionToken } : {}).authStatus();
+        if (cancelled) return;
+        setSetupRequired(status.setupRequired);
+        if (status.authenticated && status.user && sessionToken) {
+          setConsoleUser(status.user);
+          setAuthenticated(true);
+        } else {
+          clearSession();
+        }
+      } catch {
+        if (!cancelled) {
+          clearSession();
+        }
+      } finally {
+        if (!cancelled) {
+          setAuthChecked(true);
+        }
       }
+    };
+
+    void checkAuth();
+    return () => {
+      cancelled = true;
+    };
+  }, [backendUrl, sessionToken]);
+
+  useEffect(() => {
+    if (authenticated && authChecked) {
       void refresh();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authenticated, api, adminApiKey]);
+  }, [authenticated, authChecked, api]);
 
   useEffect(() => {
     const hasActiveWorkflowJob = jobs.some((job) => ["uploaded", "analyzing", "mapped"].includes(job.status));
@@ -176,35 +213,71 @@ function App() {
     }
   };
 
-  const login = (input: { backendUrl: string; adminApiKey?: string; bootstrapToken?: string }) => {
-    const nextAdminApiKey = input.adminApiKey?.trim() ?? "";
-    const nextBootstrapToken = input.bootstrapToken?.trim() ?? "";
-    window.localStorage.setItem("mia-console-backend-url", input.backendUrl);
-    setBackendUrl(input.backendUrl);
-    setAdminApiKey(nextAdminApiKey);
-    setBootstrapToken(nextBootstrapToken);
-    if (nextAdminApiKey) {
-      window.localStorage.setItem("mia-console-admin-api-key", nextAdminApiKey);
-      window.localStorage.removeItem("mia-console-bootstrap-token");
-      setBootstrapToken("");
-    } else {
-      window.localStorage.removeItem("mia-console-admin-api-key");
-      window.localStorage.setItem("mia-console-bootstrap-token", nextBootstrapToken);
-      setActiveRoute("api-keys");
-    }
-    setAuthenticated(true);
-  };
-
-  const logout = () => {
+  const completeAuth = (input: { backendUrl: string; token: string; user: ConsoleAuthUser }) => {
+    const nextBackendUrl = input.backendUrl.trim();
+    window.localStorage.setItem("mia-console-backend-url", nextBackendUrl);
+    window.sessionStorage.setItem("mia-console-session-token", input.token);
     window.localStorage.removeItem("mia-console-admin-api-key");
     window.localStorage.removeItem("mia-console-bootstrap-token");
-    setAuthenticated(false);
-    setAdminApiKey("");
-    setBootstrapToken("");
+    setBackendUrl(nextBackendUrl);
+    setSessionToken(input.token);
+    setConsoleUser(input.user);
+    setAuthenticated(true);
+    setAuthChecked(true);
+    setError("");
+    setActiveRoute("overview");
   };
 
+  const login = async (input: { backendUrl: string; email: string; password: string }) => {
+    const nextBackendUrl = input.backendUrl.trim();
+    const authApi = new BackendApi(nextBackendUrl);
+    const result = await authApi.loginConsole({ email: input.email, password: input.password });
+    completeAuth({ backendUrl: nextBackendUrl, token: result.token, user: result.user });
+  };
+
+  const setup = async (input: { backendUrl: string; email: string; name: string; password: string; bootstrapToken: string }) => {
+    const nextBackendUrl = input.backendUrl.trim();
+    const authApi = new BackendApi(nextBackendUrl);
+    const result = await authApi.setupConsoleUser({
+      email: input.email,
+      name: input.name,
+      password: input.password
+    }, input.bootstrapToken);
+    completeAuth({ backendUrl: nextBackendUrl, token: result.token, user: result.user });
+  };
+
+  const logout = async () => {
+    try {
+      if (sessionToken) {
+        await api.logoutConsole();
+      }
+    } catch {
+      // The local session should still be cleared if the backend is unavailable or already expired.
+    } finally {
+      clearSession();
+    }
+  };
+
+  if (!authChecked) {
+    return (
+      <main className="login-page">
+        <section className="login-card auth-check-card">
+          <div className="login-brand-row">
+            <span className="brand-tile">
+              <Command size={17} />
+            </span>
+            <div>
+              <div className="brand-name">Mia Console</div>
+              <div className="brand-subtitle">Checking session</div>
+            </div>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
   if (!authenticated) {
-    return <LoginPage backendUrl={backendUrl} onLogin={login} />;
+    return <LoginPage backendUrl={backendUrl} setupRequired={setupRequired} onLogin={login} onSetup={setup} />;
   }
 
   return (
@@ -242,13 +315,13 @@ function App() {
         <div className="sidebar-footer">
           <div className="support-card">
             <div>Live backend mode</div>
-            <p>Data shown here comes from `backend/src/routes`. Unsupported console ideas are marked as gaps.</p>
+            <p>Manage UI maps, workflows, runtime keys, and backend readiness from this console.</p>
           </div>
           <button className="user-card" type="button" onClick={() => setActiveRoute("settings")}>
-            <span className="avatar">LC</span>
+            <span className="avatar">{userInitials(consoleUser)}</span>
             <span className="user-copy">
-              <span>Local console</span>
-              <span>{selectedApp?.slug ?? "no app selected"}</span>
+              <span>{consoleUser?.name ?? "Console admin"}</span>
+              <span>{consoleUser?.email ?? selectedApp?.slug ?? "no app selected"}</span>
             </span>
             <EllipsisVertical size={14} />
           </button>
@@ -280,7 +353,7 @@ function App() {
             <button className="icon-button" type="button" aria-label="Notifications">
               <Bell size={15} />
             </button>
-            <button className="button secondary" type="button" onClick={logout}>
+            <button className="button secondary" type="button" onClick={() => void logout()}>
               <LogOut size={15} />
               Sign out
             </button>
@@ -387,14 +460,6 @@ function App() {
             api={api}
             apps={apps}
             selectedAppId={selectedAppId}
-            hasAdminKey={Boolean(adminApiKey)}
-            onAdminKeyCreated={(key) => {
-              window.localStorage.setItem("mia-console-admin-api-key", key);
-              window.localStorage.removeItem("mia-console-bootstrap-token");
-              setAdminApiKey(key);
-              setBootstrapToken("");
-              showToast("Admin key saved for this browser");
-            }}
             showToast={showToast}
           />
         )}
@@ -403,6 +468,16 @@ function App() {
       {toast && <div className="toast">{toast}</div>}
     </div>
   );
+}
+
+function userInitials(user: ConsoleAuthUser | null): string {
+  const source = user?.name || user?.email || "Mia Console";
+  return source
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("");
 }
 
 export default App;

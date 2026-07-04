@@ -22,6 +22,7 @@ const envSchema = z.object({
   DATABASE_URL: z.string().default("file:./data/sqlite/local.db"),
   LOCAL_UPLOAD_DIR: z.string().default("./data/uploads"),
   BOOTSTRAP_ADMIN_TOKEN: z.string().optional(),
+  CONSOLE_SESSION_TTL_SECONDS: z.coerce.number().int().positive().default(60 * 60 * 8),
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(300),
   GEMINI_LIVE_TOKEN_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(30),

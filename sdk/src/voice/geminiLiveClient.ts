@@ -61,6 +61,7 @@ export class GeminiLiveClient {
 
     input.onStage?.("Opening Gemini Live connection...");
     const socket = new WebSocket(`${token.websocketUrl}?access_token=${encodeURIComponent(token.token)}`);
+    socket.binaryType = "arraybuffer";
     this.socket = socket;
     socket.onmessage = (event) => void this.handleSocketMessage(event);
     socket.onerror = () => {
@@ -68,8 +69,9 @@ export class GeminiLiveClient {
       this.setupReject?.(error);
       this.emitError(error);
     };
-    socket.onclose = () => {
+    socket.onclose = (event) => {
       this.connected = false;
+      this.setupReject?.(webSocketCloseError(event));
       input.onEvent({ type: "ended", status: "ended" });
     };
 
@@ -287,8 +289,15 @@ export class GeminiLiveClient {
   }
 
   private async handleSocketMessage(event: MessageEvent): Promise<void> {
-    const message = parseMessage(event.data);
+    const message = await parseMessage(event.data);
     if (!message) return;
+
+    const providerError = readProviderError(message);
+    if (providerError) {
+      this.setupReject?.(providerError);
+      this.emitError(providerError);
+      return;
+    }
 
     if (message.setupComplete ?? message.setup_complete) {
       this.setupResolve?.();
@@ -488,14 +497,34 @@ function toolResponseForResult(result: ResolveResponse): Record<string, unknown>
   };
 }
 
-function parseMessage(data: unknown): GeminiMessage | undefined {
-  if (typeof data !== "string") return undefined;
+async function parseMessage(data: unknown): Promise<GeminiMessage | undefined> {
+  const text = await frameText(data);
+  if (!text) return undefined;
   try {
-    const parsed = JSON.parse(data);
+    const parsed = JSON.parse(text);
     return readObject(parsed) ?? undefined;
   } catch {
     return undefined;
   }
+}
+
+async function frameText(data: unknown): Promise<string | undefined> {
+  if (typeof data === "string") return data;
+  if (data instanceof Blob) return data.text();
+  if (data instanceof ArrayBuffer) return new TextDecoder().decode(data);
+  if (ArrayBuffer.isView(data)) return new TextDecoder().decode(data);
+  return undefined;
+}
+
+function readProviderError(message: GeminiMessage): Error | undefined {
+  const raw = message.error;
+  if (!raw) return undefined;
+  if (typeof raw === "string") return new Error(`Gemini Live error: ${raw}`);
+  const error = readObject(raw);
+  if (!error) return new Error("Gemini Live returned an unknown error.");
+  const code = readString(error.code) ?? readString(error.status);
+  const messageText = readString(error.message) ?? JSON.stringify(error);
+  return new Error(code ? `Gemini Live error (${code}): ${messageText}` : `Gemini Live error: ${messageText}`);
 }
 
 function readObject(value: unknown): Record<string, unknown> | undefined {
@@ -533,6 +562,14 @@ function waitForSocketOpen(socket: WebSocket): Promise<void> {
     socket.addEventListener("open", handleOpen);
     socket.addEventListener("error", handleError);
   });
+}
+
+function webSocketCloseError(event: CloseEvent): Error {
+  const details = [
+    event.code ? `code=${event.code}` : undefined,
+    event.reason ? `reason=${event.reason}` : undefined
+  ].filter(Boolean).join("; ");
+  return new Error(details ? `Gemini Live WebSocket closed before setup completed (${details}).` : "Gemini Live WebSocket closed before setup completed.");
 }
 
 function downsample(input: Float32Array, sourceRate: number, targetRate: number): Float32Array {

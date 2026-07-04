@@ -1,6 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { ApiKeyRecord, ApiKeyScope, Repositories } from "../../db/repositories.js";
 import { AppError } from "../../utils/errors.js";
+import { isConsoleSessionToken } from "./consoleAuthService.js";
 
 export const apiKeyScopes = ["apps:read", "ui-map:read", "workflows:read", "runtime:write", "logs:write", "logs:read", "admin"] as const;
 export type AuthenticatedApiKey = ApiKeyRecord;
@@ -117,7 +118,8 @@ export function extractApiKey(headers: { authorization?: unknown; "x-api-key"?: 
 
   const authorization = typeof headers.authorization === "string" ? headers.authorization : undefined;
   const match = authorization?.match(/^Bearer\s+(.+)$/i);
-  return match?.[1];
+  const token = match?.[1];
+  return isConsoleSessionToken(token) ? undefined : token;
 }
 
 function parsePrefix(rawKey: string): string | undefined {

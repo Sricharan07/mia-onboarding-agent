@@ -22,6 +22,29 @@ export type ApiKeySecretRecord = ApiKeyRecord & {
   keyHash: string;
 };
 
+export type ConsoleUserRecord = {
+  id: string;
+  email: string;
+  name: string;
+  role: "admin";
+  passwordHash: string;
+  createdAt: string;
+  updatedAt: string;
+  lastLoginAt: string | null;
+  disabledAt: string | null;
+};
+
+export type ConsoleSessionRecord = {
+  id: string;
+  userId: string;
+  tokenHash: string;
+  createdAt: string;
+  expiresAt: string;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+  user: Omit<ConsoleUserRecord, "passwordHash">;
+};
+
 export type UsageSummary = {
   totals: {
     sdkEvents: number;
@@ -651,6 +674,80 @@ export class Repositories {
     this.db.prepare("UPDATE api_keys SET last_used_at = ? WHERE id = ?").run(nowIso(), id);
   }
 
+  countConsoleUsers(): number {
+    const row = this.db.prepare("SELECT COUNT(*) as count FROM console_users").get() as { count: number };
+    return Number(row.count);
+  }
+
+  createConsoleUser(input: { email: string; name: string; passwordHash: string; role: "admin" }): ConsoleUserRecord {
+    const now = nowIso();
+    const id = createId("console_user");
+    this.db.prepare(`
+      INSERT INTO console_users (id, email, name, role, password_hash, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(id, input.email, input.name, input.role, input.passwordHash, now, now);
+    return this.getConsoleUserById(id);
+  }
+
+  getConsoleUserById(id: string): ConsoleUserRecord {
+    const row = this.db.prepare("SELECT * FROM console_users WHERE id = ?").get(id) as Row | undefined;
+    if (!row) throw new NotFoundError(`Console user not found: ${id}`);
+    return mapConsoleUser(row);
+  }
+
+  getConsoleUserByEmail(email: string): ConsoleUserRecord | undefined {
+    const row = this.db.prepare("SELECT * FROM console_users WHERE email = ?").get(email) as Row | undefined;
+    return row ? mapConsoleUser(row) : undefined;
+  }
+
+  markConsoleUserLogin(userId: string): void {
+    this.db.prepare("UPDATE console_users SET last_login_at = ?, updated_at = ? WHERE id = ?")
+      .run(nowIso(), nowIso(), userId);
+  }
+
+  createConsoleSession(input: { id: string; userId: string; tokenHash: string; expiresAt: string }): ConsoleSessionRecord {
+    this.db.prepare(`
+      INSERT INTO console_sessions (id, user_id, token_hash, created_at, expires_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(input.id, input.userId, input.tokenHash, nowIso(), input.expiresAt);
+    return this.getConsoleSession(input.id);
+  }
+
+  getConsoleSession(id: string): ConsoleSessionRecord {
+    const row = this.db.prepare(`
+      SELECT
+        console_sessions.id,
+        console_sessions.user_id,
+        console_sessions.token_hash,
+        console_sessions.created_at,
+        console_sessions.expires_at,
+        console_sessions.last_used_at,
+        console_sessions.revoked_at,
+        console_users.id as user_id_value,
+        console_users.email as user_email,
+        console_users.name as user_name,
+        console_users.role as user_role,
+        console_users.created_at as user_created_at,
+        console_users.updated_at as user_updated_at,
+        console_users.last_login_at as user_last_login_at,
+        console_users.disabled_at as user_disabled_at
+      FROM console_sessions
+      INNER JOIN console_users ON console_users.id = console_sessions.user_id
+      WHERE console_sessions.id = ?
+    `).get(id) as Row | undefined;
+    if (!row) throw new NotFoundError(`Console session not found: ${id}`);
+    return mapConsoleSession(row);
+  }
+
+  markConsoleSessionUsed(id: string): void {
+    this.db.prepare("UPDATE console_sessions SET last_used_at = ? WHERE id = ?").run(nowIso(), id);
+  }
+
+  revokeConsoleSession(id: string): void {
+    this.db.prepare("UPDATE console_sessions SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ?")
+      .run(nowIso(), id);
+  }
+
   getUsageSummary(filters: { appId?: string; from?: string; to?: string }): UsageSummary {
     const executionWhere = buildLogWhere("execution_logs", filters);
     const aiWhere = buildAiWhere(filters);
@@ -762,6 +859,47 @@ function mapApiKeySecret(row: Row): ApiKeySecretRecord {
     ...mapApiKey(row),
     keyHash: String(row.key_hash)
   };
+}
+
+function mapConsoleUser(row: Row): ConsoleUserRecord {
+  return {
+    id: String(row.id),
+    email: String(row.email),
+    name: String(row.name),
+    role: mapConsoleRole(row.role),
+    passwordHash: String(row.password_hash),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+    lastLoginAt: row.last_login_at ? String(row.last_login_at) : null,
+    disabledAt: row.disabled_at ? String(row.disabled_at) : null
+  };
+}
+
+function mapConsoleSession(row: Row): ConsoleSessionRecord {
+  return {
+    id: String(row.id),
+    userId: String(row.user_id),
+    tokenHash: String(row.token_hash),
+    createdAt: String(row.created_at),
+    expiresAt: String(row.expires_at),
+    lastUsedAt: row.last_used_at ? String(row.last_used_at) : null,
+    revokedAt: row.revoked_at ? String(row.revoked_at) : null,
+    user: {
+      id: String(row.user_id_value),
+      email: String(row.user_email),
+      name: String(row.user_name),
+      role: mapConsoleRole(row.user_role),
+      createdAt: String(row.user_created_at),
+      updatedAt: String(row.user_updated_at),
+      lastLoginAt: row.user_last_login_at ? String(row.user_last_login_at) : null,
+      disabledAt: row.user_disabled_at ? String(row.user_disabled_at) : null
+    }
+  };
+}
+
+function mapConsoleRole(value: unknown): "admin" {
+  if (value === "admin") return "admin";
+  throw new AppError("CONSOLE_ROLE_INVALID", `Invalid console user role: ${String(value)}`, 500);
 }
 
 function parseStringArray(value: unknown): string[] {

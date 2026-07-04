@@ -13,7 +13,7 @@ export async function registerAppRoutes(app: FastifyInstance, dependencies: AppD
   app.get("/api/v1/apps", {
     preHandler: (request, reply) => requireApiKeyScope(request, reply, dependencies, ["apps:read"])
   }, async (request) => {
-    if (request.apiKey?.scopes.includes("admin")) {
+    if (request.consoleSession?.role === "admin" || request.apiKey?.scopes.includes("admin")) {
       return { items: dependencies.repositories.listApps() };
     }
     requireApiKeyAppAccess(request, dependencies, request.apiKey?.appId ?? undefined);

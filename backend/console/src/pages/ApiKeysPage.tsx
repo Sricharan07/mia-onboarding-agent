@@ -5,36 +5,27 @@ import { EmptyTableRow, Panel, StatusPill } from "../components/console";
 import { formatDate } from "../utils/format";
 
 const scopeOptions: ApiKeyScope[] = ["apps:read", "ui-map:read", "workflows:read", "runtime:write", "logs:write", "logs:read", "admin"];
-const bootstrapScopeOptions: ApiKeyScope[] = ["admin"];
 
 export function ApiKeysPage({
   api,
   apps,
   selectedAppId,
-  hasAdminKey,
-  onAdminKeyCreated,
   showToast
 }: {
   api: BackendApi;
   apps: AppRecord[];
   selectedAppId: string;
-  hasAdminKey: boolean;
-  onAdminKeyCreated: (key: string) => void;
   showToast: (message: string) => void;
 }) {
   const [keys, setKeys] = useState<ApiKeyRecord[]>([]);
-  const [name, setName] = useState(hasAdminKey ? "Local SDK key" : "Console admin key");
-  const [scopes, setScopes] = useState<ApiKeyScope[]>(hasAdminKey ? ["runtime:write", "logs:write"] : ["admin"]);
+  const [name, setName] = useState("Local SDK key");
+  const [scopes, setScopes] = useState<ApiKeyScope[]>(["runtime:write", "logs:write"]);
   const [appId, setAppId] = useState(selectedAppId);
   const [allowedOrigins, setAllowedOrigins] = useState(() => defaultOrigin(apps.find((app) => app.id === selectedAppId)));
   const [createdKey, setCreatedKey] = useState<CreatedApiKey | null>(null);
   const [pendingKeyId, setPendingKeyId] = useState<string | null>(null);
 
   const load = async () => {
-    if (!hasAdminKey) {
-      setKeys([]);
-      return;
-    }
     try {
       setKeys((await api.listApiKeys()).items);
     } catch (cause) {
@@ -45,14 +36,7 @@ export function ApiKeysPage({
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api, hasAdminKey]);
-
-  useEffect(() => {
-    if (!hasAdminKey) {
-      setName("Console admin key");
-      setScopes(["admin"]);
-    }
-  }, [hasAdminKey]);
+  }, [api]);
 
   useEffect(() => {
     if (!selectedAppId || appId) return;
@@ -66,16 +50,12 @@ export function ApiKeysPage({
 
   const create = async () => {
     try {
-      const nextScopes: ApiKeyScope[] = hasAdminKey ? scopes : ["admin"];
       const next = await api.createApiKey({
         name,
-        scopes: nextScopes,
-        ...(nextScopes.includes("admin") ? {} : { appId, allowedOrigins: parseOrigins(allowedOrigins) })
+        scopes,
+        ...(scopes.includes("admin") ? {} : { appId, allowedOrigins: parseOrigins(allowedOrigins) })
       });
       setCreatedKey(next);
-      if (!hasAdminKey && next.scopes.includes("admin")) {
-        onAdminKeyCreated(next.key);
-      }
       await load();
       showToast("API key created");
     } catch (cause) {
@@ -104,7 +84,7 @@ export function ApiKeysPage({
 
   return (
     <div className="page-grid">
-      <Panel title={hasAdminKey ? "Create API key" : "Create first admin key"} action={<StatusPill tone="green" label="Hashed at rest" />}>
+      <Panel title="Create API key" action={<StatusPill tone="green" label="Hashed at rest" />}>
         <div className="form-grid single">
           <label>
             Key name
@@ -113,15 +93,15 @@ export function ApiKeysPage({
           <div>
             <div className="field-label">Scopes</div>
             <div className="scope-grid">
-              {(hasAdminKey ? scopeOptions : bootstrapScopeOptions).map((scope) => (
+              {scopeOptions.map((scope) => (
                 <label className="check-row" key={scope}>
-                  <input type="checkbox" checked={scopes.includes(scope)} disabled={!hasAdminKey} onChange={() => toggleScope(scope)} />
+                  <input type="checkbox" checked={scopes.includes(scope)} onChange={() => toggleScope(scope)} />
                   {scope}
                 </label>
               ))}
             </div>
           </div>
-          {hasAdminKey && !scopes.includes("admin") && (
+          {!scopes.includes("admin") && (
             <>
               <label>
                 Bound app

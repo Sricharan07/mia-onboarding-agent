@@ -19,6 +19,7 @@ import { WorkflowService } from "./services/workflows/workflowService.js";
 import { RuntimeService } from "./services/runtime/runtimeService.js";
 import { SemanticIndexService } from "./services/semantic/semanticIndexService.js";
 import { ApiKeyService } from "./services/auth/apiKeyService.js";
+import { ConsoleAuthService } from "./services/auth/consoleAuthService.js";
 import { UsageService } from "./services/metrics/usageService.js";
 import { ReadinessService } from "./services/system/readinessService.js";
 import { GeminiLiveTokenService } from "./services/gemini/geminiLiveTokenService.js";
@@ -77,6 +78,7 @@ function createDependencies(config: AppConfig) {
       semanticIndex: new SemanticIndexService(repositories, semanticSearch),
       runtime,
       apiKeys: new ApiKeyService(repositories),
+      consoleAuth: new ConsoleAuthService(config, repositories),
       usage: new UsageService(repositories),
       readiness: new ReadinessService(config, repositories),
       geminiLiveTokens: new GeminiLiveTokenService(config),

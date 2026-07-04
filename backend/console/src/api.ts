@@ -255,6 +255,29 @@ export type CreatedApiKey = ApiKeyRecord & {
   key: string;
 };
 
+export type ConsoleAuthUser = {
+  id: string;
+  email: string;
+  name: string;
+  role: "admin";
+  createdAt: string;
+  updatedAt: string;
+  lastLoginAt: string | null;
+  disabledAt: string | null;
+};
+
+export type ConsoleAuthStatus = {
+  setupRequired: boolean;
+  authenticated: boolean;
+  user?: ConsoleAuthUser;
+};
+
+export type ConsoleLoginResponse = {
+  token: string;
+  expiresAt: string;
+  user: ConsoleAuthUser;
+};
+
 export type UsageSummary = {
   totals: {
     sdkEvents: number;
@@ -278,8 +301,7 @@ export type UsageTimeseriesPoint = {
 type Items<T> = { items: T[] };
 
 export type BackendApiCredentials = {
-  apiKey?: string;
-  bootstrapToken?: string;
+  sessionToken?: string;
 };
 
 export class BackendApi {
@@ -294,6 +316,26 @@ export class BackendApi {
 
   readiness(): Promise<SystemReadiness> {
     return this.request("/api/v1/system/readiness");
+  }
+
+  authStatus(): Promise<ConsoleAuthStatus> {
+    return this.request("/api/v1/console/auth/status");
+  }
+
+  setupConsoleUser(input: { email: string; name: string; password: string }, bootstrapToken: string): Promise<ConsoleLoginResponse> {
+    return this.request("/api/v1/console/auth/setup", {
+      method: "POST",
+      body: input,
+      headers: { "x-bootstrap-admin-token": bootstrapToken }
+    });
+  }
+
+  loginConsole(input: { email: string; password: string }): Promise<ConsoleLoginResponse> {
+    return this.request("/api/v1/console/auth/login", { method: "POST", body: input });
+  }
+
+  logoutConsole(): Promise<{ ok: true }> {
+    return this.request("/api/v1/console/auth/logout", { method: "POST", body: {} });
   }
 
   listApps(): Promise<Items<AppRecord>> {
@@ -440,8 +482,14 @@ export class BackendApi {
     return this.request(`/api/v1/api-keys/${encodeURIComponent(keyId)}`, { method: "DELETE" });
   }
 
-  private async request<T>(path: string, init: { method?: string; body?: unknown; formData?: FormData } = {}): Promise<T> {
+  private async request<T>(
+    path: string,
+    init: { method?: string; body?: unknown; formData?: FormData; headers?: Record<string, string> } = {}
+  ): Promise<T> {
     const headers = new Headers();
+    for (const [key, value] of Object.entries(init.headers ?? {})) {
+      headers.set(key, value);
+    }
     let body: BodyInit | undefined;
     const method = init.method ?? "GET";
     if (init.formData) {
@@ -451,10 +499,8 @@ export class BackendApi {
       body = JSON.stringify(init.body);
     }
 
-    if (this.credentials.apiKey) {
-      headers.set("authorization", `Bearer ${this.credentials.apiKey}`);
-    } else if (this.credentials.bootstrapToken && method === "POST" && path === "/api/v1/api-keys") {
-      headers.set("x-bootstrap-admin-token", this.credentials.bootstrapToken);
+    if (this.credentials.sessionToken) {
+      headers.set("authorization", `Bearer ${this.credentials.sessionToken}`);
     }
 
     const response = await fetch(`${this.baseUrl.replace(/\/+$/, "")}${path}`, {

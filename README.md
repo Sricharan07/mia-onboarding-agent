@@ -30,21 +30,21 @@ BOOTSTRAP_ADMIN_TOKEN=long-random-bootstrap-token
 OPENAI_API_KEY=...
 ```
 
-Create the first admin API key:
+Create the first console admin in the console, or with the setup endpoint:
 
 ```bash
-curl -X POST http://localhost:4000/api/v1/api-keys \
+curl -X POST http://localhost:4000/api/v1/console/auth/setup \
   -H "content-type: application/json" \
   -H "x-bootstrap-admin-token: $BOOTSTRAP_ADMIN_TOKEN" \
-  -d '{"name":"local admin","scopes":["admin"]}'
+  -d '{"name":"Local Admin","email":"admin@example.com","password":"long-random-password"}'
 ```
 
-Use that admin key for console/admin API requests:
+Use the returned console session token for admin API requests:
 
 ```bash
 curl -X POST http://localhost:4000/api/v1/apps \
   -H "content-type: application/json" \
-  -H "authorization: Bearer $ADMIN_API_KEY" \
+  -H "authorization: Bearer $CONSOLE_SESSION_TOKEN" \
   -d '{"name":"local app","slug":"local-app","baseUrl":"http://localhost:3000"}'
 ```
 
@@ -53,17 +53,17 @@ Create an SDK key with `runtime:write` and `logs:write`, bound to the target app
 ```bash
 curl -X POST http://localhost:4000/api/v1/api-keys \
   -H "content-type: application/json" \
-  -H "authorization: Bearer $ADMIN_API_KEY" \
+  -H "authorization: Bearer $CONSOLE_SESSION_TOKEN" \
   -d '{"name":"local SDK","scopes":["runtime:write","logs:write"],"appId":"<app_id>","allowedOrigins":["http://localhost:3000"]}'
 ```
 
-All non-admin keys must include `appId` and `allowedOrigins`. Admin keys stay server/console-only.
+All non-admin keys must include `appId` and `allowedOrigins`. Console users manage SDK keys from the self-hosted console.
 
 Rebuild the local semantic index for an existing app after scans/workflow imports:
 
 ```bash
 curl -X POST http://localhost:4000/api/v1/apps/<app_id>/semantic-index/rebuild \
-  -H "authorization: Bearer $ADMIN_API_KEY"
+  -H "authorization: Bearer $CONSOLE_SESSION_TOKEN"
 ```
 
 ## Docker
@@ -84,11 +84,11 @@ npm run dev
 ```
 
 The console defaults to `http://localhost:4000` and can be pointed at another backend URL from Settings.
-Sign in with an admin API key. If no API key exists yet, sign in with `BOOTSTRAP_ADMIN_TOKEN` and create the first admin key from the API Keys page.
+On first run, create the first console admin with the `BOOTSTRAP_ADMIN_TOKEN` from the backend environment. After setup, sign in with the admin email and password.
 
 Gemini, OpenAI embeddings, and LanceDB local storage are required for provider-backed routes. Missing credentials fail with explicit config errors.
 
-Runtime-sensitive SDK/backend routes are protected with scoped API keys. API key management requires an `admin` key after the bootstrap key is created.
+Runtime-sensitive SDK/backend routes are protected with scoped API keys. API key management requires a signed-in console admin or an `admin` API key.
 
 The SDK can redact DOM context before it leaves the browser:
 

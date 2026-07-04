@@ -187,12 +187,36 @@ function migrate(db: Db): void {
       revoked_at TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS console_users (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      role TEXT NOT NULL,
+      password_hash TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      last_login_at TEXT,
+      disabled_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS console_sessions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      last_used_at TEXT,
+      revoked_at TEXT
+    );
+
     CREATE INDEX IF NOT EXISTS idx_ui_elements_app_route ON ui_elements(app_id, route);
     CREATE INDEX IF NOT EXISTS idx_workflows_app_status ON workflows(app_id, status);
     CREATE INDEX IF NOT EXISTS idx_execution_logs_filters ON execution_logs(app_id, workflow_id, session_id);
     CREATE INDEX IF NOT EXISTS idx_ai_request_logs_created_at ON ai_request_logs(created_at);
     CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON api_keys(prefix);
     CREATE INDEX IF NOT EXISTS idx_api_keys_active ON api_keys(prefix, revoked_at);
+    CREATE INDEX IF NOT EXISTS idx_console_users_email ON console_users(email);
+    CREATE INDEX IF NOT EXISTS idx_console_sessions_token ON console_sessions(token_hash);
   `);
 
   ensureColumn(db, "ui_elements", "state_name", "TEXT NOT NULL DEFAULT 'default'");
