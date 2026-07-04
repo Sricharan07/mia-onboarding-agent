@@ -1,22 +1,47 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { AppDependencies } from "../app.js";
-import { workflowSchema, workflowStepSchema } from "../schemas/domain.js";
+import { workflowStepSchema } from "../schemas/domain.js";
 import { ValidationAppError } from "../utils/errors.js";
 import { requireApiKeyAppAccess, requireApiKeyScope } from "./auth.js";
+
+const workflowUpdateSchema = z.object({
+  name: z.string().trim().min(1).optional(),
+  description: z.string().trim().min(1).optional(),
+  triggerPhrases: z.array(z.string().trim().min(1)).min(1).optional()
+}).strict();
+
+const workflowVideoMetadataSchema = z.object({
+  name: z.string().trim().min(1).optional(),
+  description: z.string().trim().min(1).optional()
+});
 
 export async function registerWorkflowRoutes(app: FastifyInstance, dependencies: AppDependencies): Promise<void> {
   app.post("/api/v1/apps/:appId/workflow-videos", {
     preHandler: (request, reply) => requireApiKeyScope(request, reply, dependencies, ["admin"])
   }, async (request) => {
     const params = z.object({ appId: z.string() }).parse(request.params);
-    const file = await request.file();
+    const metadata: Record<string, string> = {};
+    let file: { buffer: Buffer; filename: string; mimetype: string } | undefined;
+
+    for await (const part of request.parts()) {
+      if (part.type === "file") {
+        const buffer = await part.toBuffer();
+        file ??= { buffer, filename: part.filename, mimetype: part.mimetype };
+        continue;
+      }
+
+      if (part.fieldname === "name" || part.fieldname === "description") {
+        metadata[part.fieldname] = typeof part.value === "string" ? part.value : String(part.value ?? "");
+      }
+    }
+
     if (!file) {
       throw new ValidationAppError("Workflow video file is required.");
     }
-    const buffer = await file.toBuffer();
+    const parsedMetadata = workflowVideoMetadataSchema.parse(metadata);
     const saved = await dependencies.adapters.storage.saveBuffer({
-      buffer,
+      buffer: file.buffer,
       filename: file.filename,
       directory: dependencies.config.LOCAL_UPLOAD_DIR
     });
@@ -25,7 +50,9 @@ export async function registerWorkflowRoutes(app: FastifyInstance, dependencies:
       filename: file.filename,
       localPath: saved.path,
       mimeType: file.mimetype,
-      sizeBytes: saved.sizeBytes
+      sizeBytes: saved.sizeBytes,
+      workflowName: parsedMetadata.name,
+      workflowDescription: parsedMetadata.description
     });
   });
 
@@ -81,7 +108,7 @@ export async function registerWorkflowRoutes(app: FastifyInstance, dependencies:
     preHandler: (request, reply) => requireApiKeyScope(request, reply, dependencies, ["admin"])
   }, async (request) => {
     const params = z.object({ workflowId: z.string() }).parse(request.params);
-    const body = workflowSchema.partial().parse(request.body);
+    const body = workflowUpdateSchema.parse(request.body);
     await dependencies.services.workflow.updateWorkflow(params.workflowId, body);
     return { ok: true };
   });

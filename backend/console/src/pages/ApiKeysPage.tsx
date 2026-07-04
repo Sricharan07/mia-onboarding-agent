@@ -28,6 +28,7 @@ export function ApiKeysPage({
   const [appId, setAppId] = useState(selectedAppId);
   const [allowedOrigins, setAllowedOrigins] = useState(() => defaultOrigin(apps.find((app) => app.id === selectedAppId)));
   const [createdKey, setCreatedKey] = useState<CreatedApiKey | null>(null);
+  const [pendingKeyId, setPendingKeyId] = useState<string | null>(null);
 
   const load = async () => {
     if (!hasAdminKey) {
@@ -83,12 +84,15 @@ export function ApiKeysPage({
   };
 
   const revoke = async (keyId: string) => {
+    setPendingKeyId(keyId);
     try {
       await api.revokeApiKey(keyId);
       await load();
       showToast("API key revoked");
     } catch (cause) {
       showToast(cause instanceof Error ? cause.message : "Unable to revoke API key");
+    } finally {
+      setPendingKeyId(null);
     }
   };
 
@@ -194,9 +198,15 @@ export function ApiKeysPage({
                 <td><StatusPill tone={key.revokedAt ? "red" : "green"} label={key.revokedAt ? "revoked" : "active"} /></td>
                 <td>
                   {!key.revokedAt && (
-                    <button className="button secondary small" type="button" onClick={() => void revoke(key.id)}>
+                    <button
+                      className="button secondary small"
+                      data-testid={`api-key-revoke-${key.id}`}
+                      type="button"
+                      disabled={pendingKeyId === key.id}
+                      onClick={() => revoke(key.id)}
+                    >
                       <X size={14} />
-                      Revoke
+                      {pendingKeyId === key.id ? "Revoking" : "Revoke"}
                     </button>
                   )}
                 </td>

@@ -4,7 +4,7 @@ export const executionPolicySchema = z.enum(["auto", "requires_confirmation", "m
 export type ExecutionPolicy = z.infer<typeof executionPolicySchema>;
 
 export const workflowStatusSchema = z.enum(["draft", "needs_review", "approved", "published", "archived"]);
-export const jobStatusSchema = z.enum(["uploaded", "analyzing", "mapped", "needs_review", "approved", "published", "failed"]);
+export const jobStatusSchema = z.enum(["uploaded", "analyzing", "mapped", "needs_review", "approved", "published", "archived", "failed"]);
 
 export const appSchema = z.object({
   id: z.string(),

@@ -5,6 +5,9 @@ import { join } from "node:path";
 import test from "node:test";
 import { buildApp } from "../src/app.js";
 import type { AppConfig } from "../src/config/env.js";
+import { createDatabase } from "../src/db/database.js";
+import { Repositories } from "../src/db/repositories.js";
+import type { Workflow } from "../src/schemas/domain.js";
 
 test("admin routes require an admin API key after bootstrap", async () => {
   const dir = mkdtempSync(join(tmpdir(), "mia-auth-"));
@@ -45,6 +48,83 @@ test("admin routes require an admin API key after bootstrap", async () => {
     });
     assert.equal(authenticatedList.statusCode, 200);
     assert.equal(authenticatedList.json<{ items: unknown[] }>().items.length, 1);
+  } finally {
+    await app.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("workflow metadata patch accepts only editable fields", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mia-workflow-routes-"));
+  const config = testConfig(dir);
+  const app = await buildApp(config);
+  const db = createDatabase(config);
+  const repositories = new Repositories(db);
+
+  try {
+    const bootstrap = await app.inject({
+      method: "POST",
+      url: "/api/v1/api-keys",
+      headers: { "x-bootstrap-admin-token": "bootstrap-secret" },
+      payload: { name: "admin", scopes: ["admin"] }
+    });
+    const adminKey = bootstrap.json<{ key: string }>().key;
+
+    repositories.saveWorkflow(workflow({
+      workflowId: "workflow_patchable",
+      appId: "app_route"
+    }));
+
+    const patch = await app.inject({
+      method: "PATCH",
+      url: "/api/v1/workflows/workflow_patchable",
+      headers: { authorization: `Bearer ${adminKey}` },
+      payload: {
+        name: "Updated workflow",
+        description: "Updated workflow description.",
+        triggerPhrases: ["updated workflow"]
+      }
+    });
+    assert.equal(patch.statusCode, 200);
+    const updated = repositories.getWorkflow("workflow_patchable");
+    assert.equal(updated.name, "Updated workflow");
+    assert.equal(updated.description, "Updated workflow description.");
+    assert.deepEqual(updated.triggerPhrases, ["updated workflow"]);
+    assert.equal(updated.status, "needs_review");
+
+    const statusPatch = await app.inject({
+      method: "PATCH",
+      url: "/api/v1/workflows/workflow_patchable",
+      headers: { authorization: `Bearer ${adminKey}` },
+      payload: { status: "published" }
+    });
+    assert.equal(statusPatch.statusCode, 400);
+    assert.equal(repositories.getWorkflow("workflow_patchable").status, "needs_review");
+  } finally {
+    db.close();
+    await app.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("CORS preflight allows console mutation methods", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mia-cors-"));
+  const app = await buildApp(testConfig(dir));
+
+  try {
+    for (const method of ["PATCH", "DELETE"]) {
+      const preflight = await app.inject({
+        method: "OPTIONS",
+        url: method === "PATCH" ? "/api/v1/workflows/workflow_one" : "/api/v1/api-keys/key_one",
+        headers: {
+          origin: "http://127.0.0.1:5191",
+          "access-control-request-method": method,
+          "access-control-request-headers": "authorization,content-type"
+        }
+      });
+      assert.equal(preflight.statusCode, 204);
+      assert.match(String(preflight.headers["access-control-allow-methods"]), new RegExp(method));
+    }
   } finally {
     await app.close();
     rmSync(dir, { recursive: true, force: true });
@@ -197,6 +277,25 @@ test("non-admin read API keys can only read their bound app", async () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+function workflow(input: Partial<Workflow> = {}): Workflow {
+  const now = "2026-01-01T00:00:00.000Z";
+  return {
+    workflowId: input.workflowId ?? "workflow_one",
+    appId: input.appId ?? "app_one",
+    name: input.name ?? "Invite teammate",
+    description: input.description ?? "Invite a teammate.",
+    status: input.status ?? "needs_review",
+    version: input.version ?? 1,
+    triggerPhrases: input.triggerPhrases ?? ["invite teammate"],
+    requiredContext: input.requiredContext ?? { app: input.appId ?? "app_one", startingRoutes: [] },
+    steps: input.steps ?? [{ id: "complete", type: "complete", message: "Done." }],
+    createdFrom: input.createdFrom,
+    review: input.review ?? {},
+    createdAt: input.createdAt ?? now,
+    updatedAt: input.updatedAt ?? now
+  };
+}
 
 function testConfig(dir: string): AppConfig {
   return {

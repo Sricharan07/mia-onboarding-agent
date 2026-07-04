@@ -156,6 +156,7 @@ export function WorkflowReviewPage({
   const [description, setDescription] = useState("");
   const [triggerPhrases, setTriggerPhrases] = useState("");
   const [notes, setNotes] = useState("");
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
 
   useEffect(() => {
     setName(workflow?.name ?? "");
@@ -172,6 +173,7 @@ export function WorkflowReviewPage({
   }
 
   const save = async () => {
+    setPendingAction("save-metadata");
     try {
       await api.updateWorkflow(workflow.workflowId, {
         name,
@@ -182,10 +184,13 @@ export function WorkflowReviewPage({
       showToast("Workflow draft saved");
     } catch (cause) {
       showToast(cause instanceof Error ? cause.message : "Unable to save workflow");
+    } finally {
+      setPendingAction(null);
     }
   };
 
   const approve = async () => {
+    setPendingAction("approve");
     try {
       await api.approveWorkflow(workflow.workflowId, { reviewedBy: "local-console", notes });
       await refresh(workflow.appId);
@@ -193,10 +198,13 @@ export function WorkflowReviewPage({
       showToast("Workflow approved");
     } catch (cause) {
       showToast(cause instanceof Error ? cause.message : "Unable to approve workflow");
+    } finally {
+      setPendingAction(null);
     }
   };
 
   const publish = async () => {
+    setPendingAction("publish");
     try {
       await api.publishWorkflow(workflow.workflowId);
       await refresh(workflow.appId);
@@ -204,10 +212,13 @@ export function WorkflowReviewPage({
       showToast("Workflow published");
     } catch (cause) {
       showToast(cause instanceof Error ? cause.message : "Unable to publish workflow");
+    } finally {
+      setPendingAction(null);
     }
   };
 
   const archive = async () => {
+    setPendingAction("archive");
     try {
       await api.archiveWorkflow(workflow.workflowId);
       await refresh(workflow.appId);
@@ -215,6 +226,8 @@ export function WorkflowReviewPage({
       showToast("Workflow archived");
     } catch (cause) {
       showToast(cause instanceof Error ? cause.message : "Unable to archive workflow");
+    } finally {
+      setPendingAction(null);
     }
   };
 
@@ -225,6 +238,7 @@ export function WorkflowReviewPage({
   };
 
   const addStep = async () => {
+    setPendingAction("add-step");
     try {
       await api.addWorkflowStep(workflow.workflowId, {
         id: `step_${crypto.randomUUID()}`,
@@ -234,24 +248,32 @@ export function WorkflowReviewPage({
       await reloadEditedWorkflow("Step added");
     } catch (cause) {
       showToast(cause instanceof Error ? cause.message : "Unable to add step");
+    } finally {
+      setPendingAction(null);
     }
   };
 
   const updateStep = async (stepId: string, patch: Partial<WorkflowStep>) => {
+    setPendingAction(`update-step:${stepId}`);
     try {
       await api.updateWorkflowStep(workflow.workflowId, stepId, patch);
       await reloadEditedWorkflow("Step saved");
     } catch (cause) {
       showToast(cause instanceof Error ? cause.message : "Unable to save step");
+    } finally {
+      setPendingAction(null);
     }
   };
 
   const deleteStep = async (stepId: string) => {
+    setPendingAction(`delete-step:${stepId}`);
     try {
       await api.deleteWorkflowStep(workflow.workflowId, stepId);
       await reloadEditedWorkflow("Step deleted");
     } catch (cause) {
       showToast(cause instanceof Error ? cause.message : "Unable to delete step");
+    } finally {
+      setPendingAction(null);
     }
   };
 
@@ -262,11 +284,14 @@ export function WorkflowReviewPage({
     const stepIds = workflow.steps.map((step) => step.id);
     const [moved] = stepIds.splice(currentIndex, 1);
     stepIds.splice(nextIndex, 0, moved);
+    setPendingAction(`move-step:${stepId}`);
     try {
       await api.reorderWorkflowSteps(workflow.workflowId, stepIds);
       await reloadEditedWorkflow("Steps reordered");
     } catch (cause) {
       showToast(cause instanceof Error ? cause.message : "Unable to reorder steps");
+    } finally {
+      setPendingAction(null);
     }
   };
 
@@ -317,9 +342,15 @@ export function WorkflowReviewPage({
               <h2>Workflow DSL steps</h2>
               <p>Edits are saved through backend step endpoints and revalidated before the workflow can be published.</p>
             </div>
-            <button className="button secondary small" type="button" onClick={() => void addStep()}>
+            <button
+              className="button secondary small"
+              data-testid="workflow-add-step"
+              type="button"
+              disabled={pendingAction !== null}
+              onClick={() => addStep()}
+            >
               <Plus size={14} />
-              Add step
+              {pendingAction === "add-step" ? "Adding" : "Add step"}
             </button>
           </div>
           {workflow.steps.map((step, index) => (
@@ -327,9 +358,10 @@ export function WorkflowReviewPage({
               key={step.id}
               step={step}
               order={index + 1}
-              onUpdate={(patch) => void updateStep(step.id, patch)}
-              onDelete={() => void deleteStep(step.id)}
-              onMove={(direction) => void moveStep(step.id, direction)}
+              disabled={pendingAction !== null}
+              onUpdate={(patch) => updateStep(step.id, patch)}
+              onDelete={() => deleteStep(step.id)}
+              onMove={(direction) => moveStep(step.id, direction)}
             />
           ))}
         </div>
@@ -337,21 +369,27 @@ export function WorkflowReviewPage({
         <aside className="review-side">
           <Panel title="Actions">
             <div className="action-grid">
-              <button className="button secondary" type="button" onClick={() => void save()}>
+              <button
+                className="button secondary"
+                data-testid="workflow-save-metadata"
+                type="button"
+                disabled={pendingAction !== null}
+                onClick={() => save()}
+              >
                 <Save size={16} />
-                Save metadata
+                {pendingAction === "save-metadata" ? "Saving metadata" : "Save metadata"}
               </button>
-              <button className="button secondary" type="button" onClick={() => void approve()}>
+              <button className="button secondary" type="button" disabled={pendingAction !== null} onClick={() => approve()}>
                 <Check size={16} />
-                Approve
+                {pendingAction === "approve" ? "Approving" : "Approve"}
               </button>
-              <button className="button primary" type="button" onClick={() => void publish()}>
+              <button className="button primary" type="button" disabled={pendingAction !== null} onClick={() => publish()}>
                 <Play size={16} />
-                Publish
+                {pendingAction === "publish" ? "Publishing" : "Publish"}
               </button>
-              <button className="button secondary" type="button" onClick={() => void archive()}>
+              <button className="button secondary" type="button" disabled={pendingAction !== null} onClick={() => archive()}>
                 <X size={16} />
-                Archive
+                {pendingAction === "archive" ? "Archiving" : "Archive"}
               </button>
             </div>
           </Panel>
@@ -365,15 +403,17 @@ export function WorkflowReviewPage({
 export function WorkflowStepCard({
   step,
   order,
+  disabled,
   onUpdate,
   onDelete,
   onMove
 }: {
   step: WorkflowStep;
   order: number;
-  onUpdate: (patch: Partial<WorkflowStep>) => void;
-  onDelete: () => void;
-  onMove: (direction: -1 | 1) => void;
+  disabled: boolean;
+  onUpdate: (patch: Partial<WorkflowStep>) => Promise<void>;
+  onDelete: () => Promise<void>;
+  onMove: (direction: -1 | 1) => Promise<void>;
 }) {
   const [label, setLabel] = useState(step.label ?? "");
   const [message, setMessage] = useState(stepText(step));
@@ -383,10 +423,10 @@ export function WorkflowStepCard({
     setMessage(stepText(step));
   }, [step]);
 
-  const saveText = () => {
-    if (step.type === "ask_user") onUpdate({ label, prompt: message } as Partial<WorkflowStep>);
-    else if (step.type === "confirm" || step.type === "complete") onUpdate({ label, message } as Partial<WorkflowStep>);
-    else onUpdate({ label, description: message } as Partial<WorkflowStep>);
+  const saveText = async () => {
+    if (step.type === "ask_user") await onUpdate({ label, prompt: message } as Partial<WorkflowStep>);
+    else if (step.type === "confirm" || step.type === "complete") await onUpdate({ label, message } as Partial<WorkflowStep>);
+    else await onUpdate({ label, description: message } as Partial<WorkflowStep>);
   };
 
   return (
@@ -398,9 +438,9 @@ export function WorkflowStepCard({
         </div>
         <div className="step-actions">
           {"executionPolicy" in step && <StatusBadge status={step.executionPolicy} />}
-          <button className="icon-button" type="button" onClick={() => onMove(-1)}>Up</button>
-          <button className="icon-button" type="button" onClick={() => onMove(1)}>Down</button>
-          <button className="icon-button danger" type="button" onClick={onDelete}>Remove</button>
+          <button className="icon-button" type="button" disabled={disabled} onClick={() => onMove(-1)}>Up</button>
+          <button className="icon-button" type="button" disabled={disabled} onClick={() => onMove(1)}>Down</button>
+          <button className="icon-button danger" type="button" disabled={disabled} onClick={() => onDelete()}>Remove</button>
         </div>
       </div>
       <div className="step-columns">
@@ -425,8 +465,14 @@ export function WorkflowStepCard({
               </select>
             </label>
           )}
-          <button className="button secondary small" type="button" onClick={saveText}>
-            Save step text
+          <button
+            className="button secondary small"
+            data-testid={`workflow-save-step-${step.id}`}
+            type="button"
+            disabled={disabled}
+            onClick={() => saveText()}
+          >
+            {disabled ? "Saving" : "Save step text"}
           </button>
         </div>
         {"target" in step && (

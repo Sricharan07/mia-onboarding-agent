@@ -261,14 +261,18 @@ export function UiMapDetailPage({
 }) {
   const [rawOpen, setRawOpen] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [savingElementId, setSavingElementId] = useState<string | null>(null);
 
   const saveElement = async (element: UiElement) => {
+    setSavingElementId(element.elementId);
     try {
       await api.updateElement(element.elementId, { description: drafts[element.elementId] ?? element.description });
       await refresh(element.appId);
       showToast("Element metadata saved");
     } catch (cause) {
       showToast(cause instanceof Error ? cause.message : "Unable to save element");
+    } finally {
+      setSavingElementId(null);
     }
   };
 
@@ -319,8 +323,14 @@ export function UiMapDetailPage({
                 <td><SelectorQualityBadge quality={element.selectorQuality} /></td>
                 <td>{element.selectorWarnings.join(", ") || <span className="muted">None</span>}</td>
                 <td>
-                  <button className="button secondary small" type="button" onClick={() => void saveElement(element)}>
-                    Save
+                  <button
+                    className="button secondary small"
+                    data-testid={`ui-element-save-${element.elementId}`}
+                    type="button"
+                    disabled={savingElementId === element.elementId}
+                    onClick={() => saveElement(element)}
+                  >
+                    {savingElementId === element.elementId ? "Saving" : "Save"}
                   </button>
                 </td>
               </tr>

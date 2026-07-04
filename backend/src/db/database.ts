@@ -104,6 +104,8 @@ function migrate(db: Db): void {
       local_path TEXT NOT NULL,
       mime_type TEXT NOT NULL,
       size_bytes INTEGER NOT NULL,
+      workflow_name TEXT,
+      workflow_description TEXT,
       status TEXT NOT NULL,
       uploaded_at TEXT NOT NULL
     );
@@ -205,6 +207,8 @@ function migrate(db: Db): void {
   ensureColumn(db, "workflow_jobs", "locked_by", "TEXT");
   ensureColumn(db, "workflow_jobs", "locked_until", "TEXT");
   ensureColumn(db, "workflow_jobs", "attempts", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "workflow_videos", "workflow_name", "TEXT");
+  ensureColumn(db, "workflow_videos", "workflow_description", "TEXT");
   ensureColumn(db, "api_keys", "app_id", "TEXT");
   ensureColumn(db, "api_keys", "allowed_origins_json", "TEXT");
 

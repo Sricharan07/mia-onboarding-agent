@@ -12,6 +12,7 @@ import { RuntimeService } from "../src/services/runtime/runtimeService.js";
 import { SemanticIndexService } from "../src/services/semantic/semanticIndexService.js";
 import { WorkflowCompiler } from "../src/services/workflows/compiler.js";
 import { VideoProcessingService } from "../src/services/workflows/videoProcessingService.js";
+import { WorkflowService } from "../src/services/workflows/workflowService.js";
 import { AppError } from "../src/utils/errors.js";
 
 test("workflow compiler creates unique ids and review steps for unmatched recorded actions", async () => {
@@ -40,6 +41,23 @@ test("workflow compiler creates unique ids and review steps for unmatched record
   assert.notEqual(first.workflowId, second.workflowId);
   assert.equal(first.steps[0]?.type, "confirm");
   assert.equal(first.steps[1]?.type, "confirm");
+});
+
+test("workflow compiler honors requested upload metadata", async () => {
+  const compiler = new WorkflowCompiler({} as unknown as Repositories, emptySearch);
+
+  const compiled = await compiler.compile({
+    appId: "app_one",
+    videoId: "video_one",
+    jobId: "job_one",
+    requestedName: "Custom onboarding flow",
+    requestedDescription: "A human supplied workflow description.",
+    timeline: { goal: "Gemini extracted goal", summary: "Gemini extracted summary.", steps: [] }
+  });
+
+  assert.equal(compiled.name, "Custom onboarding flow");
+  assert.equal(compiled.description, "A human supplied workflow description.");
+  assert.deepEqual(compiled.triggerPhrases, ["custom onboarding flow"]);
 });
 
 test("repository rejects workflow id reuse across apps", () => {
@@ -97,6 +115,7 @@ test("video processing service starts and resumes unfinished jobs", async () => 
   const errors: unknown[] = [];
   let extractionCalls = 0;
   const compiledGoals: string[] = [];
+  const requestedNames: Array<string | undefined> = [];
   const videoUnderstanding: VideoUnderstandingAdapter = {
     extractActionTimeline: async () => {
       extractionCalls += 1;
@@ -107,11 +126,13 @@ test("video processing service starts and resumes unfinished jobs", async () => 
     }
   };
   const compiler = {
-    compile: async (input: { appId: string; videoId: string; jobId: string; timeline: { goal: string } }) => {
+    compile: async (input: { appId: string; videoId: string; jobId: string; timeline: { goal: string }; requestedName?: string }) => {
       compiledGoals.push(input.timeline.goal);
+      requestedNames.push(input.requestedName);
       return workflow({
         appId: input.appId,
         workflowId: `workflow_${input.jobId}`,
+        name: input.requestedName ?? input.timeline.goal,
         createdFrom: { videoId: input.videoId, jobId: input.jobId }
       });
     }
@@ -124,7 +145,8 @@ test("video processing service starts and resumes unfinished jobs", async () => 
       filename: "first.mp4",
       localPath: join(dir, "first.mp4"),
       mimeType: "video/mp4",
-      sizeBytes: 1
+      sizeBytes: 1,
+      workflowName: "Custom uploaded workflow"
     });
     assert.deepEqual(service.startJob(first.jobId, (error) => errors.push(error)), { jobId: first.jobId, status: "analyzing" });
     await waitFor(() => String(repositories.getWorkflowJob(first.jobId).status) === "needs_review");
@@ -157,7 +179,48 @@ test("video processing service starts and resumes unfinished jobs", async () => 
 
     assert.equal(extractionCalls, 2);
     assert.deepEqual(compiledGoals, ["Invite teammate", "Invite teammate", "Stored timeline"]);
+    assert.deepEqual(requestedNames, ["Custom uploaded workflow", undefined, undefined]);
+    assert.equal(repositories.getWorkflow(`workflow_${first.jobId}`).name, "Custom uploaded workflow");
     assert.equal(errors.length, 0);
+  } finally {
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("workflow service syncs source job status across review lifecycle", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mia-workflow-status-"));
+  const db = createDatabase(testConfig(dir));
+  const repositories = new Repositories(db);
+  const service = new WorkflowService(repositories, emptySearch);
+
+  try {
+    const video = repositories.createWorkflowVideo({
+      appId: "app_one",
+      filename: "workflow.mp4",
+      localPath: join(dir, "workflow.mp4"),
+      mimeType: "video/mp4",
+      sizeBytes: 1
+    });
+    repositories.saveWorkflow(workflow({
+      appId: "app_one",
+      workflowId: "workflow_lifecycle",
+      createdFrom: { videoId: video.videoId, jobId: video.jobId }
+    }));
+    repositories.updateWorkflowJob(video.jobId, { status: "needs_review", error: null });
+
+    await service.approveWorkflow("workflow_lifecycle", { reviewedBy: "tester" });
+    assert.equal(String(repositories.getWorkflowJob(video.jobId).status), "approved");
+
+    await service.publishWorkflow("workflow_lifecycle");
+    assert.equal(String(repositories.getWorkflowJob(video.jobId).status), "published");
+
+    await service.addStep("workflow_lifecycle", { id: "complete_two", type: "complete", message: "All done." });
+    assert.equal(String(repositories.getWorkflowJob(video.jobId).status), "needs_review");
+
+    await service.approveWorkflow("workflow_lifecycle", { reviewedBy: "tester" });
+    await service.archiveWorkflow("workflow_lifecycle");
+    assert.equal(String(repositories.getWorkflowJob(video.jobId).status), "archived");
   } finally {
     db.close();
     rmSync(dir, { recursive: true, force: true });

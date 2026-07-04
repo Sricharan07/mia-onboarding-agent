@@ -299,15 +299,23 @@ export class Repositories {
     `).run(updated.description, JSON.stringify(updated.tags), JSON.stringify(updated), updated.updatedAt, row.id);
   }
 
-  createWorkflowVideo(input: { appId: string; filename: string; localPath: string; mimeType: string; sizeBytes: number }): { videoId: string; jobId: string; status: string } {
+  createWorkflowVideo(input: {
+    appId: string;
+    filename: string;
+    localPath: string;
+    mimeType: string;
+    sizeBytes: number;
+    workflowName?: string;
+    workflowDescription?: string;
+  }): { videoId: string; jobId: string; status: string } {
     const now = nowIso();
     const videoId = createId("video");
     const jobId = createId("job");
     const tx = this.db.transaction(() => {
       this.db.prepare(`
-        INSERT INTO workflow_videos (id, app_id, filename, local_path, mime_type, size_bytes, status, uploaded_at)
-        VALUES (?, ?, ?, ?, ?, ?, 'uploaded', ?)
-      `).run(videoId, input.appId, input.filename, input.localPath, input.mimeType, input.sizeBytes, now);
+        INSERT INTO workflow_videos (id, app_id, filename, local_path, mime_type, size_bytes, workflow_name, workflow_description, status, uploaded_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'uploaded', ?)
+      `).run(videoId, input.appId, input.filename, input.localPath, input.mimeType, input.sizeBytes, input.workflowName ?? null, input.workflowDescription ?? null, now);
       this.db.prepare(`
         INSERT INTO workflow_jobs (id, app_id, video_id, status, created_at, updated_at)
         VALUES (?, ?, ?, 'uploaded', ?, ?)
@@ -411,8 +419,8 @@ export class Repositories {
       SET status = ?, provider_raw_output_json = COALESCE(?, provider_raw_output_json),
           extracted_action_timeline_json = COALESCE(?, extracted_action_timeline_json),
           error = ?, updated_at = ?,
-          locked_by = CASE WHEN ? IN ('needs_review', 'failed', 'approved', 'published') THEN NULL ELSE locked_by END,
-          locked_until = CASE WHEN ? IN ('needs_review', 'failed', 'approved', 'published') THEN NULL ELSE locked_until END
+          locked_by = CASE WHEN ? IN ('needs_review', 'failed', 'approved', 'published', 'archived') THEN NULL ELSE locked_by END,
+          locked_until = CASE WHEN ? IN ('needs_review', 'failed', 'approved', 'published', 'archived') THEN NULL ELSE locked_until END
       WHERE id = ?
     `).run(
       patch.status,
@@ -424,6 +432,16 @@ export class Repositories {
       patch.status,
       jobId
     );
+  }
+
+  updateWorkflowJobStatus(jobId: string, status: string): void {
+    this.db.prepare(`
+      UPDATE workflow_jobs
+      SET status = ?, error = NULL, updated_at = ?,
+          locked_by = CASE WHEN ? IN ('needs_review', 'failed', 'approved', 'published', 'archived') THEN NULL ELSE locked_by END,
+          locked_until = CASE WHEN ? IN ('needs_review', 'failed', 'approved', 'published', 'archived') THEN NULL ELSE locked_until END
+      WHERE id = ?
+    `).run(status, nowIso(), status, status, jobId);
   }
 
   saveWorkflow(workflow: Workflow): void {

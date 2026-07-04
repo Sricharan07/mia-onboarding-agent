@@ -58,13 +58,16 @@ export class VideoProcessingService {
 
     try {
       const job = this.repositories.getWorkflowJob(jobId);
+      const video = this.repositories.getWorkflowVideo(String(job.video_id));
       const timeline = parseStoredTimeline(job.extracted_action_timeline_json)
-        ?? await this.extractAndStoreTimeline(jobId, job);
+        ?? await this.extractAndStoreTimeline(jobId, job, video);
       const workflow = await this.compiler.compile({
         appId: String(job.app_id),
         timeline,
         videoId: String(job.video_id),
-        jobId
+        jobId,
+        requestedName: optionalString(video.workflow_name),
+        requestedDescription: optionalString(video.workflow_description)
       });
       this.repositories.saveWorkflow(workflow);
       this.repositories.updateWorkflowJob(jobId, { status: "needs_review", error: null });
@@ -79,8 +82,7 @@ export class VideoProcessingService {
     }
   }
 
-  private async extractAndStoreTimeline(jobId: string, job: Record<string, unknown>): Promise<ExtractedActionTimeline> {
-    const video = this.repositories.getWorkflowVideo(String(job.video_id));
+  private async extractAndStoreTimeline(jobId: string, job: Record<string, unknown>, video: Record<string, unknown>): Promise<ExtractedActionTimeline> {
     const uiElements = this.repositories.listLatestUiElementsForApp(String(job.app_id), 160);
     const knownRoutes = Array.from(new Set(uiElements.map((element) => element.route))).filter(Boolean);
     const timelineResult = await this.videoUnderstanding.extractActionTimeline({
@@ -99,6 +101,10 @@ export class VideoProcessingService {
     });
     return timelineResult.timeline;
   }
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function parseStoredTimeline(value: unknown): ExtractedActionTimeline | undefined {

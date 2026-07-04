@@ -6,6 +6,8 @@ import { nowIso } from "../../utils/id.js";
 import type { SemanticSearchAdapter } from "../../adapters/interfaces.js";
 import { workflowToSemanticRecord } from "../semantic/semanticRecords.js";
 
+const workflowJobStatuses = new Set(["needs_review", "approved", "published", "archived"]);
+
 export class WorkflowService {
   constructor(
     private readonly repositories: Repositories,
@@ -15,8 +17,7 @@ export class WorkflowService {
   async updateWorkflow(workflowId: string, patch: Partial<Workflow>): Promise<void> {
     const current = this.repositories.getWorkflow(workflowId);
     const next = workflowSchema.parse({ ...current, ...patch, workflowId: current.workflowId, appId: current.appId, updatedAt: nowIso() });
-    this.repositories.saveWorkflow(next);
-    await this.syncWorkflowIndex(next);
+    await this.saveWorkflow(next);
   }
 
   async approveWorkflow(workflowId: string, input: { reviewedBy: string; notes?: string }): Promise<Workflow> {
@@ -31,8 +32,7 @@ export class WorkflowService {
       },
       updatedAt: nowIso()
     });
-    this.repositories.saveWorkflow(next);
-    await this.syncWorkflowIndex(next);
+    await this.saveWorkflow(next);
     return next;
   }
 
@@ -43,24 +43,21 @@ export class WorkflowService {
     }
     this.assertPublishable(workflow);
     const next = workflowSchema.parse({ ...workflow, status: "published", updatedAt: nowIso() });
-    this.repositories.saveWorkflow(next);
-    await this.syncWorkflowIndex(next);
+    await this.saveWorkflow(next);
     return next;
   }
 
   async archiveWorkflow(workflowId: string): Promise<Workflow> {
     const workflow = this.repositories.getWorkflow(workflowId);
     const next = workflowSchema.parse({ ...workflow, status: "archived", updatedAt: nowIso() });
-    this.repositories.saveWorkflow(next);
-    await this.syncWorkflowIndex(next);
+    await this.saveWorkflow(next);
     return next;
   }
 
   async addStep(workflowId: string, step: WorkflowStep): Promise<Workflow> {
     const workflow = this.repositories.getWorkflow(workflowId);
     const next = this.validateStepMutation({ ...workflow, steps: [...workflow.steps, workflowStepSchema.parse(step)] });
-    this.repositories.saveWorkflow(next);
-    await this.syncWorkflowIndex(next);
+    await this.saveWorkflow(next);
     return next;
   }
 
@@ -74,8 +71,7 @@ export class WorkflowService {
     });
     if (!found) throw new AppError("WORKFLOW_STEP_NOT_FOUND", `Workflow step not found: ${stepId}`, 404);
     const next = this.validateStepMutation({ ...workflow, steps });
-    this.repositories.saveWorkflow(next);
-    await this.syncWorkflowIndex(next);
+    await this.saveWorkflow(next);
     return next;
   }
 
@@ -84,8 +80,7 @@ export class WorkflowService {
     const steps = workflow.steps.filter((step) => step.id !== stepId);
     if (steps.length === workflow.steps.length) throw new AppError("WORKFLOW_STEP_NOT_FOUND", `Workflow step not found: ${stepId}`, 404);
     const next = this.validateStepMutation({ ...workflow, steps });
-    this.repositories.saveWorkflow(next);
-    await this.syncWorkflowIndex(next);
+    await this.saveWorkflow(next);
     return next;
   }
 
@@ -97,9 +92,20 @@ export class WorkflowService {
       throw new AppError("INVALID_WORKFLOW_STEP_ORDER", "Step order must include every existing step exactly once.", 400);
     }
     const next = this.validateStepMutation({ ...workflow, steps: stepIds.map((stepId) => currentById.get(stepId)!) });
-    this.repositories.saveWorkflow(next);
-    await this.syncWorkflowIndex(next);
+    await this.saveWorkflow(next);
     return next;
+  }
+
+  private async saveWorkflow(workflow: Workflow): Promise<void> {
+    this.repositories.saveWorkflow(workflow);
+    this.syncWorkflowJobStatus(workflow);
+    await this.syncWorkflowIndex(workflow);
+  }
+
+  private syncWorkflowJobStatus(workflow: Workflow): void {
+    const jobId = workflow.createdFrom?.jobId;
+    if (!jobId || !workflowJobStatuses.has(workflow.status)) return;
+    this.repositories.updateWorkflowJobStatus(jobId, workflow.status);
   }
 
   private async syncWorkflowIndex(workflow: Workflow): Promise<void> {

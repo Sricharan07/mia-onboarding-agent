@@ -9,8 +9,17 @@ export class WorkflowCompiler {
     private readonly semanticSearch: SemanticSearchAdapter
   ) {}
 
-  async compile(input: { appId: string; timeline: ExtractedActionTimeline; videoId: string; jobId: string }): Promise<Workflow> {
+  async compile(input: {
+    appId: string;
+    timeline: ExtractedActionTimeline;
+    videoId: string;
+    jobId: string;
+    requestedName?: string;
+    requestedDescription?: string;
+  }): Promise<Workflow> {
     const steps: WorkflowStep[] = [];
+    const workflowName = input.requestedName ?? input.timeline.goal;
+    const workflowDescription = input.requestedDescription ?? input.timeline.summary ?? `Guides the user through ${input.timeline.goal}.`;
 
     for (const extractedStep of [...input.timeline.steps].sort((a, b) => a.order - b.order)) {
       const compiled = await this.compileStep(input.appId, extractedStep);
@@ -25,11 +34,11 @@ export class WorkflowCompiler {
     return {
       workflowId: createId("workflow"),
       appId: input.appId,
-      name: input.timeline.goal,
-      description: input.timeline.summary ?? `Guides the user through ${input.timeline.goal}.`,
+      name: workflowName,
+      description: workflowDescription,
       status: "needs_review",
       version: 1,
-      triggerPhrases: [input.timeline.goal.toLowerCase()],
+      triggerPhrases: [workflowName.toLowerCase()],
       requiredContext: {
         app: input.appId,
         startingRoutes: Array.from(new Set(input.timeline.steps.map((step) => step.route).filter(Boolean) as string[]))

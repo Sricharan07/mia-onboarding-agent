@@ -31,7 +31,11 @@ export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
   mkdirSync(config.LOCAL_UPLOAD_DIR, { recursive: true });
 
   const app = Fastify({ logger: true, trustProxy: config.TRUST_PROXY });
-  await app.register(cors, { origin: corsOrigin(config.CORS_ORIGIN) });
+  await app.register(cors, {
+    origin: corsOrigin(config.CORS_ORIGIN),
+    methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["authorization", "content-type", "x-bootstrap-admin-token"]
+  });
   await app.register(multipart, { limits: { fileSize: 1024 * 1024 * 500 } });
 
   const dependencies = createDependencies(config);

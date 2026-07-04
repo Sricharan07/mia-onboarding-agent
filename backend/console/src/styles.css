@@ -860,6 +860,12 @@ code {
   line-height: 1;
 }
 
+.button:disabled,
+.icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
 .button.primary {
   border-color: var(--primary);
   background: var(--primary);
