@@ -31,6 +31,7 @@ function migrate(db: Db): void {
       name TEXT NOT NULL,
       slug TEXT NOT NULL UNIQUE,
       base_url TEXT NOT NULL,
+      ui_scan_config_json TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -223,6 +224,7 @@ function migrate(db: Db): void {
   ensureColumn(db, "ui_elements", "state_reason", "TEXT");
   ensureColumn(db, "ui_elements", "discovered_by", "TEXT NOT NULL DEFAULT 'route_scan'");
   ensureColumn(db, "ui_elements", "fingerprint", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "apps", "ui_scan_config_json", "TEXT");
   ensureColumn(db, "ui_map_versions", "scan_config_json", "TEXT");
   ensureColumn(db, "ui_map_versions", "locked_by", "TEXT");
   ensureColumn(db, "ui_map_versions", "locked_until", "TEXT");

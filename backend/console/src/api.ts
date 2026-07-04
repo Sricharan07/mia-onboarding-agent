@@ -28,11 +28,33 @@ export type SystemReadiness = {
   };
 };
 
+export type UiScanAuthMode = "none" | "login_form" | "manual";
+
+export type AppUiScanConfig = {
+  routes: string[];
+  authMode: UiScanAuthMode;
+  loginUrl?: string;
+  username?: string;
+  passwordConfigured: boolean;
+  usernameSelector?: string;
+  passwordSelector?: string;
+  submitSelector?: string;
+  successUrlPattern?: string;
+  postLoginWaitMs: number;
+  ignoredSelectors: string[];
+  redactedSelectors: string[];
+  routeDiscovery: {
+    enabled: boolean;
+    maxRoutes: number;
+  };
+};
+
 export type AppRecord = {
   id: string;
   name: string;
   slug: string;
   baseUrl: string;
+  uiScanConfig: AppUiScanConfig;
   createdAt: string;
   updatedAt: string;
 };
@@ -342,15 +364,20 @@ export class BackendApi {
     return this.request("/api/v1/apps");
   }
 
-  saveApp(input: { name: string; slug: string; baseUrl: string }): Promise<AppRecord> {
+  saveApp(input: {
+    name: string;
+    slug: string;
+    baseUrl: string;
+    uiScanConfig?: Partial<Omit<AppUiScanConfig, "passwordConfigured">> & { password?: string; clearPassword?: boolean };
+  }): Promise<AppRecord> {
     return this.request("/api/v1/apps", { method: "POST", body: input });
   }
 
-  scanUiMap(appId: string, routes: string[], authMode: "none" | "login_form" = "none"): Promise<{ uiMapVersionId: string; status: string }> {
+  scanUiMap(appId: string, routes: string[], authMode: UiScanAuthMode = "none"): Promise<{ uiMapVersionId: string; status: string }> {
     return this.request(`/api/v1/apps/${encodeURIComponent(appId)}/ui-map/scan`, { method: "POST", body: { routes, auth: { mode: authMode } } });
   }
 
-  startInteractiveUiMapSession(appId: string, input: { routes: string[]; authMode: "none" | "login_form" }): Promise<InteractiveUiMapSession> {
+  startInteractiveUiMapSession(appId: string, input: { routes: string[]; authMode: UiScanAuthMode }): Promise<InteractiveUiMapSession> {
     return this.request(`/api/v1/apps/${encodeURIComponent(appId)}/ui-map/interactive-sessions`, {
       method: "POST",
       body: { routes: input.routes, auth: { mode: input.authMode } }

@@ -149,6 +149,105 @@ test("console users sign in with email and password and authorize admin routes",
   }
 });
 
+test("app scan config is app-scoped and does not expose stored passwords", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mia-app-scan-config-"));
+  const app = await buildApp(testConfig(dir));
+
+  try {
+    const setup = await app.inject({
+      method: "POST",
+      url: "/api/v1/console/auth/setup",
+      headers: { "x-bootstrap-admin-token": "bootstrap-secret" },
+      payload: { name: "Local Admin", email: "admin@example.com", password: "very-secure-password" }
+    });
+    const token = setup.json<{ token: string }>().token;
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/v1/apps",
+      headers: { authorization: `Bearer ${token}` },
+      payload: {
+        name: "Generic SaaS",
+        slug: "generic-saas",
+        baseUrl: "http://localhost:3000",
+        uiScanConfig: {
+          routes: ["/", "/settings"],
+          authMode: "login_form",
+          loginUrl: "/login",
+          username: "scan@example.com",
+          password: "scan-password",
+          usernameSelector: "input[name='email']",
+          passwordSelector: "input[type='password']",
+          submitSelector: "button[type='submit']",
+          ignoredSelectors: ["[data-private]"],
+          redactedSelectors: [".user-email"],
+          routeDiscovery: { enabled: true, maxRoutes: 12 }
+        }
+      }
+    });
+    assert.equal(created.statusCode, 200);
+    const createdBody = created.json<{
+      id: string;
+      uiScanConfig: { password?: string; passwordConfigured: boolean; routes: string[]; routeDiscovery: { enabled: boolean; maxRoutes: number } };
+    }>();
+    assert.equal(createdBody.uiScanConfig.password, undefined);
+    assert.equal(createdBody.uiScanConfig.passwordConfigured, true);
+    assert.deepEqual(createdBody.uiScanConfig.routes, ["/", "/settings"]);
+    assert.deepEqual(createdBody.uiScanConfig.routeDiscovery, { enabled: true, maxRoutes: 12 });
+
+    const updated = await app.inject({
+      method: "POST",
+      url: "/api/v1/apps",
+      headers: { authorization: `Bearer ${token}` },
+      payload: {
+        name: "Generic SaaS",
+        slug: "generic-saas",
+        baseUrl: "http://localhost:3000",
+        uiScanConfig: {
+          routes: ["/"],
+          authMode: "login_form",
+          loginUrl: "/login",
+          username: "scan@example.com",
+          usernameSelector: "input[name='email']",
+          passwordSelector: "input[type='password']",
+          submitSelector: "button[type='submit']"
+        }
+      }
+    });
+    assert.equal(updated.statusCode, 200);
+    assert.equal(updated.json<{ uiScanConfig: { passwordConfigured: boolean } }>().uiScanConfig.passwordConfigured, true);
+
+    const rejectedManualScan = await app.inject({
+      method: "POST",
+      url: `/api/v1/apps/${createdBody.id}/ui-map/scan`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { routes: ["/"], auth: { mode: "manual" } }
+    });
+    assert.equal(rejectedManualScan.statusCode, 400);
+
+    const cleared = await app.inject({
+      method: "POST",
+      url: "/api/v1/apps",
+      headers: { authorization: `Bearer ${token}` },
+      payload: {
+        name: "Generic SaaS",
+        slug: "generic-saas",
+        baseUrl: "http://localhost:3000",
+        uiScanConfig: {
+          routes: ["/"],
+          authMode: "login_form",
+          clearPassword: true
+        }
+      }
+    });
+    assert.equal(cleared.statusCode, 200);
+    assert.equal(cleared.json<{ uiScanConfig: { passwordConfigured: boolean } }>().uiScanConfig.passwordConfigured, false);
+  } finally {
+    await app.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("workflow metadata patch accepts only editable fields", async () => {
   const dir = mkdtempSync(join(tmpdir(), "mia-workflow-routes-"));
   const config = testConfig(dir);

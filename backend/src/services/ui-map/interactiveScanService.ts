@@ -42,35 +42,45 @@ export class InteractiveUiMapScanService {
 
   async start(input: {
     appId: string;
-    routes: string[];
+    routes?: string[];
     auth?: { mode: UiScanAuthMode };
-  }): Promise<InteractiveSessionSummary & { initialCapture: CapturePageResult }> {
-    if (input.routes.length === 0) throw new ValidationAppError("At least one route is required.");
+  }): Promise<InteractiveSessionSummary & { initialCapture?: CapturePageResult }> {
     const app = this.repositories.getApp(input.appId);
+    const appScanConfig = this.repositories.getAppUiScanConfig(input.appId);
+    const routes = input.routes?.length ? input.routes : appScanConfig.routes;
+    if (routes.length === 0) throw new ValidationAppError("At least one route is required.");
+    const auth = {
+      ...appScanConfig,
+      mode: input.auth?.mode ?? appScanConfig.authMode
+    };
     const version = this.repositories.createUiMapVersion(input.appId, "interactive_browser_scan");
     const browser = await chromium.launch({ headless: this.config.UI_SCAN_HEADLESS });
     const context = await browser.newContext();
     const page = await context.newPage();
     const sessionId = createId("ui_scan_session");
-    const firstRoute = input.routes[0]!;
+    const firstRoute = routes[0]!;
 
     try {
       await applyUiScanAuth({
         page,
         baseUrl: app.baseUrl,
         config: this.config,
-        mode: input.auth?.mode
+        auth
       });
       await gotoAndSettle(page, new URL(firstRoute, app.baseUrl).toString());
-      const initialCapture = await this.capture.captureCurrentPage({
-        appId: input.appId,
-        uiMapVersionId: version.id,
-        baseUrl: app.baseUrl,
-        page,
-        route: firstRoute,
-        stateName: "default",
-        discoveredBy: "route_scan"
-      });
+      const initialCapture = auth.mode === "manual"
+        ? undefined
+        : await this.capture.captureCurrentPage({
+          appId: input.appId,
+          uiMapVersionId: version.id,
+          baseUrl: app.baseUrl,
+          page,
+          route: firstRoute,
+          stateName: "default",
+          discoveredBy: "route_scan",
+          ignoredSelectors: appScanConfig.ignoredSelectors,
+          redactedSelectors: appScanConfig.redactedSelectors
+        });
       this.sessions.set(sessionId, {
         sessionId,
         appId: input.appId,
@@ -120,7 +130,9 @@ export class InteractiveUiMapScanService {
         page: session.page,
         route: input.route,
         stateName: "default",
-        discoveredBy: "route_scan"
+        discoveredBy: "route_scan",
+        ignoredSelectors: this.repositories.getAppUiScanConfig(session.appId).ignoredSelectors,
+        redactedSelectors: this.repositories.getAppUiScanConfig(session.appId).redactedSelectors
       });
 
     return { ...toSummary(session), capture };
@@ -136,7 +148,9 @@ export class InteractiveUiMapScanService {
       route: session.currentRoute,
       stateName: input.stateName,
       stateReason: input.stateReason,
-      discoveredBy: "manual_capture"
+      discoveredBy: "manual_capture",
+      ignoredSelectors: this.repositories.getAppUiScanConfig(session.appId).ignoredSelectors,
+      redactedSelectors: this.repositories.getAppUiScanConfig(session.appId).redactedSelectors
     });
     return { ...toSummary(session), capture };
   }

@@ -6,11 +6,35 @@ export type ExecutionPolicy = z.infer<typeof executionPolicySchema>;
 export const workflowStatusSchema = z.enum(["draft", "needs_review", "approved", "published", "archived"]);
 export const jobStatusSchema = z.enum(["uploaded", "analyzing", "mapped", "needs_review", "approved", "published", "archived", "failed"]);
 
+export const uiScanAuthModeSchema = z.enum(["none", "login_form", "manual"]);
+export type UiScanAuthMode = z.infer<typeof uiScanAuthModeSchema>;
+
+export const appUiScanConfigSchema = z.object({
+  routes: z.array(z.string().min(1)).default(["/"]),
+  authMode: uiScanAuthModeSchema.default("none"),
+  loginUrl: z.string().optional(),
+  username: z.string().optional(),
+  passwordConfigured: z.boolean().default(false),
+  usernameSelector: z.string().optional(),
+  passwordSelector: z.string().optional(),
+  submitSelector: z.string().optional(),
+  successUrlPattern: z.string().optional(),
+  postLoginWaitMs: z.number().int().nonnegative().default(1000),
+  ignoredSelectors: z.array(z.string().min(1)).default([]),
+  redactedSelectors: z.array(z.string().min(1)).default([]),
+  routeDiscovery: z.object({
+    enabled: z.boolean().default(false),
+    maxRoutes: z.number().int().positive().max(200).default(25)
+  }).default({ enabled: false, maxRoutes: 25 })
+});
+export type AppUiScanConfig = z.infer<typeof appUiScanConfigSchema>;
+
 export const appSchema = z.object({
   id: z.string(),
   name: z.string().min(1),
   slug: z.string().min(1),
   baseUrl: z.string().url(),
+  uiScanConfig: appUiScanConfigSchema,
   createdAt: z.string(),
   updatedAt: z.string()
 });

@@ -1,6 +1,6 @@
 import { Camera, ChevronRight, FileJson, Navigation, RefreshCw, Square, XCircle } from "lucide-react";
-import { useState } from "react";
-import type { AppRecord, BackendApi, InteractiveUiMapSession, UiElement, UiMapVersion, UiPage } from "../api";
+import { useEffect, useState } from "react";
+import type { AppRecord, BackendApi, InteractiveUiMapSession, UiElement, UiMapVersion, UiPage, UiScanAuthMode } from "../api";
 import { EmptyTableRow, Panel, RawJsonViewer, SelectorQualityBadge, StatusPill } from "../components/console";
 import { formatDate } from "../utils/format";
 
@@ -23,16 +23,28 @@ export function UiMapPage({
   onOpenPage: (pageId: string) => void;
   showToast: (message: string) => void;
 }) {
-  const [routes, setRoutes] = useState("/dashboard/crm");
-  const [authMode, setAuthMode] = useState<"none" | "login_form">("none");
+  const [routes, setRoutes] = useState("/");
+  const [authMode, setAuthMode] = useState<UiScanAuthMode>("none");
   const [session, setSession] = useState<InteractiveUiMapSession | null>(null);
-  const [routeDraft, setRouteDraft] = useState("/dashboard/crm");
+  const [routeDraft, setRouteDraft] = useState("/");
   const [stateName, setStateName] = useState("default");
   const [stateReason, setStateReason] = useState("");
+
+  useEffect(() => {
+    if (!app) return;
+    const nextRoutes = app.uiScanConfig.routes.length ? app.uiScanConfig.routes : ["/"];
+    setRoutes(nextRoutes.join("\n"));
+    setAuthMode(app.uiScanConfig.authMode);
+    setRouteDraft(nextRoutes[0] ?? "/");
+  }, [app?.id]);
 
   const scan = async () => {
     if (!app) {
       showToast("Create an app first.");
+      return;
+    }
+    if (authMode === "manual") {
+      showToast("Manual auth requires interactive scan.");
       return;
     }
     const routeList = routes.split("\n").map((route) => route.trim()).filter(Boolean);
@@ -118,17 +130,24 @@ export function UiMapPage({
       <Panel title="Trigger UI mapping scan" action={<StatusPill tone={latestUiMap ? "green" : "gray"} label={latestUiMap?.version ?? "No map"} />}>
         <div className="scan-form">
           <div className="empty-state">
-            Demo CRM ingestion: use auth mode <strong>None</strong>, route <code>/dashboard/crm</code>, then capture states for calendar modal and opportunity drawer.
+            Scan explicit routes for the selected app. Use Settings to save default routes, auth, redaction, and optional same-origin route discovery.
           </div>
+          {app && (
+            <div className="service-grid">
+              <div className="service-row"><span>Base URL</span><code>{app.baseUrl}</code></div>
+              <div className="service-row"><span>Route discovery</span><StatusPill tone={app.uiScanConfig.routeDiscovery.enabled ? "yellow" : "gray"} label={app.uiScanConfig.routeDiscovery.enabled ? `up to ${app.uiScanConfig.routeDiscovery.maxRoutes}` : "off"} /></div>
+            </div>
+          )}
           <label>
             Routes to scan
             <textarea value={routes} onChange={(event) => setRoutes(event.target.value)} rows={5} />
           </label>
           <label>
             Auth mode
-            <select value={authMode} onChange={(event) => setAuthMode(event.target.value as "none" | "login_form")}>
-              <option value="none">None</option>
-              <option value="login_form">Login form from backend env</option>
+            <select value={authMode} onChange={(event) => setAuthMode(event.target.value as UiScanAuthMode)}>
+              <option value="none">No auth</option>
+              <option value="login_form">Login form</option>
+              <option value="manual">Manual browser login</option>
             </select>
           </label>
           <button className="button primary" type="button" onClick={() => void scan()}>
@@ -144,7 +163,7 @@ export function UiMapPage({
       >
         <div className="scan-form">
           <div className="empty-state">
-            Start a headed Playwright browser, open hidden menus or modals manually in that browser, then capture the current state here. For the CRM workflow, capture <code>calendar modal open</code>, then click <code>Open opportunity</code> and capture <code>opportunity drawer open</code>. Set <code>UI_SCAN_HEADLESS=false</code> to see the browser.
+            Start a headed Playwright browser, sign in manually when needed, open hidden menus, modals, drawers, or table actions, then capture each meaningful state. Set <code>UI_SCAN_HEADLESS=false</code> locally to see the browser.
           </div>
           {!session ? (
             <button className="button primary" type="button" onClick={() => void startInteractive()}>

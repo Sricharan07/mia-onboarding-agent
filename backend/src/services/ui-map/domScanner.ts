@@ -17,8 +17,10 @@ const interactiveSelector = [
   "[contenteditable='true']"
 ].join(",");
 
-export async function scanVisibleElements(page: Page): Promise<RawElement[]> {
-  return page.evaluate(`(() => {
+export async function scanVisibleElements(page: Page, options: { ignoredSelectors?: string[]; redactedSelectors?: string[] } = {}): Promise<RawElement[]> {
+  return page.evaluate(`((scanOptions) => {
+    const ignoredSelectors = Array.isArray(scanOptions.ignoredSelectors) ? scanOptions.ignoredSelectors : [];
+    const redactedSelectors = Array.isArray(scanOptions.redactedSelectors) ? scanOptions.redactedSelectors : [];
     const nodes = Array.from(document.querySelectorAll(${JSON.stringify(interactiveSelector)}));
     const text = (value) => {
       const normalized = value?.replace(/\\s+/g, " ").trim();
@@ -33,6 +35,13 @@ export async function scanVisibleElements(page: Page): Promise<RawElement[]> {
         && style.display !== "none"
         && style.pointerEvents !== "none";
     };
+    const matchesAny = (element, selectors) => selectors.some((selector) => {
+      try {
+        return Boolean(selector) && (element.matches(selector) || element.closest(selector));
+      } catch {
+        return false;
+      }
+    });
     const labelledBy = (element) => {
       const id = element.getAttribute("aria-labelledby");
       if (!id) return undefined;
@@ -65,10 +74,11 @@ export async function scanVisibleElements(page: Page): Promise<RawElement[]> {
         ?? text(table.querySelector("caption,h1,h2,h3,h4,h5,h6")?.textContent);
     };
     return nodes
-      .filter((node) => node instanceof HTMLElement && visible(node))
+      .filter((node) => node instanceof HTMLElement && visible(node) && !matchesAny(node, ignoredSelectors))
       .map((element) => {
         const rect = element.getBoundingClientRect();
-        const label = text(element.getAttribute("aria-label"))
+        const redacted = matchesAny(element, redactedSelectors);
+        const label = redacted ? undefined : text(element.getAttribute("aria-label"))
           ?? labelledBy(element)
           ?? text(element.labels?.[0]?.textContent)
           ?? text(element.innerText)
@@ -78,7 +88,8 @@ export async function scanVisibleElements(page: Page): Promise<RawElement[]> {
           tagName: element.tagName,
           role: element.getAttribute("role") ?? undefined,
           label,
-          text: text(element.innerText) ?? text(element.textContent),
+          text: redacted ? undefined : text(element.innerText) ?? text(element.textContent),
+          redacted,
           dataAiId: element.getAttribute("data-ai-id") ?? undefined,
           testId: element.getAttribute("data-testid") ?? undefined,
           dataSlot: element.getAttribute("data-slot") ?? undefined,
@@ -86,17 +97,20 @@ export async function scanVisibleElements(page: Page): Promise<RawElement[]> {
           dataState: element.getAttribute("data-state") ?? undefined,
           id: element.id || undefined,
           name: element.name || undefined,
-          placeholder: element.placeholder || undefined,
-          ariaLabel: element.getAttribute("aria-label") ?? undefined,
+          placeholder: redacted ? undefined : element.placeholder || undefined,
+          ariaLabel: redacted ? undefined : element.getAttribute("aria-label") ?? undefined,
           inputType: element.type || undefined,
-          title: element.getAttribute("title") ?? undefined,
+          title: redacted ? undefined : element.getAttribute("title") ?? undefined,
           href: element.href || undefined,
-          sectionName: nearestHeading(element),
-          formName: nearestForm(element),
-          dialogName: nearestDialog(element),
-          tableName: nearestTable(element),
+          sectionName: redacted ? undefined : nearestHeading(element),
+          formName: redacted ? undefined : nearestForm(element),
+          dialogName: redacted ? undefined : nearestDialog(element),
+          tableName: redacted ? undefined : nearestTable(element),
           boundingBox: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
         };
       });
-  })()`) as Promise<RawElement[]>;
+  })`, {
+    ignoredSelectors: options.ignoredSelectors ?? [],
+    redactedSelectors: options.redactedSelectors ?? []
+  }) as Promise<RawElement[]>;
 }

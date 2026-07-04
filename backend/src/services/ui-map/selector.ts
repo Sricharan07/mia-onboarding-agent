@@ -18,6 +18,7 @@ export type RawElement = {
   inputType?: string;
   title?: string;
   href?: string;
+  redacted?: boolean;
   sectionName?: string;
   formName?: string;
   dialogName?: string;
@@ -39,7 +40,9 @@ export function buildUiElementRecord(input: {
 }): UIElementRecord {
   const selectorInfo = generateSelector(input.raw, input.index);
   const elementType = getElementType(input.raw);
-  const label = input.raw.label ?? input.raw.ariaLabel ?? input.raw.placeholder ?? input.raw.title ?? input.raw.text ?? elementType;
+  const label = input.raw.redacted
+    ? `${elementType} ${input.index + 1}`
+    : input.raw.label ?? input.raw.ariaLabel ?? input.raw.placeholder ?? input.raw.title ?? input.raw.text ?? elementType;
   const elementId = input.raw.dataAiId ?? input.raw.testId ?? generateElementId(input.pageName, label, elementType);
   const quality = scoreSelector(selectorInfo.selectorType, selectorInfo.selector);
   const now = nowIso();
@@ -71,7 +74,7 @@ export function buildUiElementRecord(input: {
     boundingBox: input.raw.boundingBox,
     tags: deriveTags(label, input.pageName, stateName),
     selectorQuality: quality.quality,
-    selectorWarnings: quality.warnings,
+    selectorWarnings: input.raw.redacted ? [...quality.warnings, "Element text was redacted by scan configuration."] : quality.warnings,
     stateName,
     stateReason: input.stateReason,
     discoveredBy,
@@ -194,6 +197,7 @@ function generateDescription(type: string, label: string, pageName: string, raw:
           ? `${raw.sectionName} section`
           : `${pageName} page`;
 
+  if (raw.redacted) return `Redacted ${type} element in ${context}.`;
   if (type === "button") return `${label} button in ${context}.`;
   if (type === "input" || type === "textarea") return `${label} input field in ${context}.`;
   if (type === "select") return `${label} dropdown in ${context}.`;

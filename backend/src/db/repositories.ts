@@ -1,7 +1,7 @@
 import type { Db } from "./database.js";
 import { createId, nowIso, slugToId } from "../utils/id.js";
 import { AppError, NotFoundError } from "../utils/errors.js";
-import type { AppRecord, UIElementRecord, Workflow, WorkflowStep } from "../schemas/domain.js";
+import type { AppRecord, AppUiScanConfig, UIElementRecord, UiScanAuthMode, Workflow, WorkflowStep } from "../schemas/domain.js";
 
 type Row = Record<string, unknown>;
 export type ApiKeyScope = "apps:read" | "ui-map:read" | "workflows:read" | "runtime:write" | "logs:write" | "logs:read" | "admin";
@@ -65,10 +65,21 @@ export type UsageTimeseriesPoint = {
   errors: number;
 };
 
+export type AppUiScanConfigInput = Partial<Omit<AppUiScanConfigWithSecrets, "passwordConfigured">> & {
+  clearPassword?: boolean;
+};
+
+export type AppUiScanConfigWithSecrets = AppUiScanConfig & {
+  password?: string;
+};
+
 export type UiMapScanConfig = {
   baseUrl: string;
   routes: string[];
-  authMode?: string;
+  auth?: AppUiScanConfigWithSecrets;
+  ignoredSelectors: string[];
+  redactedSelectors: string[];
+  routeDiscovery: AppUiScanConfig["routeDiscovery"];
 };
 
 export class Repositories {
@@ -78,19 +89,22 @@ export class Repositories {
     return (this.db.prepare("SELECT * FROM apps ORDER BY created_at DESC").all() as Row[]).map(mapApp);
   }
 
-  upsertApp(input: { name: string; slug: string; baseUrl: string }): AppRecord {
+  upsertApp(input: { name: string; slug: string; baseUrl: string; uiScanConfig?: AppUiScanConfigInput }): AppRecord {
     const existing = this.db.prepare("SELECT * FROM apps WHERE slug = ?").get(input.slug) as Row | undefined;
     const now = nowIso();
     const id = existing ? String(existing.id) : slugToId("app", input.slug);
+    const currentScanConfig = parseStoredUiScanConfig(existing?.ui_scan_config_json);
+    const nextScanConfig = mergeUiScanConfig(currentScanConfig, input.uiScanConfig);
 
     this.db.prepare(`
-      INSERT INTO apps (id, name, slug, base_url, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO apps (id, name, slug, base_url, ui_scan_config_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(slug) DO UPDATE SET
         name = excluded.name,
         base_url = excluded.base_url,
+        ui_scan_config_json = excluded.ui_scan_config_json,
         updated_at = excluded.updated_at
-    `).run(id, input.name, input.slug, input.baseUrl, existing?.created_at ?? now, now);
+    `).run(id, input.name, input.slug, input.baseUrl, JSON.stringify(nextScanConfig), existing?.created_at ?? now, now);
 
     return this.getApp(id);
   }
@@ -99,6 +113,12 @@ export class Repositories {
     const row = this.db.prepare("SELECT * FROM apps WHERE id = ?").get(appId) as Row | undefined;
     if (!row) throw new NotFoundError(`App not found: ${appId}`);
     return mapApp(row);
+  }
+
+  getAppUiScanConfig(appId: string): AppUiScanConfigWithSecrets {
+    const row = this.db.prepare("SELECT ui_scan_config_json FROM apps WHERE id = ?").get(appId) as Row | undefined;
+    if (!row) throw new NotFoundError(`App not found: ${appId}`);
+    return parseStoredUiScanConfig(row.ui_scan_config_json);
   }
 
   createUiMapVersion(appId: string, source = "runtime_browser_scan", scanConfig?: UiMapScanConfig): { id: string; appId: string; version: string; status: string; createdAt: string } {
@@ -830,14 +850,124 @@ export class Repositories {
 }
 
 function mapApp(row: Row): AppRecord {
+  const scanConfig = parseStoredUiScanConfig(row.ui_scan_config_json);
   return {
     id: String(row.id),
     name: String(row.name),
     slug: String(row.slug),
     baseUrl: String(row.base_url),
+    uiScanConfig: sanitizeUiScanConfig(scanConfig),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at)
   };
+}
+
+function mergeUiScanConfig(current: AppUiScanConfigWithSecrets, input?: AppUiScanConfigInput): AppUiScanConfigWithSecrets {
+  if (!input) return current;
+  const password = input.clearPassword
+    ? undefined
+    : input.password !== undefined
+      ? normalizeOptionalString(input.password)
+      : current.password;
+
+  return {
+    routes: input.routes ? normalizeRouteList(input.routes) : current.routes,
+    authMode: normalizeAuthMode(input.authMode) ?? current.authMode,
+    loginUrl: input.loginUrl !== undefined ? normalizeOptionalString(input.loginUrl) : current.loginUrl,
+    username: input.username !== undefined ? normalizeOptionalString(input.username) : current.username,
+    passwordConfigured: Boolean(password),
+    password,
+    usernameSelector: input.usernameSelector !== undefined ? normalizeOptionalString(input.usernameSelector) : current.usernameSelector,
+    passwordSelector: input.passwordSelector !== undefined ? normalizeOptionalString(input.passwordSelector) : current.passwordSelector,
+    submitSelector: input.submitSelector !== undefined ? normalizeOptionalString(input.submitSelector) : current.submitSelector,
+    successUrlPattern: input.successUrlPattern !== undefined ? normalizeOptionalString(input.successUrlPattern) : current.successUrlPattern,
+    postLoginWaitMs: validNonnegativeInteger(input.postLoginWaitMs) ? input.postLoginWaitMs : current.postLoginWaitMs,
+    ignoredSelectors: input.ignoredSelectors ? normalizeStringList(input.ignoredSelectors) : current.ignoredSelectors,
+    redactedSelectors: input.redactedSelectors ? normalizeStringList(input.redactedSelectors) : current.redactedSelectors,
+    routeDiscovery: input.routeDiscovery
+      ? {
+        enabled: Boolean(input.routeDiscovery.enabled),
+        maxRoutes: normalizeMaxRoutes(input.routeDiscovery.maxRoutes)
+      }
+      : current.routeDiscovery
+  };
+}
+
+function parseStoredUiScanConfig(value: unknown): AppUiScanConfigWithSecrets {
+  const fallback = defaultUiScanConfig();
+  if (!value) return fallback;
+
+  try {
+    const parsed = JSON.parse(String(value)) as Partial<AppUiScanConfigWithSecrets>;
+    const password = normalizeOptionalString(parsed.password);
+    return {
+      routes: parsed.routes ? normalizeRouteList(parsed.routes) : fallback.routes,
+      authMode: normalizeAuthMode(parsed.authMode) ?? fallback.authMode,
+      loginUrl: normalizeOptionalString(parsed.loginUrl),
+      username: normalizeOptionalString(parsed.username),
+      passwordConfigured: Boolean(password),
+      password,
+      usernameSelector: normalizeOptionalString(parsed.usernameSelector),
+      passwordSelector: normalizeOptionalString(parsed.passwordSelector),
+      submitSelector: normalizeOptionalString(parsed.submitSelector),
+      successUrlPattern: normalizeOptionalString(parsed.successUrlPattern),
+      postLoginWaitMs: validNonnegativeInteger(parsed.postLoginWaitMs) ? parsed.postLoginWaitMs : fallback.postLoginWaitMs,
+      ignoredSelectors: parsed.ignoredSelectors ? normalizeStringList(parsed.ignoredSelectors) : fallback.ignoredSelectors,
+      redactedSelectors: parsed.redactedSelectors ? normalizeStringList(parsed.redactedSelectors) : fallback.redactedSelectors,
+      routeDiscovery: {
+        enabled: Boolean(parsed.routeDiscovery?.enabled),
+        maxRoutes: normalizeMaxRoutes(parsed.routeDiscovery?.maxRoutes)
+      }
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function defaultUiScanConfig(): AppUiScanConfigWithSecrets {
+  return {
+    routes: ["/"],
+    authMode: "none",
+    passwordConfigured: false,
+    postLoginWaitMs: 1000,
+    ignoredSelectors: [],
+    redactedSelectors: [],
+    routeDiscovery: { enabled: false, maxRoutes: 25 }
+  };
+}
+
+function sanitizeUiScanConfig(config: AppUiScanConfigWithSecrets): AppUiScanConfig {
+  const { password: _password, ...safeConfig } = config;
+  return {
+    ...safeConfig,
+    passwordConfigured: Boolean(config.password)
+  };
+}
+
+function normalizeAuthMode(value: unknown): UiScanAuthMode | undefined {
+  return value === "none" || value === "login_form" || value === "manual" ? value : undefined;
+}
+
+function normalizeRouteList(routes: unknown): string[] {
+  const values = Array.isArray(routes) ? routes : [];
+  const normalized = normalizeStringList(values).map((route) => route.startsWith("/") ? route : `/${route}`);
+  return normalized.length ? normalized : ["/"];
+}
+
+function normalizeStringList(values: unknown[]): string[] {
+  return [...new Set(values.map((value) => typeof value === "string" ? value.trim() : "").filter(Boolean))];
+}
+
+function normalizeOptionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function normalizeMaxRoutes(value: unknown): number {
+  return Number.isInteger(value) && Number(value) > 0 ? Math.min(Number(value), 200) : 25;
+}
+
+function validNonnegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
 
 function mapApiKey(row: Row): ApiKeyRecord {

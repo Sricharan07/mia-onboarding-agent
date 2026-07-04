@@ -14,6 +14,8 @@ export async function captureSafeExpansions(input: {
   route: string;
   capture: UiMapPageCaptureService;
   discoveredBy?: UiElementDiscoveredBy;
+  ignoredSelectors?: string[];
+  redactedSelectors?: string[];
 }): Promise<CapturePageResult[]> {
   const candidates = await markSafeExpansionCandidates(input.page);
   const results: CapturePageResult[] = [];
@@ -32,7 +34,9 @@ export async function captureSafeExpansions(input: {
         route: input.route,
         stateName: `${candidate.label} expanded`,
         stateReason: `Safe auto-expansion of ${candidate.label}.`,
-        discoveredBy: input.discoveredBy ?? "auto_expansion"
+        discoveredBy: input.discoveredBy ?? "auto_expansion",
+        ignoredSelectors: input.ignoredSelectors,
+        redactedSelectors: input.redactedSelectors
       }));
       await input.page.keyboard.press("Escape").catch(() => undefined);
       await input.page.waitForTimeout(100);

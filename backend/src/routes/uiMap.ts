@@ -4,8 +4,8 @@ import type { AppDependencies } from "../app.js";
 import { requireApiKeyAppAccess, requireApiKeyScope } from "./auth.js";
 
 const scanSchema = z.object({
-  routes: z.array(z.string()).min(1),
-  auth: z.object({ mode: z.enum(["none", "login_form"]) }).optional()
+  routes: z.array(z.string()).min(1).optional(),
+  auth: z.object({ mode: z.enum(["none", "login_form", "manual"]) }).optional()
 });
 
 const interactiveSessionParamsSchema = z.object({ sessionId: z.string().min(1) });

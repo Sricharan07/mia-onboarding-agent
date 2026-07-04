@@ -1,52 +1,64 @@
 import type { Page } from "playwright";
 import type { AppConfig } from "../../config/env.js";
 import { ConfigError } from "../../utils/errors.js";
+import type { AppUiScanConfigWithSecrets } from "../../db/repositories.js";
 import { gotoAndSettle } from "./navigation.js";
 
-export type UiScanAuthMode = "none" | "login_form";
+export type UiScanAuthMode = "none" | "login_form" | "manual";
 
-export function resolveAuthMode(mode: UiScanAuthMode | undefined, config: AppConfig): UiScanAuthMode {
-  return mode ?? config.UI_SCAN_AUTH_MODE;
+export type UiScanAuthConfig = Partial<AppUiScanConfigWithSecrets> & {
+  mode?: UiScanAuthMode;
+};
+
+export function resolveAuthMode(auth: UiScanAuthConfig | undefined, config: AppConfig): UiScanAuthMode {
+  return auth?.mode ?? auth?.authMode ?? config.UI_SCAN_AUTH_MODE;
 }
 
 export async function applyUiScanAuth(input: {
   page: Page;
   baseUrl: string;
   config: AppConfig;
-  mode?: UiScanAuthMode;
+  auth?: UiScanAuthConfig;
 }): Promise<void> {
-  const mode = resolveAuthMode(input.mode, input.config);
-  if (mode === "none") return;
-  await loginWithForm(input.page, input.baseUrl, input.config);
+  const mode = resolveAuthMode(input.auth, input.config);
+  if (mode === "none" || mode === "manual") return;
+  await loginWithForm(input.page, input.baseUrl, input.config, input.auth);
 }
 
-async function loginWithForm(page: Page, baseUrl: string, config: AppConfig): Promise<void> {
-  const missing = [
-    "UI_SCAN_LOGIN_URL",
-    "UI_SCAN_USERNAME",
-    "UI_SCAN_PASSWORD",
-    "UI_SCAN_USERNAME_SELECTOR",
-    "UI_SCAN_PASSWORD_SELECTOR",
-    "UI_SCAN_SUBMIT_SELECTOR"
-  ].filter((key) => !config[key as keyof AppConfig]);
+async function loginWithForm(page: Page, baseUrl: string, config: AppConfig, auth: UiScanAuthConfig | undefined): Promise<void> {
+  const loginUrl = auth?.loginUrl || config.UI_SCAN_LOGIN_URL;
+  const username = auth?.username || config.UI_SCAN_USERNAME;
+  const password = auth?.password || config.UI_SCAN_PASSWORD;
+  const usernameSelector = auth?.usernameSelector || config.UI_SCAN_USERNAME_SELECTOR;
+  const passwordSelector = auth?.passwordSelector || config.UI_SCAN_PASSWORD_SELECTOR;
+  const submitSelector = auth?.submitSelector || config.UI_SCAN_SUBMIT_SELECTOR;
+  const successUrlPattern = auth?.successUrlPattern || config.UI_SCAN_SUCCESS_URL_PATTERN;
+  const postLoginWaitMs = auth?.postLoginWaitMs ?? config.UI_SCAN_POST_LOGIN_WAIT_MS;
+  const missing = Object.entries({
+    loginUrl,
+    username,
+    password,
+    usernameSelector,
+    passwordSelector,
+    submitSelector
+  }).filter(([, value]) => !value).map(([key]) => key);
 
   if (missing.length > 0) {
     throw new ConfigError(`UI scan login_form auth is not configured. Missing: ${missing.join(", ")}.`);
   }
 
-  const loginUrl = new URL(config.UI_SCAN_LOGIN_URL!, baseUrl).toString();
-  await gotoAndSettle(page, loginUrl);
-  await page.locator(config.UI_SCAN_USERNAME_SELECTOR!).fill(config.UI_SCAN_USERNAME!);
-  await page.locator(config.UI_SCAN_PASSWORD_SELECTOR!).fill(config.UI_SCAN_PASSWORD!);
-  await page.locator(config.UI_SCAN_SUBMIT_SELECTOR!).click();
+  await gotoAndSettle(page, new URL(loginUrl!, baseUrl).toString());
+  await page.locator(usernameSelector!).fill(username!);
+  await page.locator(passwordSelector!).fill(password!);
+  await page.locator(submitSelector!).click();
 
-  if (config.UI_SCAN_SUCCESS_URL_PATTERN) {
-    await page.waitForURL((url) => url.toString().includes(config.UI_SCAN_SUCCESS_URL_PATTERN!), { timeout: 15000 });
+  if (successUrlPattern) {
+    await page.waitForURL((url) => url.toString().includes(successUrlPattern), { timeout: 15000 });
   } else {
     await page.waitForLoadState("load", { timeout: 15000 }).catch(() => undefined);
   }
 
-  if (config.UI_SCAN_POST_LOGIN_WAIT_MS > 0) {
-    await page.waitForTimeout(config.UI_SCAN_POST_LOGIN_WAIT_MS);
+  if (postLoginWaitMs > 0) {
+    await page.waitForTimeout(postLoginWaitMs);
   }
 }

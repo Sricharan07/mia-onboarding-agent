@@ -90,6 +90,16 @@ Gemini, OpenAI embeddings, and LanceDB local storage are required for provider-b
 
 Runtime-sensitive SDK/backend routes are protected with scoped API keys. API key management requires a signed-in console admin or an `admin` API key.
 
+To add a customer web app for UI mapping:
+
+1. Open Console -> Settings.
+2. Create an application record with the app name, slug, and base URL.
+3. Configure the app's UI scan profile: default routes, auth mode, login selectors when needed, ignored selectors, redacted selectors, and optional same-origin route discovery.
+4. Open Console -> UI Map and run an explicit route scan.
+5. Use interactive scan for manual SSO login, modals, drawers, dropdowns, row action menus, and other hidden states.
+
+Automated route discovery is opt-in and only follows same-origin links from scanned pages. It filters obvious destructive/logout/binary routes, but production scans should still start with explicit routes.
+
 The SDK can redact DOM context before it leaves the browser:
 
 ```ts
@@ -108,7 +118,7 @@ AIOnboardingAgent.init({
 });
 ```
 
-For authenticated UI ingestion, configure a dedicated demo account in `.env` with the `UI_SCAN_*` variables. Keep `UI_SCAN_HEADLESS=false` when using the console's interactive mapper so the Playwright browser is visible for manual dropdown/modal captures.
+For authenticated UI ingestion, prefer the per-app scan profile in the console. The `UI_SCAN_*` variables remain as backend-level fallbacks. Use a dedicated demo/test account only. Keep `UI_SCAN_HEADLESS=false` when using the console's interactive mapper so the Playwright browser is visible for manual login and state capture.
 
 ## Useful Commands
 

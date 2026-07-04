@@ -34,6 +34,8 @@ export class UiMapPageCaptureService {
     stateName?: string;
     stateReason?: string;
     discoveredBy: UiElementDiscoveredBy;
+    ignoredSelectors?: string[];
+    redactedSelectors?: string[];
   }): Promise<CapturePageResult> {
     const url = input.page.url();
     const route = input.route ?? routeFromUrl(url, input.baseUrl);
@@ -49,14 +51,17 @@ export class UiMapPageCaptureService {
       status: "mapped"
     });
 
-    const rawElements = await scanVisibleElements(input.page);
+    const rawElements = await scanVisibleElements(input.page, {
+      ignoredSelectors: input.ignoredSelectors,
+      redactedSelectors: input.redactedSelectors
+    });
     let savedElements = 0;
     let duplicateElements = 0;
     let weakSelectors = 0;
     const semanticRecords: SemanticRecord[] = [];
 
     for (const [index, raw] of rawElements.entries()) {
-      const record = buildUiElementRecord({
+      const record = await validateElementSelectors(input.page, buildUiElementRecord({
         appId: input.appId,
         uiMapVersionId: input.uiMapVersionId,
         pageId,
@@ -67,7 +72,7 @@ export class UiMapPageCaptureService {
         stateName: input.stateName ?? "default",
         stateReason: input.stateReason,
         discoveredBy: input.discoveredBy
-      });
+      }));
 
       if (record.selectorQuality === "weak") weakSelectors += 1;
       const saved = this.repositories.saveUiElement(record);
@@ -92,6 +97,39 @@ export class UiMapPageCaptureService {
       duplicateElements,
       weakSelectors
     };
+  }
+}
+
+async function validateElementSelectors(page: Page, record: UIElementRecord): Promise<UIElementRecord> {
+  const primaryCount = await selectorCount(page, record.selector);
+  const fallbackCounts = await Promise.all(record.fallbackSelectors.slice(0, 4).map((selector) => selectorCount(page, selector)));
+  const warnings = [...record.selectorWarnings];
+  let quality = record.selectorQuality;
+
+  if (primaryCount === 0) {
+    warnings.push("Primary selector did not match during scan validation.");
+    quality = "weak";
+  } else if (primaryCount > 1) {
+    warnings.push(`Primary selector matched ${primaryCount} elements during scan validation.`);
+    quality = quality === "strong" ? "medium" : quality;
+  }
+
+  if (primaryCount === 0 && fallbackCounts.every((count) => count === 0)) {
+    warnings.push("No fallback selector matched during scan validation.");
+  }
+
+  return {
+    ...record,
+    selectorQuality: quality,
+    selectorWarnings: [...new Set(warnings)]
+  };
+}
+
+async function selectorCount(page: Page, selector: string): Promise<number> {
+  try {
+    return await page.locator(selector).count();
+  } catch {
+    return 0;
   }
 }
 

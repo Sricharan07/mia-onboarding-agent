@@ -6,7 +6,26 @@ import { requireApiKeyAppAccess, requireApiKeyScope } from "./auth.js";
 const appInputSchema = z.object({
   name: z.string().min(1),
   slug: z.string().min(1),
-  baseUrl: z.string().url()
+  baseUrl: z.string().url(),
+  uiScanConfig: z.object({
+    routes: z.array(z.string().trim().min(1)).optional(),
+    authMode: z.enum(["none", "login_form", "manual"]).optional(),
+    loginUrl: z.string().trim().optional(),
+    username: z.string().trim().optional(),
+    password: z.string().optional(),
+    clearPassword: z.boolean().optional(),
+    usernameSelector: z.string().trim().optional(),
+    passwordSelector: z.string().trim().optional(),
+    submitSelector: z.string().trim().optional(),
+    successUrlPattern: z.string().trim().optional(),
+    postLoginWaitMs: z.number().int().nonnegative().optional(),
+    ignoredSelectors: z.array(z.string().trim().min(1)).optional(),
+    redactedSelectors: z.array(z.string().trim().min(1)).optional(),
+    routeDiscovery: z.object({
+      enabled: z.boolean(),
+      maxRoutes: z.number().int().positive().max(200)
+    }).optional()
+  }).optional()
 });
 
 export async function registerAppRoutes(app: FastifyInstance, dependencies: AppDependencies): Promise<void> {
