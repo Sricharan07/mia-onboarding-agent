@@ -23,7 +23,7 @@ export class WorkflowCompiler {
 
     const now = nowIso();
     return {
-      workflowId: createWorkflowId(input.timeline.goal),
+      workflowId: createId("workflow"),
       appId: input.appId,
       name: input.timeline.goal,
       description: input.timeline.summary ?? `Guides the user through ${input.timeline.goal}.`,
@@ -49,12 +49,12 @@ export class WorkflowCompiler {
 
     if (step.action === "wait") {
       const target = await this.matchTarget(appId, step);
-      if (!target) return [];
+      if (!target) return [createReviewStep(step, `I could not match "${step.observedElement ?? "wait target"}" automatically. Please review this step before publishing.`)];
       return [{ id: createId("step"), type: "wait_for_element", target, timeoutMs: 10000 }];
     }
 
     if (!["click", "focus", "fill", "select"].includes(step.action)) {
-      return [];
+      return [createReviewStep(step, `I could not convert the recorded "${step.action}" action automatically. Please review this step before publishing.`)];
     }
 
     const target = await this.matchTarget(appId, step);
@@ -68,21 +68,23 @@ export class WorkflowCompiler {
     }
 
     const source = { extractedStepId: step.id, matchConfidence: step.confidence };
-    if (step.action === "click") return [{ id: createId("step"), type: "click", target, executionPolicy: "auto", source }];
+    const executionPolicy = isDangerousAction(step, target) ? "requires_confirmation" : "auto";
+    if (step.action === "click") return [{ id: createId("step"), type: "click", target, executionPolicy, source }];
     if (step.action === "focus") return [{ id: createId("step"), type: "focus", target, executionPolicy: "auto", source }];
     if (step.action === "fill") {
       const field = createFieldName(step.observedElement ?? target.label ?? target.elementId);
       const inputType = step.observedValueType && step.observedValueType !== "unknown" ? step.observedValueType : "text";
+      const fillPolicy = sensitiveInputTypes.has(inputType) ? "manual_only" : executionPolicy;
       return [
         { id: createId("step"), type: "ask_user", field, prompt: `What value should I enter for ${target.label ?? target.elementId}?`, inputType },
-        { id: createId("step"), type: "fill", target, valueFrom: field, executionPolicy: sensitiveInputTypes.has(inputType) ? "manual_only" : "auto", source }
+        { id: createId("step"), type: "fill", target, valueFrom: field, executionPolicy: fillPolicy, source }
       ];
     }
 
     const field = createFieldName(step.observedElement ?? target.label ?? target.elementId);
     return [
       { id: createId("step"), type: "ask_user", field, prompt: `Which option should I select for ${target.label ?? target.elementId}?`, inputType: "text" },
-      { id: createId("step"), type: "select", target, valueFrom: field, executionPolicy: "auto", source }
+      { id: createId("step"), type: "select", target, valueFrom: field, executionPolicy, source }
     ];
   }
 
@@ -105,24 +107,40 @@ export class WorkflowCompiler {
 }
 
 function toWorkflowTarget(record: UIElementRecord): WorkflowTarget {
-    return {
-      elementId: record.elementId,
-      label: record.label,
-      selector: record.selector,
-      fallbackSelectors: record.fallbackSelectors,
-      route: record.route,
-      pageName: record.pageName
-    };
+  return {
+    elementId: record.elementId,
+    label: record.label,
+    selector: record.selector,
+    fallbackSelectors: record.fallbackSelectors,
+    route: record.route,
+    pageName: record.pageName
+  };
 }
 
 const sensitiveInputTypes = new Set(["password", "credit_card", "api_key", "secret", "token", "ssn", "bank_account"]);
+const dangerousActionPattern = /\b(delete|remove|archive|submit|send|pay|purchase|checkout|invite|publish|approve|revoke|disable|deactivate|confirm|transfer|refund|cancel)\b/i;
 
-function createWorkflowId(goal: string): string {
-  return goal.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || createId("workflow");
+function createReviewStep(step: ExtractedActionStep, message: string): WorkflowStep {
+  return {
+    id: createId("step"),
+    type: "confirm",
+    message,
+    source: { extractedStepId: step.id, matchConfidence: step.confidence ?? 0 }
+  };
 }
 
 function createFieldName(label: string): string {
   return label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "field";
+}
+
+function isDangerousAction(step: ExtractedActionStep, target: WorkflowTarget): boolean {
+  return dangerousActionPattern.test([
+    step.action,
+    step.observedElement,
+    step.visualContext,
+    target.label,
+    target.elementId
+  ].filter(Boolean).join(" "));
 }
 
 function hasExecutableSelector(record: UIElementRecord): boolean {

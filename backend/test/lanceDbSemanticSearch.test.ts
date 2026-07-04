@@ -34,13 +34,14 @@ test("LanceDB semantic search indexes and searches records with OpenAI embedding
   }) as typeof fetch;
 
   try {
+    const logs: Array<{ provider: string; purpose: string; inputSummary: string }> = [];
     const adapter = new LanceDbSemanticSearchAdapter({
       OPENAI_API_KEY: "test",
       OPENAI_BASE_URL: "https://api.openai.com/v1",
       OPENAI_EMBEDDING_MODEL: "text-embedding-3-small",
       OPENAI_EMBEDDING_DIMENSIONS: 2,
       SEMANTIC_INDEX_DIR: dir
-    } as AppConfig);
+    } as AppConfig, (log) => logs.push(log));
 
     await adapter.upsertMany([
       { id: "billing", kind: "workflow", appId: "app_1", searchableText: "Billing workflow", metadata: { workflowId: "billing", status: "published" } },
@@ -56,6 +57,11 @@ test("LanceDB semantic search indexes and searches records with OpenAI embedding
     assert.equal(matches[0]?.id, "billing");
     assert.equal(matches[0]?.metadata?.workflowId, "billing");
     assert.ok(matches[0]!.score > 0.9);
+    assert.ok(logs.some((log) => log.provider === "openai" && log.purpose === "semantic_index" && log.inputSummary.includes("appId=app_1")));
+    assert.ok(logs.some((log) => log.provider === "openai" && log.purpose === "semantic_search" && log.inputSummary.includes("appId=app_1")));
+    assert.deepEqual((await adapter.listIdsByFilter({ appId: "app_1" })).sort(), ["billing", "support"]);
+    await adapter.deleteByIds(["support"]);
+    assert.deepEqual(await adapter.listIdsByFilter({ appId: "app_1" }), ["billing"]);
   } finally {
     globalThis.fetch = originalFetch;
     rmSync(dir, { recursive: true, force: true });

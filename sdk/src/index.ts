@@ -12,12 +12,14 @@ class AIOnboardingAgentInstance {
   private cursor?: MiaShadowCursor;
   private promptUi?: MiaPromptUI;
   private voice?: GeminiLiveClient;
+  private activeExecutor?: WorkflowExecutor;
   private sessionId = `sdk_session_${crypto.randomUUID()}`;
   private pendingWorkflowInput?: {
     resolve: (value: string) => void;
     prompt: string;
     settled: boolean;
   };
+  private pendingWorkflowInputCleanup?: () => void;
   private suppressNextAssistantResponse = false;
 
   init(config: SDKConfig): void {
@@ -36,7 +38,7 @@ class AIOnboardingAgentInstance {
       sessionId: this.sessionId,
       eventType: "session_started",
       payload: { user: config.user?.id }
-    });
+    }).catch((error) => config.onError?.(toError(error)));
     if (config.enableVoice) {
       this.cursor.setState("connecting");
       this.cursor.setBubbleText("Starting Mia voice...");
@@ -85,6 +87,7 @@ class AIOnboardingAgentInstance {
       context,
       enableScreenShare: Boolean(this.config.enableScreenShare),
       getContext: () => collectRuntimeContext(this.config!, this.sessionId),
+      redactScreenFrame: this.config.privacy?.redactScreenFrame,
       onInputLevel: (level) => this.cursor?.setListeningLevel(level),
       onStage: (stage) => this.cursor?.setBubbleText(stage),
       onEvent: (event) => void this.handleVoiceEvent(event)
@@ -116,10 +119,18 @@ class AIOnboardingAgentInstance {
         cursor: this.cursor,
         promptUi: this.promptUi,
         clientSessionId: this.sessionId,
+        navigate: this.config.navigate,
         requestUserInput: (input) => this.requestWorkflowInput(input),
         onWorkflowEvent: this.config.onWorkflowEvent
       });
-      await executor.start();
+      this.activeExecutor = executor;
+      try {
+        await executor.start();
+      } finally {
+        if (this.activeExecutor === executor) this.activeExecutor = undefined;
+      }
+    } else if (result.type === "control") {
+      await this.handleControlResult(result);
     } else {
       this.cursor.startBubbleFade();
       this.setStatus(this.config.enableVoice ? "listening" : "idle");
@@ -178,33 +189,67 @@ class AIOnboardingAgentInstance {
     }
   }
 
-  private async requestWorkflowInput(input: { prompt: string; inputType?: string; choices?: string[] }): Promise<string> {
+  private async handleControlResult(result: Extract<ResolveResponse, { type: "control" }>): Promise<void> {
+    if (!this.cursor || !this.config) return;
+    if (!this.activeExecutor) {
+      this.cursor.startBubbleFade();
+      this.setStatus(this.config.enableVoice ? "listening" : "idle");
+      return;
+    }
+
+    if (result.action === "cancel") {
+      await this.activeExecutor.cancel();
+      return;
+    }
+    if (result.action === "pause") {
+      await this.activeExecutor.pause();
+      this.setStatus("guiding");
+      return;
+    }
+    await this.activeExecutor.resume();
+    this.setStatus("guiding");
+  }
+
+  private async requestWorkflowInput(input: { prompt: string; inputType?: string; choices?: string[]; signal?: AbortSignal }): Promise<string> {
     if (!this.config || !this.backendClient || !this.cursor || !this.promptUi) {
       throw new Error("AIOnboardingAgent.init(config) must be called before collecting workflow input.");
     }
 
     if (!this.config.enableVoice || !this.voice?.isConnected()) {
-      return this.promptUi.ask(input.prompt, input.inputType, input.choices);
+      return this.promptUi.ask(input.prompt, input.inputType, input.choices, input.signal);
     }
 
     if (input.choices?.length) {
-      return this.promptUi.ask(input.prompt, input.inputType, input.choices);
+      return this.promptUi.ask(input.prompt, input.inputType, input.choices, input.signal);
     }
 
     this.cursor.setState("listening");
     this.cursor.setBubbleText(input.prompt);
     this.promptUi.showListening(input.prompt);
-    const inputPromise = new Promise<string>((resolve) => {
+    const inputPromise = new Promise<string>((resolve, reject) => {
+      const abort = () => {
+        this.pendingWorkflowInput = undefined;
+        this.promptUi?.clear();
+        reject(new Error("Workflow cancelled."));
+      };
+      if (input.signal?.aborted) {
+        abort();
+        return;
+      }
+      input.signal?.addEventListener("abort", abort, { once: true });
       this.pendingWorkflowInput = {
         resolve,
         prompt: input.prompt,
         settled: false
       };
+      this.pendingWorkflowInputCleanup = () => input.signal?.removeEventListener("abort", abort);
     });
 
     try {
       return await inputPromise;
     } finally {
+      this.pendingWorkflowInputCleanup?.();
+      this.pendingWorkflowInputCleanup = undefined;
       this.pendingWorkflowInput = undefined;
       this.promptUi.clear();
     }
@@ -232,3 +277,7 @@ class AIOnboardingAgentInstance {
 
 export const AIOnboardingAgent = new AIOnboardingAgentInstance();
 export type * from "./types/index.js";
+
+function toError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}

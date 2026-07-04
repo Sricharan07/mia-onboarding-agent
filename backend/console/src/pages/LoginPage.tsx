@@ -1,18 +1,30 @@
 import { Command, Lock } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
-export function LoginPage({ onLogin }: { onLogin: () => void }) {
-  const [username, setUsername] = useState("admin");
-  const [password, setPassword] = useState("admin");
+export function LoginPage({
+  backendUrl,
+  onLogin
+}: {
+  backendUrl: string;
+  onLogin: (input: { backendUrl: string; adminApiKey?: string; bootstrapToken?: string }) => void;
+}) {
+  const [urlDraft, setUrlDraft] = useState(backendUrl);
+  const [adminApiKey, setAdminApiKey] = useState("");
+  const [bootstrapToken, setBootstrapToken] = useState("");
   const [error, setError] = useState("");
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (username === "admin" && password === "admin") {
-      onLogin();
+    const nextBackendUrl = urlDraft.trim();
+    if (!nextBackendUrl) {
+      setError("Enter the backend URL.");
       return;
     }
-    setError("Use admin / admin for the local console.");
+    if (adminApiKey.trim() || bootstrapToken.trim()) {
+      onLogin({ backendUrl: nextBackendUrl, adminApiKey, bootstrapToken });
+      return;
+    }
+    setError("Enter an admin API key, or a bootstrap token to create the first admin key.");
   };
 
   return (
@@ -43,22 +55,26 @@ export function LoginPage({ onLogin }: { onLogin: () => void }) {
         <form className="login-form" onSubmit={submit}>
           <div>
             <h1>Sign in</h1>
-            <p>Use the local admin credentials to configure and publish onboarding workflows.</p>
+            <p>Use an admin API key to operate the console, or bootstrap once with `BOOTSTRAP_ADMIN_TOKEN`.</p>
           </div>
           <label>
-            Username
-            <input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" />
+            Backend URL
+            <input value={urlDraft} onChange={(event) => setUrlDraft(event.target.value)} autoComplete="url" />
           </label>
           <label>
-            Password
-            <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" autoComplete="current-password" />
+            Admin API key
+            <input value={adminApiKey} onChange={(event) => setAdminApiKey(event.target.value)} type="password" autoComplete="off" />
+          </label>
+          <label>
+            Bootstrap token
+            <input value={bootstrapToken} onChange={(event) => setBootstrapToken(event.target.value)} type="password" autoComplete="off" />
           </label>
           {error && <div className="error-line">{error}</div>}
           <button className="button primary full" type="submit">
             <Lock size={16} />
             Sign in
           </button>
-          <div className="login-hint">Default credentials: admin / admin</div>
+          <div className="login-hint">Bootstrap token is only used for `POST /api/v1/api-keys`.</div>
         </form>
       </section>
     </main>

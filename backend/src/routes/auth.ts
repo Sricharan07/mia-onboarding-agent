@@ -26,12 +26,9 @@ export async function requireApiKeyScope(
   dependencies.services.apiKeys.requireScope(request.apiKey, scopes);
 }
 
-export async function requireApiKeyScopeIfPresent(
-  request: FastifyRequest,
-  _reply: FastifyReply,
-  dependencies: AppDependencies,
-  scopes: ApiKeyScope[]
-): Promise<void> {
-  if (!request.apiKey) return;
-  dependencies.services.apiKeys.requireScope(request.apiKey, scopes);
+export function requireApiKeyAppAccess(request: FastifyRequest, dependencies: AppDependencies, appId: string | undefined): void {
+  dependencies.services.apiKeys.requireAppAccess(request.apiKey, appId, {
+    origin: request.headers.origin,
+    referer: request.headers.referer
+  });
 }

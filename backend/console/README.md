@@ -19,10 +19,10 @@ npm run dev:backend
 
 The console defaults to `http://localhost:4000` for backend API calls. You can change this in the console Settings page.
 
-Default local console login:
+Console login:
 
 ```text
-admin / admin
+Admin API key, or BOOTSTRAP_ADMIN_TOKEN to create the first admin key.
 ```
 
 ## Current Backend Coverage
@@ -35,5 +35,5 @@ admin / admin
 - Workflows: list, review metadata, add/edit/delete/reorder steps, approve, publish, archive.
 - Logs: list execution logs.
 - Usage: aggregate metrics and daily timeseries from backend logs.
-- API keys: create, list, and revoke local scoped API keys.
+- API keys: create, list, and revoke local scoped API keys, including app-bound SDK keys with allowed browser origins.
 - Provider readiness: database/config checks and no-credit provider reachability where safe.

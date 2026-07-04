@@ -1,9 +1,24 @@
 import type { ExtractedActionTimeline, SemanticRecord } from "../schemas/domain.js";
 
+export type AiLogContext = {
+  appId?: string;
+  purpose?: string;
+};
+
+export type AiRequestLogInput = {
+  provider: string;
+  purpose: string;
+  inputSummary: string;
+  outputSummary?: string;
+  latencyMs?: number;
+  error?: string;
+};
+
 export type GenerateTextInput = {
   model?: string;
   system?: string;
   prompt: string;
+  logContext?: AiLogContext;
 };
 
 export type GenerateJsonInput = GenerateTextInput & {
@@ -14,6 +29,7 @@ export type AnalyzeVideoInput = {
   videoPath: string;
   prompt: string;
   model?: string;
+  logContext?: AiLogContext;
 };
 
 export interface ModelGatewayAdapter {
@@ -50,6 +66,8 @@ export interface SemanticSearchAdapter {
   upsertMany(records: SemanticRecord[]): Promise<void>;
   search(input: SemanticSearchInput): Promise<SemanticSearchResult[]>;
   deleteByFilter(filter: Record<string, string>): Promise<void>;
+  deleteByIds(ids: string[]): Promise<void>;
+  listIdsByFilter(filter: Record<string, string>): Promise<string[]>;
 }
 
 export interface FileStorageAdapter {

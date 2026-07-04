@@ -41,6 +41,10 @@ function migrate(db: Db): void {
       version TEXT NOT NULL,
       source TEXT NOT NULL,
       status TEXT NOT NULL,
+      scan_config_json TEXT,
+      locked_by TEXT,
+      locked_until TEXT,
+      attempts INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       completed_at TEXT,
       error TEXT
@@ -112,6 +116,9 @@ function migrate(db: Db): void {
       provider_raw_output_json TEXT,
       extracted_action_timeline_json TEXT,
       error TEXT,
+      locked_by TEXT,
+      locked_until TEXT,
+      attempts INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -171,6 +178,8 @@ function migrate(db: Db): void {
       prefix TEXT NOT NULL UNIQUE,
       key_hash TEXT NOT NULL,
       scopes_json TEXT NOT NULL,
+      app_id TEXT,
+      allowed_origins_json TEXT,
       created_at TEXT NOT NULL,
       last_used_at TEXT,
       revoked_at TEXT
@@ -188,7 +197,16 @@ function migrate(db: Db): void {
   ensureColumn(db, "ui_elements", "state_reason", "TEXT");
   ensureColumn(db, "ui_elements", "discovered_by", "TEXT NOT NULL DEFAULT 'route_scan'");
   ensureColumn(db, "ui_elements", "fingerprint", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "ui_map_versions", "scan_config_json", "TEXT");
+  ensureColumn(db, "ui_map_versions", "locked_by", "TEXT");
+  ensureColumn(db, "ui_map_versions", "locked_until", "TEXT");
+  ensureColumn(db, "ui_map_versions", "attempts", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn(db, "workflow_jobs", "provider_raw_output_json", "TEXT");
+  ensureColumn(db, "workflow_jobs", "locked_by", "TEXT");
+  ensureColumn(db, "workflow_jobs", "locked_until", "TEXT");
+  ensureColumn(db, "workflow_jobs", "attempts", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "api_keys", "app_id", "TEXT");
+  ensureColumn(db, "api_keys", "allowed_origins_json", "TEXT");
 
   db.exec("CREATE INDEX IF NOT EXISTS idx_ui_elements_fingerprint ON ui_elements(ui_map_version_id, fingerprint);");
 }

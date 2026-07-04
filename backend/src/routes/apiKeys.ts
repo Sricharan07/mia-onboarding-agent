@@ -8,7 +8,9 @@ import { requireApiKeyScope } from "./auth.js";
 
 const apiKeyInputSchema = z.object({
   name: z.string().min(1),
-  scopes: z.array(z.enum(apiKeyScopes)).min(1)
+  scopes: z.array(z.enum(apiKeyScopes)).min(1),
+  appId: z.string().trim().min(1).optional(),
+  allowedOrigins: z.array(z.string().trim().min(1)).optional()
 });
 
 export async function registerApiKeyRoutes(app: FastifyInstance, dependencies: AppDependencies): Promise<void> {

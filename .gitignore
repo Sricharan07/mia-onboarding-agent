@@ -11,8 +11,8 @@ build/
 coverage/
 data/sqlite/
 data/uploads/
-data/tts/
 backend/data/
+*.tsbuildinfo
 
 *.log
 npm-debug.log*

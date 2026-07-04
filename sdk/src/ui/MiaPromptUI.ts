@@ -7,9 +7,18 @@ export class MiaPromptUI {
     this.mount();
   }
 
-  ask(prompt: string, inputType = "text", choices?: string[]): Promise<string> {
+  ask(prompt: string, inputType = "text", choices?: string[], signal?: AbortSignal): Promise<string> {
     this.open(prompt);
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
+      const abort = () => {
+        this.clear();
+        reject(new Error("Workflow cancelled."));
+      };
+      if (signal?.aborted) {
+        abort();
+        return;
+      }
+      signal?.addEventListener("abort", abort, { once: true });
       const form = document.createElement("form");
       form.style.cssText = "display:flex;gap:10px;margin-top:14px";
       const input = choices ? document.createElement("select") : document.createElement("input");
@@ -32,6 +41,7 @@ export class MiaPromptUI {
       form.onsubmit = (event) => {
         event.preventDefault();
         const value = (input as HTMLInputElement | HTMLSelectElement).value;
+        signal?.removeEventListener("abort", abort);
         this.clear();
         resolve(value);
       };
@@ -40,9 +50,18 @@ export class MiaPromptUI {
     });
   }
 
-  confirm(message: string, confirmLabel = "Confirm", cancelLabel = "Cancel"): Promise<boolean> {
+  confirm(message: string, confirmLabel = "Confirm", cancelLabel = "Cancel", signal?: AbortSignal): Promise<boolean> {
     this.open(message);
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
+      const abort = () => {
+        this.clear();
+        reject(new Error("Workflow cancelled."));
+      };
+      if (signal?.aborted) {
+        abort();
+        return;
+      }
+      signal?.addEventListener("abort", abort, { once: true });
       const row = document.createElement("div");
       row.style.cssText = "display:flex;justify-content:flex-end;gap:10px;margin-top:14px";
       const cancel = document.createElement("button");
@@ -54,10 +73,12 @@ export class MiaPromptUI {
       cancel.style.cssText = buttonCss("#475569");
       confirm.style.cssText = buttonCss("#2563eb");
       cancel.onclick = () => {
+        signal?.removeEventListener("abort", abort);
         this.clear();
         resolve(false);
       };
       confirm.onclick = () => {
+        signal?.removeEventListener("abort", abort);
         this.clear();
         resolve(true);
       };

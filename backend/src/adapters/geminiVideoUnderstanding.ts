@@ -18,7 +18,8 @@ export class GeminiVideoUnderstandingAdapter implements VideoUnderstandingAdapte
     const result = await this.gateway.analyzeImagesOrVideo<unknown>({
       videoPath: input.videoPath,
       model: this.config.GEMINI_VISION_MODEL ?? this.config.GEMINI_TEXT_MODEL,
-      prompt
+      prompt,
+      logContext: { appId: input.appContext.appName, purpose: "workflow_video_analysis" }
     });
 
     const parsed = extractedActionTimelineSchema.safeParse(result.data);

@@ -37,7 +37,6 @@ const envSchema = z.object({
   OPENAI_EMBEDDING_MODEL: z.string().default("text-embedding-3-small"),
   OPENAI_EMBEDDING_DIMENSIONS: z.coerce.number().int().positive().default(1536),
   SEMANTIC_INDEX_DIR: z.string().default("./data/lancedb"),
-  RUNTIME_LLM_MODEL: z.string().optional(),
   UI_SCAN_AUTH_MODE: z.enum(["none", "login_form"]).default("none"),
   UI_SCAN_LOGIN_URL: z.string().optional(),
   UI_SCAN_USERNAME: z.string().optional(),

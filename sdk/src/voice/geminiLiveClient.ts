@@ -13,6 +13,7 @@ type GeminiLiveHandlers = {
   context: SDKRuntimeContext;
   enableScreenShare: boolean;
   getContext: () => SDKRuntimeContext;
+  redactScreenFrame?: (canvas: HTMLCanvasElement, context: CanvasRenderingContext2D) => void;
   onEvent: (event: GeminiLiveEvent) => void;
   onInputLevel?: (level: number) => void;
   onStage?: (stage: string) => void;
@@ -72,21 +73,28 @@ export class GeminiLiveClient {
       input.onEvent({ type: "ended", status: "ended" });
     };
 
-    await withTimeout(waitForSocketOpen(socket), CONNECT_TIMEOUT_MS, "Gemini Live WebSocket connection timed out.");
-    this.connected = true;
-    this.sendSetup(token.model, input);
-    await withTimeout(new Promise<void>((resolve, reject) => {
-      this.setupResolve = resolve;
-      this.setupReject = reject;
-    }), CONNECT_TIMEOUT_MS, "Gemini Live setup timed out.");
+    try {
+      await withTimeout(waitForSocketOpen(socket), CONNECT_TIMEOUT_MS, "Gemini Live WebSocket connection timed out.");
+      this.connected = true;
+      this.sendSetup(token.model, input);
+      await withTimeout(new Promise<void>((resolve, reject) => {
+        this.setupResolve = resolve;
+        this.setupReject = reject;
+      }), CONNECT_TIMEOUT_MS, "Gemini Live setup timed out.");
+      this.clearSetupHandlers();
 
-    input.onStage?.("Requesting microphone permission...");
-    await this.startMicrophone(input);
-    if (input.enableScreenShare) {
-      await this.startScreenShare(input);
+      input.onStage?.("Requesting microphone permission...");
+      await this.startMicrophone(input);
+      if (input.enableScreenShare) {
+        await this.startScreenShare(input);
+      }
+      input.onStage?.("Listening");
+      input.onEvent({ type: "listening", status: "listening" });
+    } catch (error) {
+      this.clearSetupHandlers();
+      await this.disconnect();
+      throw error;
     }
-    input.onStage?.("Listening");
-    input.onEvent({ type: "listening", status: "listening" });
   }
 
   sendText(text: string): void {
@@ -132,7 +140,7 @@ export class GeminiLiveClient {
         tools: [{
           functionDeclarations: [{
             name: "resolve_mia_request",
-            description: "Resolve a user request against Mia's product workflow runtime. Use this for onboarding, navigation, product guidance, and task execution requests.",
+            description: "Resolve saved workflow and control requests against Mia's runtime. Use this when the user wants to start, cancel, pause, or resume an in-app task. Answer general screen questions directly from live context.",
             parameters: {
               type: "OBJECT",
               properties: {
@@ -264,6 +272,7 @@ export class GeminiLiveClient {
     const context = this.screenCanvas.getContext("2d");
     if (!context) return;
     context.drawImage(this.screenVideo, 0, 0, width, height);
+    this.handlers?.redactScreenFrame?.(this.screenCanvas, context);
     const dataUrl = this.screenCanvas.toDataURL("image/jpeg", 0.68);
     const base64 = dataUrl.split(",", 2)[1];
     if (!base64) return;
@@ -439,13 +448,18 @@ export class GeminiLiveClient {
   private emitError(error: Error): void {
     this.handlers?.onEvent({ type: "error", message: error.message });
   }
+
+  private clearSetupHandlers(): void {
+    this.setupResolve = undefined;
+    this.setupReject = undefined;
+  }
 }
 
 function buildSystemInstruction(context: SDKRuntimeContext): string {
   return [
     "You are Mia, an in-product onboarding and support guide embedded in a customer's web app.",
     "Use the live screen frames and page context to answer questions about the current product screen.",
-    "When the user wants to perform an in-app task, navigate, fill a form, or start onboarding, call resolve_mia_request.",
+    "When the user wants to perform a saved in-app task, navigate through a saved workflow, fill a form through a saved workflow, or cancel/pause/resume workflow execution, call resolve_mia_request.",
     "Do not say an action is complete until the tool response confirms it.",
     "Keep spoken responses short and clear.",
     `Current page: ${context.pageTitle ?? "Untitled"} at route ${context.currentRoute}.`
@@ -459,6 +473,13 @@ function toolResponseForResult(result: ResolveResponse): Record<string, unknown>
       message: result.message,
       workflowId: result.workflow.workflowId,
       workflowName: result.workflow.name
+    };
+  }
+  if (result.type === "control") {
+    return {
+      resultType: result.type,
+      action: result.action,
+      message: result.message
     };
   }
   return {

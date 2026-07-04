@@ -244,6 +244,8 @@ export type ApiKeyRecord = {
   name: string;
   prefix: string;
   scopes: ApiKeyScope[];
+  appId: string | null;
+  allowedOrigins: string[];
   createdAt: string;
   lastUsedAt: string | null;
   revokedAt: string | null;
@@ -275,8 +277,16 @@ export type UsageTimeseriesPoint = {
 
 type Items<T> = { items: T[] };
 
+export type BackendApiCredentials = {
+  apiKey?: string;
+  bootstrapToken?: string;
+};
+
 export class BackendApi {
-  constructor(private readonly baseUrl: string) {}
+  constructor(
+    private readonly baseUrl: string,
+    private readonly credentials: BackendApiCredentials = {}
+  ) {}
 
   health(): Promise<BackendHealth> {
     return this.request("/api/v1/health");
@@ -422,7 +432,7 @@ export class BackendApi {
     return this.request("/api/v1/api-keys");
   }
 
-  createApiKey(input: { name: string; scopes: ApiKeyScope[] }): Promise<CreatedApiKey> {
+  createApiKey(input: { name: string; scopes: ApiKeyScope[]; appId?: string; allowedOrigins?: string[] }): Promise<CreatedApiKey> {
     return this.request("/api/v1/api-keys", { method: "POST", body: input });
   }
 
@@ -433,6 +443,7 @@ export class BackendApi {
   private async request<T>(path: string, init: { method?: string; body?: unknown; formData?: FormData } = {}): Promise<T> {
     const headers = new Headers();
     let body: BodyInit | undefined;
+    const method = init.method ?? "GET";
     if (init.formData) {
       body = init.formData;
     } else if (init.body !== undefined) {
@@ -440,8 +451,14 @@ export class BackendApi {
       body = JSON.stringify(init.body);
     }
 
+    if (this.credentials.apiKey) {
+      headers.set("authorization", `Bearer ${this.credentials.apiKey}`);
+    } else if (this.credentials.bootstrapToken && method === "POST" && path === "/api/v1/api-keys") {
+      headers.set("x-bootstrap-admin-token", this.credentials.bootstrapToken);
+    }
+
     const response = await fetch(`${this.baseUrl.replace(/\/+$/, "")}${path}`, {
-      method: init.method ?? "GET",
+      method,
       headers,
       body
     });

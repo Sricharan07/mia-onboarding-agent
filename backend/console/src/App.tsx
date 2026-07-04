@@ -26,11 +26,15 @@ import { UploadWorkflowPage, WorkflowJobsPage, WorkflowReviewPage, WorkflowsPage
 import type { LoadState, RouteId } from "./types";
 
 const defaultBackendUrl = window.localStorage.getItem("mia-console-backend-url") ?? "http://localhost:4000";
+const defaultAdminApiKey = window.localStorage.getItem("mia-console-admin-api-key") ?? "";
+const defaultBootstrapToken = window.localStorage.getItem("mia-console-bootstrap-token") ?? "";
 
 function App() {
-  const [authenticated, setAuthenticated] = useState(() => window.localStorage.getItem("mia-console-auth") === "true");
+  const [authenticated, setAuthenticated] = useState(() => Boolean(defaultAdminApiKey || defaultBootstrapToken));
   const [activeRoute, setActiveRoute] = useState<RouteId>("overview");
   const [backendUrl, setBackendUrl] = useState(defaultBackendUrl);
+  const [adminApiKey, setAdminApiKey] = useState(defaultAdminApiKey);
+  const [bootstrapToken, setBootstrapToken] = useState(defaultBootstrapToken);
   const [health, setHealth] = useState<BackendHealth | null>(null);
   const [readiness, setReadiness] = useState<SystemReadiness | null>(null);
   const [loadState, setLoadState] = useState<LoadState>("idle");
@@ -48,7 +52,7 @@ function App() {
   const [selectedWorkflow, setSelectedWorkflow] = useState<Workflow | null>(null);
   const [logs, setLogs] = useState<ExecutionLog[]>([]);
 
-  const api = useMemo(() => new BackendApi(backendUrl), [backendUrl]);
+  const api = useMemo(() => new BackendApi(backendUrl, { apiKey: adminApiKey, bootstrapToken }), [backendUrl, adminApiKey, bootstrapToken]);
   const selectedApp = apps.find((app) => app.id === selectedAppId) ?? null;
   const latestUiMap = uiMapVersions[0] ?? null;
   const selectedPage = pages.find((page) => page.id === selectedPageId) ?? pages[0] ?? null;
@@ -133,10 +137,15 @@ function App() {
 
   useEffect(() => {
     if (authenticated) {
+      if (!adminApiKey) {
+        setActiveRoute("api-keys");
+        setLoadState("ready");
+        return;
+      }
       void refresh();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authenticated, api]);
+  }, [authenticated, api, adminApiKey]);
 
   useEffect(() => {
     const hasActiveWorkflowJob = jobs.some((job) => ["uploaded", "analyzing", "mapped"].includes(job.status));
@@ -167,18 +176,35 @@ function App() {
     }
   };
 
-  const login = () => {
-    window.localStorage.setItem("mia-console-auth", "true");
+  const login = (input: { backendUrl: string; adminApiKey?: string; bootstrapToken?: string }) => {
+    const nextAdminApiKey = input.adminApiKey?.trim() ?? "";
+    const nextBootstrapToken = input.bootstrapToken?.trim() ?? "";
+    window.localStorage.setItem("mia-console-backend-url", input.backendUrl);
+    setBackendUrl(input.backendUrl);
+    setAdminApiKey(nextAdminApiKey);
+    setBootstrapToken(nextBootstrapToken);
+    if (nextAdminApiKey) {
+      window.localStorage.setItem("mia-console-admin-api-key", nextAdminApiKey);
+      window.localStorage.removeItem("mia-console-bootstrap-token");
+      setBootstrapToken("");
+    } else {
+      window.localStorage.removeItem("mia-console-admin-api-key");
+      window.localStorage.setItem("mia-console-bootstrap-token", nextBootstrapToken);
+      setActiveRoute("api-keys");
+    }
     setAuthenticated(true);
   };
 
   const logout = () => {
-    window.localStorage.removeItem("mia-console-auth");
+    window.localStorage.removeItem("mia-console-admin-api-key");
+    window.localStorage.removeItem("mia-console-bootstrap-token");
     setAuthenticated(false);
+    setAdminApiKey("");
+    setBootstrapToken("");
   };
 
   if (!authenticated) {
-    return <LoginPage onLogin={login} />;
+    return <LoginPage backendUrl={backendUrl} onLogin={login} />;
   }
 
   return (
@@ -356,7 +382,22 @@ function App() {
         )}
         {activeRoute === "logs" && <LogsPage logs={logs} />}
         {activeRoute === "usage" && <UsagePage app={selectedApp} api={api} showToast={showToast} />}
-        {activeRoute === "api-keys" && <ApiKeysPage api={api} showToast={showToast} />}
+        {activeRoute === "api-keys" && (
+          <ApiKeysPage
+            api={api}
+            apps={apps}
+            selectedAppId={selectedAppId}
+            hasAdminKey={Boolean(adminApiKey)}
+            onAdminKeyCreated={(key) => {
+              window.localStorage.setItem("mia-console-admin-api-key", key);
+              window.localStorage.removeItem("mia-console-bootstrap-token");
+              setAdminApiKey(key);
+              setBootstrapToken("");
+              showToast("Admin key saved for this browser");
+            }}
+            showToast={showToast}
+          />
+        )}
       </main>
 
       {toast && <div className="toast">{toast}</div>}

@@ -6,7 +6,7 @@ import { requireConfig } from "../config/env.js";
 import type { SemanticRecord } from "../schemas/domain.js";
 import { AppError } from "../utils/errors.js";
 import { joinUrl, requestJson } from "./http.js";
-import type { SemanticSearchAdapter, SemanticSearchInput, SemanticSearchResult } from "./interfaces.js";
+import type { AiRequestLogInput, SemanticSearchAdapter, SemanticSearchInput, SemanticSearchResult } from "./interfaces.js";
 
 const TABLE_NAME = "semantic_records";
 const EMBEDDING_BATCH_SIZE = 100;
@@ -56,7 +56,10 @@ export class LanceDbSemanticSearchAdapter implements SemanticSearchAdapter {
   private connection?: Promise<Connection>;
   private table?: Promise<Table | undefined>;
 
-  constructor(private readonly config: AppConfig) {}
+  constructor(
+    private readonly config: AppConfig,
+    private readonly logAiRequest?: (input: AiRequestLogInput) => void
+  ) {}
 
   async index(record: SemanticRecord): Promise<void> {
     await this.upsertMany([record]);
@@ -64,7 +67,10 @@ export class LanceDbSemanticSearchAdapter implements SemanticSearchAdapter {
 
   async upsertMany(records: SemanticRecord[]): Promise<void> {
     if (records.length === 0) return;
-    const embeddings = await this.embedTexts(records.map((record) => searchableText(record)));
+    const embeddings = await this.embedTexts(records.map((record) => searchableText(record)), {
+      appId: uniqueAppId(records.map((record) => record.appId)),
+      purpose: "semantic_index"
+    });
     const rows = records.map((record, index) => toLanceRow(record, embeddings[index]));
 
     let table = await this.getTableIfExists();
@@ -89,7 +95,10 @@ export class LanceDbSemanticSearchAdapter implements SemanticSearchAdapter {
     const table = await this.getTableIfExists();
     if (!table) return [];
 
-    const [vector] = await this.embedTexts([query]);
+    const [vector] = await this.embedTexts([query], {
+      appId: input.filters?.appId,
+      purpose: "semantic_search"
+    });
     const where = toWhereClause(input.filters);
     const limit = Math.max(input.limit ?? 10, 1);
     let search = table
@@ -117,6 +126,27 @@ export class LanceDbSemanticSearchAdapter implements SemanticSearchAdapter {
     await table.delete(where);
   }
 
+  async deleteByIds(ids: string[]): Promise<void> {
+    const uniqueIds = [...new Set(ids)].filter(Boolean);
+    if (uniqueIds.length === 0) return;
+    const table = await this.getTableIfExists();
+    if (!table) return;
+
+    for (let start = 0; start < uniqueIds.length; start += 100) {
+      const batch = uniqueIds.slice(start, start + 100);
+      await table.delete(`id IN (${batch.map(sqlString).join(", ")})`);
+    }
+  }
+
+  async listIdsByFilter(filter: Record<string, string>): Promise<string[]> {
+    const where = toWhereClause(filter);
+    if (!where) return [];
+    const table = await this.getTableIfExists();
+    if (!table) return [];
+    const rows = await table.query().select(["id"]).where(where).toArray() as Array<{ id?: unknown }>;
+    return rows.map((row) => String(row.id)).filter(Boolean);
+  }
+
   private async getConnection(): Promise<Connection> {
     if (!this.connection) {
       mkdirSync(this.config.SEMANTIC_INDEX_DIR, { recursive: true });
@@ -134,27 +164,61 @@ export class LanceDbSemanticSearchAdapter implements SemanticSearchAdapter {
     return this.table;
   }
 
-  private async embedTexts(texts: string[]): Promise<number[][]> {
+  private async embedTexts(texts: string[], context: { appId?: string; purpose: string }): Promise<number[][]> {
     requireConfig(this.config, ["OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_EMBEDDING_MODEL"], "OpenAI embeddings");
     const embeddings: number[][] = [];
 
     for (let start = 0; start < texts.length; start += EMBEDDING_BATCH_SIZE) {
       const input = texts.slice(start, start + EMBEDDING_BATCH_SIZE);
-      const response = await requestJson<OpenAIEmbeddingsResponse>({
-        url: joinUrl(this.config.OPENAI_BASE_URL, "/embeddings"),
-        headers: { authorization: `Bearer ${this.config.OPENAI_API_KEY}` },
-        body: {
-          model: this.config.OPENAI_EMBEDDING_MODEL,
-          input,
-          dimensions: this.config.OPENAI_EMBEDDING_DIMENSIONS
-        }
-      });
+      const started = Date.now();
+      try {
+        const response = await requestJson<OpenAIEmbeddingsResponse>({
+          url: joinUrl(this.config.OPENAI_BASE_URL, "/embeddings"),
+          headers: { authorization: `Bearer ${this.config.OPENAI_API_KEY}` },
+          body: {
+            model: this.config.OPENAI_EMBEDDING_MODEL,
+            input,
+            dimensions: this.config.OPENAI_EMBEDDING_DIMENSIONS
+          }
+        });
 
-      embeddings.push(...parseEmbeddingsResponse(response, input.length));
+        const parsed = parseEmbeddingsResponse(response, input.length);
+        this.writeLog(context, input.length, started, `embeddings=${parsed.length}`);
+        embeddings.push(...parsed);
+      } catch (error) {
+        this.writeLog(context, input.length, started, undefined, error);
+        throw error;
+      }
     }
 
     return embeddings;
   }
+
+  private writeLog(context: { appId?: string; purpose: string }, count: number, started: number, outputSummary?: string, error?: unknown): void {
+    try {
+      this.logAiRequest?.({
+        provider: "openai",
+        purpose: context.purpose,
+        inputSummary: `appId=${context.appId ?? "unknown"}; model=${this.config.OPENAI_EMBEDDING_MODEL}; texts=${count}; dimensions=${this.config.OPENAI_EMBEDDING_DIMENSIONS}`,
+        outputSummary,
+        latencyMs: Date.now() - started,
+        error: error ? errorMessage(error) : undefined
+      });
+    } catch {
+      // Metrics logging must not break the provider request path.
+    }
+  }
+}
+
+function uniqueAppId(appIds: string[]): string | undefined {
+  const unique = [...new Set(appIds.filter(Boolean))];
+  if (unique.length === 1) return unique[0];
+  if (unique.length > 1) return unique.join(",");
+  return undefined;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function searchableText(record: SemanticRecord): string {

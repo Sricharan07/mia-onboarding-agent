@@ -156,7 +156,13 @@ export class InteractiveUiMapScanService {
   }
 
   async closeAll(): Promise<void> {
-    await Promise.all([...this.sessions.values()].map((session) => this.closeSession(session)));
+    await Promise.all([...this.sessions.values()].map(async (session) => {
+      try {
+        this.repositories.updateUiMapVersion(session.uiMapVersionId, "failed", "Backend closed before interactive scan finished.");
+      } finally {
+        await this.closeSession(session);
+      }
+    }));
   }
 
   private getSession(sessionId: string): InteractiveSession {

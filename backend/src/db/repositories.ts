@@ -1,6 +1,6 @@
 import type { Db } from "./database.js";
 import { createId, nowIso, slugToId } from "../utils/id.js";
-import { NotFoundError } from "../utils/errors.js";
+import { AppError, NotFoundError } from "../utils/errors.js";
 import type { AppRecord, UIElementRecord, Workflow, WorkflowStep } from "../schemas/domain.js";
 
 type Row = Record<string, unknown>;
@@ -11,6 +11,8 @@ export type ApiKeyRecord = {
   name: string;
   prefix: string;
   scopes: ApiKeyScope[];
+  appId: string | null;
+  allowedOrigins: string[];
   createdAt: string;
   lastUsedAt: string | null;
   revokedAt: string | null;
@@ -38,6 +40,12 @@ export type UsageTimeseriesPoint = {
   workflowRuns: number;
   aiRequests: number;
   errors: number;
+};
+
+export type UiMapScanConfig = {
+  baseUrl: string;
+  routes: string[];
+  authMode?: string;
 };
 
 export class Repositories {
@@ -70,20 +78,57 @@ export class Repositories {
     return mapApp(row);
   }
 
-  createUiMapVersion(appId: string, source = "runtime_browser_scan"): { id: string; appId: string; version: string; status: string; createdAt: string } {
+  createUiMapVersion(appId: string, source = "runtime_browser_scan", scanConfig?: UiMapScanConfig): { id: string; appId: string; version: string; status: string; createdAt: string } {
     const now = nowIso();
     const id = createId("ui_map");
     const version = `local-${Date.now()}`;
     this.db.prepare(`
-      INSERT INTO ui_map_versions (id, app_id, version, source, status, created_at)
-      VALUES (?, ?, ?, ?, 'scanning', ?)
-    `).run(id, appId, version, source, now);
+      INSERT INTO ui_map_versions (id, app_id, version, source, status, scan_config_json, created_at)
+      VALUES (?, ?, ?, ?, 'scanning', ?, ?)
+    `).run(id, appId, version, source, scanConfig ? JSON.stringify(scanConfig) : null, now);
     return { id, appId, version, status: "scanning", createdAt: now };
   }
 
   updateUiMapVersion(id: string, status: "completed" | "failed", error?: string): void {
-    this.db.prepare("UPDATE ui_map_versions SET status = ?, completed_at = ?, error = ? WHERE id = ?")
+    this.db.prepare("UPDATE ui_map_versions SET status = ?, completed_at = ?, error = ?, locked_by = NULL, locked_until = NULL WHERE id = ?")
       .run(status, nowIso(), error ?? null, id);
+  }
+
+  getUiMapVersion(id: string): Row {
+    const row = this.db.prepare("SELECT * FROM ui_map_versions WHERE id = ?").get(id) as Row | undefined;
+    if (!row) throw new NotFoundError(`UI map version not found: ${id}`);
+    return row;
+  }
+
+  claimUiMapVersion(id: string, workerId: string, leaseUntil: string): boolean {
+    const now = nowIso();
+    const result = this.db.prepare(`
+      UPDATE ui_map_versions
+      SET locked_by = ?, locked_until = ?, attempts = attempts + 1
+      WHERE id = ?
+        AND status = 'scanning'
+        AND scan_config_json IS NOT NULL
+        AND (locked_until IS NULL OR locked_until <= ? OR locked_by = ?)
+    `).run(workerId, leaseUntil, id, now, workerId);
+    return result.changes > 0;
+  }
+
+  refreshUiMapVersionLease(id: string, workerId: string, leaseUntil: string): void {
+    this.db.prepare("UPDATE ui_map_versions SET locked_until = ? WHERE id = ? AND locked_by = ?")
+      .run(leaseUntil, id, workerId);
+  }
+
+  listUnfinishedUiMapScans(): Array<{ id: string }> {
+    const now = nowIso();
+    return this.db.prepare(`
+      SELECT id
+      FROM ui_map_versions
+      WHERE status = 'scanning'
+        AND source = 'runtime_browser_scan'
+        AND scan_config_json IS NOT NULL
+        AND (locked_until IS NULL OR locked_until <= ?)
+      ORDER BY created_at ASC
+    `).all(now) as Array<{ id: string }>;
   }
 
   listUiMapVersions(appId: string): unknown[] {
@@ -111,6 +156,15 @@ export class Repositories {
       WHERE ui_map_version_id = ? AND route = ?
       ORDER BY created_at ASC LIMIT 1
     `).get(uiMapVersionId, route) as { id: string; route: string; name: string } | undefined;
+  }
+
+  getPage(pageId: string): { id: string; appId: string; uiMapVersionId: string } {
+    const row = this.db.prepare(`
+      SELECT id, app_id as appId, ui_map_version_id as uiMapVersionId
+      FROM pages WHERE id = ?
+    `).get(pageId) as { id: string; appId: string; uiMapVersionId: string } | undefined;
+    if (!row) throw new NotFoundError(`Page not found: ${pageId}`);
+    return row;
   }
 
   listPages(uiMapVersionId: string): unknown[] {
@@ -275,6 +329,34 @@ export class Repositories {
     return row;
   }
 
+  listUnfinishedWorkflowJobs(): Array<{ id: string; status: string }> {
+    const now = nowIso();
+    return this.db.prepare(`
+      SELECT id, status
+      FROM workflow_jobs
+      WHERE status IN ('uploaded', 'analyzing', 'mapped')
+        AND (locked_until IS NULL OR locked_until <= ?)
+      ORDER BY created_at ASC
+    `).all(now) as Array<{ id: string; status: string }>;
+  }
+
+  claimWorkflowJob(jobId: string, workerId: string, leaseUntil: string): boolean {
+    const now = nowIso();
+    const result = this.db.prepare(`
+      UPDATE workflow_jobs
+      SET status = 'analyzing', error = NULL, locked_by = ?, locked_until = ?, attempts = attempts + 1, updated_at = ?
+      WHERE id = ?
+        AND status IN ('uploaded', 'analyzing', 'mapped', 'failed')
+        AND (locked_until IS NULL OR locked_until <= ? OR locked_by = ?)
+    `).run(workerId, leaseUntil, now, jobId, now, workerId);
+    return result.changes > 0;
+  }
+
+  refreshWorkflowJobLease(jobId: string, workerId: string, leaseUntil: string): void {
+    this.db.prepare("UPDATE workflow_jobs SET locked_until = ?, updated_at = ? WHERE id = ? AND locked_by = ?")
+      .run(leaseUntil, nowIso(), jobId, workerId);
+  }
+
   listWorkflowJobs(appId: string): Array<{
     id: string;
     appId: string;
@@ -328,7 +410,9 @@ export class Repositories {
       UPDATE workflow_jobs
       SET status = ?, provider_raw_output_json = COALESCE(?, provider_raw_output_json),
           extracted_action_timeline_json = COALESCE(?, extracted_action_timeline_json),
-          error = ?, updated_at = ?
+          error = ?, updated_at = ?,
+          locked_by = CASE WHEN ? IN ('needs_review', 'failed', 'approved', 'published') THEN NULL ELSE locked_by END,
+          locked_until = CASE WHEN ? IN ('needs_review', 'failed', 'approved', 'published') THEN NULL ELSE locked_until END
       WHERE id = ?
     `).run(
       patch.status,
@@ -336,11 +420,18 @@ export class Repositories {
       patch.timeline === undefined ? null : JSON.stringify(patch.timeline),
       patch.error ?? null,
       nowIso(),
+      patch.status,
+      patch.status,
       jobId
     );
   }
 
   saveWorkflow(workflow: Workflow): void {
+    const existing = this.db.prepare("SELECT app_id FROM workflows WHERE workflow_id = ?").get(workflow.workflowId) as { app_id: string } | undefined;
+    if (existing && existing.app_id !== workflow.appId) {
+      throw new AppError("WORKFLOW_ID_APP_MISMATCH", `Workflow id ${workflow.workflowId} already belongs to another app.`, 409);
+    }
+
     this.db.prepare(`
       INSERT INTO workflows (id, workflow_id, app_id, name, description, status, version, workflow_json, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -458,6 +549,15 @@ export class Repositories {
     }
   }
 
+  getRuntimeSession(id: string): { id: string; appId: string; workflowId: string; status: string } {
+    const row = this.db.prepare(`
+      SELECT id, app_id as appId, workflow_id as workflowId, status
+      FROM runtime_sessions WHERE id = ?
+    `).get(id) as { id: string; appId: string; workflowId: string; status: string } | undefined;
+    if (!row) throw new NotFoundError(`Runtime session not found: ${id}`);
+    return row;
+  }
+
   insertExecutionLog(input: { appId?: string; sessionId?: string; workflowId?: string; stepId?: string; eventType: string; payload: unknown }): void {
     this.db.prepare(`
       INSERT INTO execution_logs (id, app_id, session_id, workflow_id, step_id, event_type, payload_json, created_at)
@@ -488,26 +588,26 @@ export class Repositories {
     `).run(createId("ai_log"), input.provider, input.purpose, input.inputSummary, input.outputSummary ?? null, input.latencyMs ?? null, input.error ?? null, nowIso());
   }
 
-  createApiKey(input: { name: string; prefix: string; keyHash: string; scopes: ApiKeyScope[] }): ApiKeyRecord {
+  createApiKey(input: { name: string; prefix: string; keyHash: string; scopes: ApiKeyScope[]; appId?: string | null; allowedOrigins?: string[] }): ApiKeyRecord {
     const now = nowIso();
     const id = createId("api_key");
     this.db.prepare(`
-      INSERT INTO api_keys (id, name, prefix, key_hash, scopes_json, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(id, input.name, input.prefix, input.keyHash, JSON.stringify(input.scopes), now);
+      INSERT INTO api_keys (id, name, prefix, key_hash, scopes_json, app_id, allowed_origins_json, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, input.name, input.prefix, input.keyHash, JSON.stringify(input.scopes), input.appId ?? null, JSON.stringify(input.allowedOrigins ?? []), now);
     return this.getApiKeyById(id);
   }
 
   listApiKeys(): ApiKeyRecord[] {
     return (this.db.prepare(`
-      SELECT id, name, prefix, scopes_json, created_at, last_used_at, revoked_at
+      SELECT id, name, prefix, scopes_json, app_id, allowed_origins_json, created_at, last_used_at, revoked_at
       FROM api_keys ORDER BY created_at DESC
     `).all() as Row[]).map(mapApiKey);
   }
 
   getApiKeyById(id: string): ApiKeyRecord {
     const row = this.db.prepare(`
-      SELECT id, name, prefix, scopes_json, created_at, last_used_at, revoked_at
+      SELECT id, name, prefix, scopes_json, app_id, allowed_origins_json, created_at, last_used_at, revoked_at
       FROM api_keys WHERE id = ?
     `).get(id) as Row | undefined;
     if (!row) throw new NotFoundError(`API key not found: ${id}`);
@@ -516,7 +616,7 @@ export class Repositories {
 
   getApiKeySecretByPrefix(prefix: string): ApiKeySecretRecord | undefined {
     const row = this.db.prepare(`
-      SELECT id, name, prefix, key_hash, scopes_json, created_at, last_used_at, revoked_at
+      SELECT id, name, prefix, key_hash, scopes_json, app_id, allowed_origins_json, created_at, last_used_at, revoked_at
       FROM api_keys WHERE prefix = ? LIMIT 1
     `).get(prefix) as Row | undefined;
     return row ? mapApiKeySecret(row) : undefined;
@@ -631,6 +731,8 @@ function mapApiKey(row: Row): ApiKeyRecord {
     name: String(row.name),
     prefix: String(row.prefix),
     scopes: JSON.parse(String(row.scopes_json)) as ApiKeyScope[],
+    appId: row.app_id ? String(row.app_id) : null,
+    allowedOrigins: parseStringArray(row.allowed_origins_json),
     createdAt: String(row.created_at),
     lastUsedAt: row.last_used_at ? String(row.last_used_at) : null,
     revokedAt: row.revoked_at ? String(row.revoked_at) : null
@@ -642,6 +744,16 @@ function mapApiKeySecret(row: Row): ApiKeySecretRecord {
     ...mapApiKey(row),
     keyHash: String(row.key_hash)
   };
+}
+
+function parseStringArray(value: unknown): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(String(value));
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+  } catch {
+    return [];
+  }
 }
 
 function buildLogWhere(table: "execution_logs", filters: { appId?: string; from?: string; to?: string }): { where: string; params: unknown[] } {

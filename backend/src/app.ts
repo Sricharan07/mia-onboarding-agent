@@ -40,6 +40,8 @@ export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
   });
   registerErrorHandler(app);
   await registerRoutes(app, dependencies);
+  dependencies.services.uiMap.resumeUnfinishedScans((error) => app.log.error(error));
+  dependencies.services.videoProcessing.resumeUnfinishedJobs((error) => app.log.error(error));
   return app;
 }
 
@@ -51,8 +53,9 @@ function corsOrigin(value: string): true | string[] {
 function createDependencies(config: AppConfig) {
   const db = createDatabase(config);
   const repositories = new Repositories(db);
-  const gateway = new GeminiModelGatewayAdapter(config);
-  const semanticSearch = new LanceDbSemanticSearchAdapter(config);
+  const logAiRequest = repositories.insertAiLog.bind(repositories);
+  const gateway = new GeminiModelGatewayAdapter(config, logAiRequest);
+  const semanticSearch = new LanceDbSemanticSearchAdapter(config, logAiRequest);
   const videoUnderstanding = new GeminiVideoUnderstandingAdapter(config, gateway);
   const storage = new LocalFileStorageAdapter();
   const compiler = new WorkflowCompiler(repositories, semanticSearch);

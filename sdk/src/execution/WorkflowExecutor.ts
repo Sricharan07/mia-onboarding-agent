@@ -7,6 +7,9 @@ import { findElement } from "./elementResolution.js";
 export class WorkflowExecutor {
   private values: Record<string, string> = {};
   private cancelled = false;
+  private paused = false;
+  private abortController = new AbortController();
+  private resumeWaiter?: () => void;
   private runtimeSessionId?: string;
 
   constructor(private readonly options: {
@@ -15,7 +18,8 @@ export class WorkflowExecutor {
     cursor: MiaShadowCursor;
     promptUi: MiaPromptUI;
     clientSessionId: string;
-    requestUserInput?: (input: { prompt: string; inputType?: string; choices?: string[] }) => Promise<string>;
+    navigate?: (route: string) => void | Promise<void>;
+    requestUserInput?: (input: { prompt: string; inputType?: string; choices?: string[]; signal?: AbortSignal }) => Promise<string>;
     onWorkflowEvent?: (event: { type: string; workflowId?: string; stepId?: string; message?: string }) => void;
   }) {}
 
@@ -31,15 +35,25 @@ export class WorkflowExecutor {
       clientSessionId: this.options.clientSessionId
     });
     this.runtimeSessionId = session.runtimeSessionId;
+    if (!this.cancelled) {
+      await this.options.backendClient.updateWorkflowSession({
+        runtimeSessionId: this.runtimeSessionId,
+        status: "running",
+        values: this.values
+      });
+    }
 
     for (const step of this.options.workflow.steps) {
       if (this.cancelled) break;
+      await this.waitWhilePaused();
+      if (this.cancelled) break;
       await this.runStep(step);
     }
-    this.options.cursor.setBubbleText("Workflow complete");
+
+    this.options.cursor.setBubbleText(this.cancelled ? "Workflow cancelled" : "Workflow complete");
     this.options.cursor.startBubbleFade();
     this.options.cursor.returnToCursor();
-    this.options.onWorkflowEvent?.({ type: "workflow_completed", workflowId: this.options.workflow.workflowId });
+    this.options.onWorkflowEvent?.({ type: this.cancelled ? "workflow_cancelled" : "workflow_completed", workflowId: this.options.workflow.workflowId });
     await this.options.backendClient.updateWorkflowSession({
       runtimeSessionId: this.runtimeSessionId,
       status: this.cancelled ? "cancelled" : "completed",
@@ -47,16 +61,33 @@ export class WorkflowExecutor {
     });
   }
 
-  pause(): void {
-    this.cancelled = true;
+  async pause(): Promise<void> {
+    if (this.cancelled || this.paused) return;
+    this.paused = true;
+    this.options.cursor.setBubbleText("Workflow paused");
+    await this.updateRuntimeStatus("paused");
   }
 
-  resume(): void {
-    this.cancelled = false;
+  async resume(): Promise<void> {
+    if (this.cancelled) return;
+    this.paused = false;
+    const resume = this.resumeWaiter;
+    this.resumeWaiter = undefined;
+    resume?.();
+    this.options.cursor.setBubbleText("Resuming workflow");
+    await this.updateRuntimeStatus("running");
   }
 
-  cancel(): void {
+  async cancel(): Promise<void> {
     this.cancelled = true;
+    this.paused = false;
+    this.abortController.abort();
+    const resume = this.resumeWaiter;
+    this.resumeWaiter = undefined;
+    resume?.();
+    this.options.cursor.cancelNavigation();
+    this.options.cursor.setBubbleText("Workflow cancelled");
+    await this.updateRuntimeStatus("cancelled");
   }
 
   private async runStep(step: WorkflowStep): Promise<void> {
@@ -67,6 +98,10 @@ export class WorkflowExecutor {
       await this.log("step_completed", step);
       this.options.onWorkflowEvent?.({ type: "step_completed", workflowId: this.options.workflow.workflowId, stepId: step.id });
     } catch (error) {
+      if (this.cancelled) {
+        await this.log("step_cancelled", step);
+        return;
+      }
       const message = error instanceof Error ? error.message : String(error);
       this.options.cursor.setState("error");
       this.options.cursor.setBubbleText(message);
@@ -94,8 +129,7 @@ export class WorkflowExecutor {
     if (step.type === "navigate") {
       this.options.cursor.setState("guiding");
       this.options.cursor.setBubbleText(step.label ?? `Navigate to ${step.route}`);
-      window.history.pushState({}, "", step.route);
-      window.dispatchEvent(new PopStateEvent("popstate"));
+      await this.navigate(step.route);
       return;
     }
 
@@ -103,15 +137,15 @@ export class WorkflowExecutor {
       this.options.cursor.setState("guiding");
       this.options.cursor.setBubbleText(step.label ?? step.prompt);
       this.values[step.field] = await (this.options.requestUserInput
-        ? this.options.requestUserInput({ prompt: step.prompt, inputType: step.inputType, choices: step.choices })
-        : this.options.promptUi.ask(step.prompt, step.inputType, step.choices));
+        ? this.options.requestUserInput({ prompt: step.prompt, inputType: step.inputType, choices: step.choices, signal: this.abortController.signal })
+        : this.options.promptUi.ask(step.prompt, step.inputType, step.choices, this.abortController.signal));
       return;
     }
 
     if (step.type === "confirm") {
       this.options.cursor.setState("guiding");
       this.options.cursor.setBubbleText(step.label ?? step.message);
-      const approved = await this.options.promptUi.confirm(step.message, step.confirmLabel, step.cancelLabel);
+      const approved = await this.options.promptUi.confirm(step.message, step.confirmLabel, step.cancelLabel, this.abortController.signal);
       if (!approved) throw new Error("User denied confirmation.");
       return;
     }
@@ -126,21 +160,21 @@ export class WorkflowExecutor {
     this.options.cursor.setState(step.type === "wait_for_element" ? "thinking" : "guiding");
     this.options.cursor.setBubbleText(step.label ?? step.target.label ?? step.target.elementId);
     const element = step.type === "wait_for_element"
-      ? await waitForElement(step.target.selector, step.target.fallbackSelectors, step.timeoutMs)
+      ? await waitForElement(step.target.selector, step.target.fallbackSelectors, step.timeoutMs, this.abortController.signal)
       : findElement(step.target.selector, step.target.fallbackSelectors);
     if (!element) throw new Error(`Target element not found: ${step.target.elementId}`);
     element.scrollIntoView({ behavior: "smooth", block: "center" });
-    await wait(260);
+    await wait(260, this.abortController.signal);
     const center = getElementCenter(element);
     this.options.cursor.navigateTo(center.x, center.y, step.label ?? step.target.label ?? step.target.elementId);
-    await wait(560);
+    await wait(560, this.abortController.signal);
     const cleanup = highlight(element);
 
     try {
       if ("executionPolicy" in step && step.executionPolicy === "requires_confirmation") {
         this.options.cursor.setState("guiding");
         this.options.cursor.setBubbleText(`Should I continue with ${step.target.label ?? step.target.elementId}?`);
-        const approved = await this.options.promptUi.confirm(`Should I continue with ${step.target.label ?? step.target.elementId}?`);
+        const approved = await this.options.promptUi.confirm(`Should I continue with ${step.target.label ?? step.target.elementId}?`, undefined, undefined, this.abortController.signal);
         if (!approved) throw new Error("User denied confirmation.");
       }
 
@@ -148,7 +182,7 @@ export class WorkflowExecutor {
         const message = `Please complete ${step.target.label ?? step.target.elementId}.`;
         this.options.cursor.setState("guiding");
         this.options.cursor.setBubbleText(message);
-        const completed = await this.options.promptUi.confirm(message, "I completed it", "Cancel");
+        const completed = await this.options.promptUi.confirm(message, "I completed it", "Cancel", this.abortController.signal);
         if (!completed) throw new Error("User cancelled manual step.");
         return;
       }
@@ -178,13 +212,48 @@ export class WorkflowExecutor {
   }
 
   private async log(eventType: string, step: WorkflowStep, payload: Record<string, unknown> = {}): Promise<void> {
-    await this.options.backendClient.logExecution({
-      sessionId: this.options.clientSessionId,
-      workflowId: this.options.workflow.workflowId,
-      stepId: step.id,
-      eventType,
-      payload: { type: step.type, ...payload }
+    try {
+      await this.options.backendClient.logExecution({
+        sessionId: this.options.clientSessionId,
+        workflowId: this.options.workflow.workflowId,
+        stepId: step.id,
+        eventType,
+        payload: { type: step.type, ...payload }
+      });
+    } catch (error) {
+      this.options.onWorkflowEvent?.({
+        type: "workflow_log_failed",
+        workflowId: this.options.workflow.workflowId,
+        stepId: step.id,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  private async waitWhilePaused(): Promise<void> {
+    while (this.paused && !this.cancelled) {
+      await new Promise<void>((resolve) => {
+        this.resumeWaiter = resolve;
+      });
+    }
+  }
+
+  private async updateRuntimeStatus(status: "running" | "paused" | "cancelled"): Promise<void> {
+    if (!this.runtimeSessionId) return;
+    await this.options.backendClient.updateWorkflowSession({
+      runtimeSessionId: this.runtimeSessionId,
+      status,
+      values: this.values
     });
+  }
+
+  private async navigate(route: string): Promise<void> {
+    if (this.options.navigate) {
+      await this.options.navigate(route);
+      return;
+    }
+    window.history.pushState({}, "", route);
+    window.dispatchEvent(new PopStateEvent("popstate"));
   }
 }
 
@@ -208,8 +277,23 @@ function highlight(element: Element): () => void {
   };
 }
 
-function wait(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
+function wait(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let timeout: number | undefined;
+    const abort = () => {
+      if (timeout !== undefined) window.clearTimeout(timeout);
+      reject(new Error("Workflow cancelled."));
+    };
+    if (signal?.aborted) {
+      abort();
+      return;
+    }
+    timeout = window.setTimeout(() => {
+      signal?.removeEventListener("abort", abort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", abort, { once: true });
+  });
 }
 
 function setNativeValue(element: Element, value: string): void {
@@ -230,13 +314,13 @@ function setNativeValue(element: Element, value: string): void {
   input.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
-async function waitForElement(selector: string, fallbackSelectors: string[] | undefined, timeoutMs: number): Promise<Element | null> {
+async function waitForElement(selector: string, fallbackSelectors: string[] | undefined, timeoutMs: number, signal?: AbortSignal): Promise<Element | null> {
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < timeoutMs) {
     const element = findElement(selector, fallbackSelectors);
     if (element) return element;
-    await new Promise((resolve) => window.setTimeout(resolve, 100));
+    await wait(100, signal);
   }
 
   return null;

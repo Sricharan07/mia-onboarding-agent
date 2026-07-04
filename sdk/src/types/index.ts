@@ -10,6 +10,12 @@ export type SDKConfig = {
   apiKey?: string;
   enableVoice: boolean;
   enableScreenShare?: boolean;
+  navigate?: (route: string) => void | Promise<void>;
+  privacy?: {
+    redactText?: boolean;
+    redactedSelectors?: string[];
+    redactScreenFrame?: (canvas: HTMLCanvasElement, context: CanvasRenderingContext2D) => void;
+  };
   user?: {
     id?: string;
     email?: string;
@@ -84,6 +90,7 @@ export type Workflow = {
 
 export type ResolveResponse =
   | { type: "workflow"; workflow: Workflow; message: string }
+  | { type: "control"; action: "cancel" | "pause" | "resume"; message: string }
   | { type: "answer"; message: string }
   | { type: "no_match"; message: string };
 

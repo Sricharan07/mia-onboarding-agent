@@ -16,8 +16,10 @@ export class SemanticIndexService {
       ...workflows.map(workflowToSemanticRecord)
     ];
 
-    await this.semanticSearch.deleteByFilter({ appId });
+    const existingIds = await this.semanticSearch.listIdsByFilter({ appId });
+    const nextIds = new Set(records.map((record) => record.id));
     await this.semanticSearch.upsertMany(records);
+    await this.semanticSearch.deleteByIds(existingIds.filter((id) => !nextIds.has(id)));
 
     return {
       appId,

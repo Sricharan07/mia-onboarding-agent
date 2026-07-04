@@ -2,15 +2,9 @@ import type { Repositories } from "../../db/repositories.js";
 import type { ModelGatewayAdapter, SemanticSearchAdapter } from "../../adapters/interfaces.js";
 import type { SDKRuntimeContext, Workflow } from "../../schemas/domain.js";
 import { AppError, NotFoundError } from "../../utils/errors.js";
-import { z } from "zod";
 
-const runtimeIntentSchema = z.object({
-  type: z.enum(["workflow_request", "product_question", "navigation_help", "cancel", "pause", "resume", "unknown"]),
-  query: z.string().optional(),
-  confidence: z.number().min(0).max(1).optional()
-});
-
-type RuntimeIntent = z.infer<typeof runtimeIntentSchema>;
+type RuntimeContextInput = Omit<SDKRuntimeContext, "appId" | "sessionId">;
+const WORKFLOW_MATCH_THRESHOLD = 0.72;
 
 export class RuntimeService {
   constructor(
@@ -26,72 +20,40 @@ export class RuntimeService {
     context: Omit<SDKRuntimeContext, "appId" | "sessionId">;
     includeTts?: boolean;
   }) {
-    const intentResult = await this.gateway.generateJson<RuntimeIntent>({
-      schemaName: "RuntimeIntent",
-      prompt: `You are an intent classifier for an in-product SaaS onboarding agent.
-
-Classify the user request into one of:
-- workflow_request
-- product_question
-- navigation_help
-- cancel
-- pause
-- resume
-- unknown
-
-Return JSON only:
-{
-  "type": "...",
-  "query": "...",
-  "confidence": 0.0
-}
-
-User utterance:
-${input.utterance}
-
-Current route:
-${input.context.currentRoute}`
-    });
-
-    const intent = runtimeIntentSchema.parse(intentResult.data);
-
-    if (intent.type === "product_question" || intent.type === "navigation_help") {
-      const answer = await this.gateway.generateText({
-        prompt: `Answer this product onboarding question briefly using only general product guidance. Do not create UI actions or selectors.
-
-Question: ${intent.query ?? input.utterance}
-Current route: ${input.context.currentRoute}`
-      });
-      return { type: "answer", message: answer.text };
-    }
-
-    if (intent.type !== "workflow_request") {
-      const message = intent.type === "cancel" ? "Okay, I stopped the current request." : "I could not find a saved workflow for that yet.";
-      return { type: "no_match", message };
+    const controlAction = parseControlAction(input.utterance);
+    if (controlAction) {
+      return { type: "control", action: controlAction, message: controlMessage(controlAction) };
     }
 
     const matches = await this.semanticSearch.search({
-      query: `${intent.query ?? input.utterance}\nCurrent route: ${input.context.currentRoute}`,
+      query: `${input.utterance}\nCurrent route: ${input.context.currentRoute}`,
       filters: { kind: "workflow", appId: input.appId, status: "published" },
       limit: 5
     });
 
     const workflow = this.findExecutableWorkflow(matches, input.appId);
-    if (!workflow) {
-      const message = "I could not find a saved workflow for that yet.";
-      return { type: "no_match", message };
+    if (workflow) {
+      return {
+        type: "workflow",
+        workflow: sanitizeWorkflowForRuntime(workflow),
+        message: `I can help you with ${workflow.name}. Let's start.`
+      };
     }
 
-    const message = `I can help you with ${workflow.name}. Let's start.`;
-    return {
-      type: "workflow",
-      workflow: sanitizeWorkflowForRuntime(workflow),
-      message
-    };
+    const answer = await this.gateway.generateText({
+      logContext: { appId: input.appId, purpose: "runtime_answer" },
+      prompt: `Answer this product onboarding question briefly using the current page context. Do not create UI actions or selectors.
+
+Question: ${input.utterance}
+Current page context:
+${summarizeRuntimeContext(input.context)}`
+    });
+    return { type: "answer", message: answer.text };
   }
 
-  private findExecutableWorkflow(matches: Array<{ metadata?: Record<string, unknown> }>, appId: string): Workflow | undefined {
+  private findExecutableWorkflow(matches: Array<{ score: number; metadata?: Record<string, unknown> }>, appId: string): Workflow | undefined {
     for (const match of matches) {
+      if (match.score < WORKFLOW_MATCH_THRESHOLD) continue;
       const workflowId = match.metadata?.workflowId;
       if (typeof workflowId !== "string") continue;
 
@@ -108,6 +70,43 @@ Current route: ${input.context.currentRoute}`
     }
     return undefined;
   }
+}
+
+function controlMessage(action: "cancel" | "pause" | "resume"): string {
+  if (action === "cancel") return "Okay, I stopped the current workflow.";
+  if (action === "pause") return "Paused. Say resume when you want to continue.";
+  return "Resuming the workflow.";
+}
+
+function parseControlAction(utterance: string): "cancel" | "pause" | "resume" | undefined {
+  const text = utterance.trim().toLowerCase();
+  if (/^(cancel|stop|end|abort)(\s+(this|the|current)\s+(workflow|task|guide|guidance))?[.!?]?$/.test(text)) return "cancel";
+  if (/^(pause|hold)(\s+(this|the|current)\s+(workflow|task|guide|guidance))?[.!?]?$/.test(text)) return "pause";
+  if (/^(resume|continue)(\s+(this|the|current)\s+(workflow|task|guide|guidance))?[.!?]?$/.test(text)) return "resume";
+  return undefined;
+}
+
+function summarizeRuntimeContext(context: RuntimeContextInput): string {
+  const lines = [
+    `URL: ${context.currentUrl}`,
+    `Route: ${context.currentRoute}`,
+    `Title: ${context.pageTitle ?? "Untitled"}`
+  ];
+  if (context.focusedElement) lines.push(`Focused: ${summarizeElement(context.focusedElement)}`);
+  if (context.hoveredElement) lines.push(`Hovered: ${summarizeElement(context.hoveredElement)}`);
+  const visible = (context.visibleElements ?? []).slice(0, 20).map(summarizeElement);
+  if (visible.length) lines.push(`Visible elements:\n${visible.map((element) => `- ${element}`).join("\n")}`);
+  return lines.join("\n");
+}
+
+function summarizeElement(element: NonNullable<RuntimeContextInput["visibleElements"]>[number]): string {
+  return [
+    element.role ? `role=${element.role}` : undefined,
+    element.label ? `label=${element.label}` : undefined,
+    element.text ? `text=${element.text}` : undefined,
+    element.elementId ? `id=${element.elementId}` : undefined,
+    element.selector ? `selector=${element.selector}` : undefined
+  ].filter(Boolean).join("; ") || element.tagName;
 }
 
 function sanitizeWorkflowForRuntime(workflow: Workflow): Workflow {
