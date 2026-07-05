@@ -48,6 +48,10 @@ export function MiaOnboardingAgent() {
     });
 
     window.__miaOnboardingAgentInitialized = true;
+    return () => {
+      AIOnboardingAgent.destroy();
+      window.__miaOnboardingAgentInitialized = false;
+    };
   }, []);
 
   return null;

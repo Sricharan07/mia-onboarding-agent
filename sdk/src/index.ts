@@ -16,6 +16,7 @@ class AIOnboardingAgentInstance {
   private sessionId = `sdk_session_${crypto.randomUUID()}`;
   private pendingWorkflowInput?: {
     resolve: (value: string) => void;
+    reject: (error: Error) => void;
     prompt: string;
     settled: boolean;
   };
@@ -23,6 +24,8 @@ class AIOnboardingAgentInstance {
   private suppressNextAssistantResponse = false;
 
   init(config: SDKConfig): void {
+    this.destroy();
+    this.sessionId = `sdk_session_${crypto.randomUUID()}`;
     this.config = config;
     this.backendClient = new BackendClient(config);
     this.cursor = new MiaShadowCursor();
@@ -40,6 +43,33 @@ class AIOnboardingAgentInstance {
       payload: { user: config.user?.id }
     }).catch((error) => config.onError?.(toError(error)));
     this.cursor.setState("idle");
+  }
+
+  destroy(): void {
+    const activeConfig = this.config;
+    this.pendingWorkflowInputCleanup?.();
+    this.pendingWorkflowInputCleanup = undefined;
+    if (this.pendingWorkflowInput && !this.pendingWorkflowInput.settled) {
+      this.pendingWorkflowInput.settled = true;
+      this.pendingWorkflowInput.reject(new Error("AIOnboardingAgent was destroyed."));
+    }
+    this.pendingWorkflowInput = undefined;
+    this.suppressNextAssistantResponse = false;
+
+    const executor = this.activeExecutor;
+    this.activeExecutor = undefined;
+    void executor?.cancel().catch((error) => activeConfig?.onError?.(toError(error)));
+
+    const voice = this.voice;
+    this.voice = undefined;
+    void voice?.disconnect().catch((error) => activeConfig?.onError?.(toError(error)));
+
+    this.promptUi?.destroy();
+    this.promptUi = undefined;
+    this.cursor?.destroy();
+    this.cursor = undefined;
+    this.backendClient = undefined;
+    this.config = undefined;
   }
 
   async ask(text: string): Promise<void> {
@@ -225,6 +255,7 @@ class AIOnboardingAgentInstance {
       input.signal?.addEventListener("abort", abort, { once: true });
       this.pendingWorkflowInput = {
         resolve,
+        reject,
         prompt: input.prompt,
         settled: false
       };

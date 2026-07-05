@@ -2,6 +2,20 @@ export class MiaPromptUI {
   private readonly root = document.createElement("div");
   private readonly card = document.createElement("div");
   private readonly body = document.createElement("div");
+  private readonly titleId = "mia-prompt-title";
+  private readonly messageId = "mia-prompt-message";
+  private previousFocus?: HTMLElement;
+  private cancelCurrent?: () => void;
+  private idSequence = 0;
+  private readonly handleKeyDown = (event: KeyboardEvent) => {
+    if (this.root.style.display === "none") return;
+    if (event.key === "Escape" && this.cancelCurrent) {
+      event.preventDefault();
+      this.cancelCurrent();
+      return;
+    }
+    if (event.key === "Tab") this.trapFocus(event);
+  };
 
   constructor() {
     this.mount();
@@ -10,18 +24,31 @@ export class MiaPromptUI {
   ask(prompt: string, inputType = "text", choices?: string[], signal?: AbortSignal): Promise<string> {
     this.open(prompt);
     return new Promise((resolve, reject) => {
+      let settled = false;
       const abort = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
         this.clear();
         reject(new Error("Workflow cancelled."));
+      };
+      const cleanup = () => {
+        signal?.removeEventListener("abort", abort);
+        if (this.cancelCurrent === abort) this.cancelCurrent = undefined;
       };
       if (signal?.aborted) {
         abort();
         return;
       }
       signal?.addEventListener("abort", abort, { once: true });
+      this.cancelCurrent = abort;
       const form = document.createElement("form");
       form.style.cssText = "display:flex;gap:10px;margin-top:14px";
-      const input = choices ? document.createElement("select") : document.createElement("input");
+      const input: HTMLInputElement | HTMLSelectElement = choices ? document.createElement("select") : document.createElement("input");
+      const inputId = `mia-prompt-field-${++this.idSequence}`;
+      input.id = inputId;
+      input.setAttribute("aria-describedby", this.messageId);
+      input.setAttribute("aria-label", "Response");
       if (choices) {
         for (const choice of choices) {
           const option = document.createElement("option");
@@ -32,7 +59,7 @@ export class MiaPromptUI {
       } else {
         (input as HTMLInputElement).type = inputType;
       }
-      input.style.cssText = "flex:1;min-width:0;border:1px solid rgba(148,163,184,.45);border-radius:12px;padding:10px 12px;background:#fff;color:#0f172a";
+      input.style.cssText = "flex:1;min-width:0;border:1px solid rgba(148,163,184,.45);border-radius:8px;padding:10px 12px;background:#fff;color:#0f172a";
       const submit = document.createElement("button");
       submit.type = "submit";
       submit.textContent = "Continue";
@@ -40,8 +67,10 @@ export class MiaPromptUI {
       form.append(input, submit);
       form.onsubmit = (event) => {
         event.preventDefault();
+        if (settled) return;
+        settled = true;
         const value = (input as HTMLInputElement | HTMLSelectElement).value;
-        signal?.removeEventListener("abort", abort);
+        cleanup();
         this.clear();
         resolve(value);
       };
@@ -53,15 +82,24 @@ export class MiaPromptUI {
   confirm(message: string, confirmLabel = "Confirm", cancelLabel = "Cancel", signal?: AbortSignal): Promise<boolean> {
     this.open(message);
     return new Promise((resolve, reject) => {
+      let settled = false;
       const abort = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
         this.clear();
         reject(new Error("Workflow cancelled."));
+      };
+      const cleanup = () => {
+        signal?.removeEventListener("abort", abort);
+        if (this.cancelCurrent === abort) this.cancelCurrent = undefined;
       };
       if (signal?.aborted) {
         abort();
         return;
       }
       signal?.addEventListener("abort", abort, { once: true });
+      this.cancelCurrent = abort;
       const row = document.createElement("div");
       row.style.cssText = "display:flex;justify-content:flex-end;gap:10px;margin-top:14px";
       const cancel = document.createElement("button");
@@ -73,12 +111,16 @@ export class MiaPromptUI {
       cancel.style.cssText = buttonCss("#475569");
       confirm.style.cssText = buttonCss("#2563eb");
       cancel.onclick = () => {
-        signal?.removeEventListener("abort", abort);
+        if (settled) return;
+        settled = true;
+        cleanup();
         this.clear();
         resolve(false);
       };
       confirm.onclick = () => {
-        signal?.removeEventListener("abort", abort);
+        if (settled) return;
+        settled = true;
+        cleanup();
         this.clear();
         resolve(true);
       };
@@ -103,14 +145,25 @@ export class MiaPromptUI {
   clear(): void {
     this.body.replaceChildren();
     this.root.style.display = "none";
+    this.cancelCurrent = undefined;
+    document.removeEventListener("keydown", this.handleKeyDown);
+    const previousFocus = this.previousFocus;
+    this.previousFocus = undefined;
+    if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
   }
 
   destroy(): void {
+    this.clear();
     this.root.remove();
   }
 
   private mount(): void {
     this.root.dataset.miaPromptUi = "true";
+    this.card.role = "dialog";
+    this.card.ariaModal = "true";
+    this.card.setAttribute("aria-labelledby", this.titleId);
+    this.card.setAttribute("aria-describedby", this.messageId);
+    this.card.tabIndex = -1;
     this.root.style.cssText = [
       "position:fixed",
       "inset:0",
@@ -124,7 +177,7 @@ export class MiaPromptUI {
     ].join(";");
     this.card.style.cssText = [
       "width:min(440px,100%)",
-      "border-radius:18px",
+      "border-radius:8px",
       "padding:18px",
       "background:rgba(15,23,42,.94)",
       "color:#f8fafc",
@@ -139,18 +192,48 @@ export class MiaPromptUI {
   }
 
   private open(message: string, title = "Mia needs your input"): void {
+    this.cancelCurrent?.();
+    const activeElement = document.activeElement;
+    this.previousFocus = activeElement instanceof HTMLElement ? activeElement : undefined;
     this.body.replaceChildren();
     const heading = document.createElement("div");
+    heading.id = this.titleId;
     heading.textContent = title;
     heading.style.cssText = "font:800 15px/1.2 system-ui,sans-serif;margin-bottom:8px";
     const text = document.createElement("div");
+    text.id = this.messageId;
     text.textContent = message;
     text.style.cssText = "color:#dbeafe";
     this.body.append(heading, text);
     this.root.style.display = "flex";
+    document.addEventListener("keydown", this.handleKeyDown);
+    this.card.focus({ preventScroll: true });
+  }
+
+  private trapFocus(event: KeyboardEvent): void {
+    const focusable = Array.from(
+      this.card.querySelectorAll<HTMLElement>(
+        "a[href],button,input,select,textarea,[tabindex]:not([tabindex='-1'])"
+      )
+    ).filter((element) => !element.hasAttribute("disabled") && element.getAttribute("aria-hidden") !== "true");
+    if (!focusable.length) {
+      event.preventDefault();
+      this.card.focus({ preventScroll: true });
+      return;
+    }
+
+    const first = focusable[0];
+    const last = focusable.at(-1)!;
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   }
 }
 
 function buttonCss(background: string): string {
-  return `border:0;border-radius:999px;padding:10px 14px;background:${background};color:#fff;font:800 13px/1 system-ui,sans-serif;cursor:pointer;white-space:nowrap`;
+  return `border:0;border-radius:8px;padding:10px 14px;background:${background};color:#fff;font:800 13px/1 system-ui,sans-serif;cursor:pointer;white-space:nowrap;outline-offset:2px`;
 }

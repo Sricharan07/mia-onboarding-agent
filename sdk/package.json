@@ -1,13 +1,44 @@
 {
   "name": "@mia/onboarding-agent",
   "version": "0.1.0",
+  "description": "Browser SDK for the self-hosted MIA onboarding agent.",
   "private": false,
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "npm run clean && tsc -p tsconfig.json",
+    "prepack": "npm run build",
     "test": "tsc -p tsconfig.json --noEmit"
+  },
+  "keywords": [
+    "onboarding",
+    "agent",
+    "browser-sdk",
+    "ai"
+  ],
+  "license": "MIT",
+  "homepage": "https://github.com/Sricharan07/mia-onboarding-agent#readme",
+  "bugs": {
+    "url": "https://github.com/Sricharan07/mia-onboarding-agent/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Sricharan07/mia-onboarding-agent.git",
+    "directory": "sdk"
   },
   "dependencies": {
     "zod": "^4.4.3"
