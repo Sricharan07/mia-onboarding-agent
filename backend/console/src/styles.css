@@ -126,6 +126,11 @@ button {
   cursor: pointer;
 }
 
+:where(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
 code {
   color: var(--text-2);
   font-family: "SF Mono", "Cascadia Code", Consolas, monospace;
@@ -1404,7 +1409,8 @@ textarea:focus {
 }
 
 .segmented-tabs button:hover,
-.segmented-tabs button.is-active {
+.segmented-tabs button.is-active,
+.segmented-tabs button[aria-selected="true"] {
   background: var(--muted);
   color: var(--text);
 }

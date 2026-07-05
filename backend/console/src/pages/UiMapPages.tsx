@@ -1,8 +1,10 @@
 import { Camera, ChevronRight, FileJson, Filter, Navigation, RefreshCw, Save, Square, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { AppRecord, BackendApi, InteractiveUiMapSession, UiElement, UiMapPreflightReport, UiMapVersion, UiPage, UiScanAuthMode } from "../api";
-import { EmptyTableRow, Panel, RawJsonViewer, SelectorQualityBadge, StatusPill } from "../components/console";
+import { EmptyTableRow, InlineAlert, Panel, RawJsonViewer, SelectorQualityBadge, StatusPill } from "../components/console";
 import { formatDate } from "../utils/format";
+
+type Notice = { tone: "red" | "green" | "yellow" | "gray"; title: string; message: string };
 
 export function UiMapPage({
   app,
@@ -31,6 +33,7 @@ export function UiMapPage({
   const [stateReason, setStateReason] = useState("");
   const [preflight, setPreflight] = useState<UiMapPreflightReport | null>(null);
   const [pending, setPending] = useState("");
+  const [notice, setNotice] = useState<Notice | null>(null);
 
   useEffect(() => {
     if (!app) return;
@@ -39,6 +42,7 @@ export function UiMapPage({
     setAuthMode(app.uiScanConfig.authMode);
     setRouteDraft(nextRoutes[0] ?? "/");
     setPreflight(null);
+    setNotice(null);
   }, [app?.id]);
 
   useEffect(() => {
@@ -47,6 +51,7 @@ export function UiMapPage({
 
   const runPreflight = async (): Promise<UiMapPreflightReport | null> => {
     if (!app) {
+      setNotice({ tone: "yellow", title: "No app selected", message: "Create an app before running UI mapping." });
       showToast("Create an app first.");
       return null;
     }
@@ -55,10 +60,11 @@ export function UiMapPage({
     try {
       const report = await api.preflightUiMap(app.id, routeList, authMode);
       setPreflight(report);
+      setNotice(report.ok ? null : { tone: "yellow", title: "Preflight needs attention", message: "Review the failed checks before starting a scan." });
       showToast(report.ok ? "Preflight passed" : "Preflight needs attention");
       return report;
     } catch (cause) {
-      showToast(cause instanceof Error ? cause.message : "Unable to run UI map preflight");
+      reportNotice(cause, "Unable to run UI map preflight");
       return null;
     } finally {
       setPending("");
@@ -67,10 +73,12 @@ export function UiMapPage({
 
   const scan = async () => {
     if (!app) {
+      setNotice({ tone: "yellow", title: "No app selected", message: "Create an app before running UI mapping." });
       showToast("Create an app first.");
       return;
     }
     if (authMode === "manual") {
+      setNotice({ tone: "yellow", title: "Manual auth selected", message: "Use interactive scan for manual browser login." });
       showToast("Manual auth uses interactive scan.");
       return;
     }
@@ -81,9 +89,10 @@ export function UiMapPage({
     try {
       await api.scanUiMap(app.id, routeList, authMode);
       await refresh(app.id);
+      setNotice(null);
       showToast("UI map scan started");
     } catch (cause) {
-      showToast(cause instanceof Error ? cause.message : "Unable to scan UI map");
+      reportNotice(cause, "Unable to scan UI map");
     } finally {
       setPending("");
     }
@@ -91,6 +100,7 @@ export function UiMapPage({
 
   const startInteractive = async () => {
     if (!app) {
+      setNotice({ tone: "yellow", title: "No app selected", message: "Create an app before starting interactive mapping." });
       showToast("Create an app first.");
       return;
     }
@@ -101,9 +111,10 @@ export function UiMapPage({
       setSession(nextSession);
       setRouteDraft(nextSession.currentRoute);
       await refresh(app.id);
+      setNotice(null);
       showToast("Interactive mapping session started");
     } catch (cause) {
-      showToast(cause instanceof Error ? cause.message : "Unable to start interactive mapping");
+      reportNotice(cause, "Unable to start interactive mapping");
     } finally {
       setPending("");
     }
@@ -115,9 +126,10 @@ export function UiMapPage({
       const nextSession = await api.gotoInteractiveUiMapSession(session.sessionId, { route: routeDraft, captureDefault: true });
       setSession(nextSession);
       await refresh(app?.id);
+      setNotice(null);
       showToast(`Captured default state for ${routeDraft}`);
     } catch (cause) {
-      showToast(cause instanceof Error ? cause.message : "Unable to navigate interactive browser");
+      reportNotice(cause, "Unable to navigate interactive browser");
     }
   };
 
@@ -130,9 +142,10 @@ export function UiMapPage({
       });
       setSession(nextSession);
       await refresh(app?.id);
+      setNotice(null);
       showToast(`Captured ${nextSession.capture?.savedElements ?? 0} new elements`);
     } catch (cause) {
-      showToast(cause instanceof Error ? cause.message : "Unable to capture browser state");
+      reportNotice(cause, "Unable to capture browser state");
     }
   };
 
@@ -142,9 +155,10 @@ export function UiMapPage({
       await api.finishInteractiveUiMapSession(session.sessionId);
       setSession(null);
       await refresh(app?.id);
+      setNotice(null);
       showToast("Interactive map completed");
     } catch (cause) {
-      showToast(cause instanceof Error ? cause.message : "Unable to finish interactive mapping");
+      reportNotice(cause, "Unable to finish interactive mapping");
     }
   };
 
@@ -154,14 +168,22 @@ export function UiMapPage({
       await api.cancelInteractiveUiMapSession(session.sessionId, "Cancelled from console.");
       setSession(null);
       await refresh(app?.id);
+      setNotice(null);
       showToast("Interactive map cancelled");
     } catch (cause) {
-      showToast(cause instanceof Error ? cause.message : "Unable to cancel interactive mapping");
+      reportNotice(cause, "Unable to cancel interactive mapping");
     }
   };
 
+  function reportNotice(cause: unknown, fallback: string) {
+    const message = cause instanceof Error ? cause.message : fallback;
+    setNotice({ tone: "red", title: "UI mapping failed", message });
+    showToast(message);
+  }
+
   return (
     <div className="page-grid">
+      {notice && <InlineAlert tone={notice.tone} title={notice.title} message={notice.message} />}
       <Panel title="Trigger UI mapping scan" action={<StatusPill tone={latestUiMap ? "green" : "gray"} label={latestUiMap?.version ?? "No map"} />}>
         <div className="scan-form">
           <div className="empty-state">
@@ -341,6 +363,7 @@ export function UiMapDetailPage({
   const [savingElementId, setSavingElementId] = useState<string | null>(null);
   const [qualityFilter, setQualityFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
+  const [notice, setNotice] = useState<Notice | null>(null);
   const filteredElements = elements.filter((element) => (qualityFilter === "all" || element.selectorQuality === qualityFilter) && (typeFilter === "all" || element.elementType === typeFilter));
   const dirtyElements = filteredElements.filter((element) => drafts[element.id] !== undefined && drafts[element.id] !== element.description);
 
@@ -349,9 +372,10 @@ export function UiMapDetailPage({
     try {
       await api.updateElement(element.appId, element.id, { description: drafts[element.id] ?? element.description });
       await refresh(element.appId);
+      setNotice(null);
       showToast("Element metadata saved");
     } catch (cause) {
-      showToast(cause instanceof Error ? cause.message : "Unable to save element");
+      reportNotice(cause, "Unable to save element");
     } finally {
       setSavingElementId(null);
     }
@@ -363,9 +387,10 @@ export function UiMapDetailPage({
       await Promise.all(dirtyElements.map((element) => api.updateElement(element.appId, element.id, { description: drafts[element.id] })));
       await refresh(dirtyElements[0]?.appId);
       setDrafts({});
+      setNotice(null);
       showToast(`${dirtyElements.length} element metadata records saved`);
     } catch (cause) {
-      showToast(cause instanceof Error ? cause.message : "Unable to save element metadata");
+      reportNotice(cause, "Unable to save element metadata");
     } finally {
       setSavingElementId(null);
     }
@@ -373,6 +398,7 @@ export function UiMapDetailPage({
 
   return (
     <div className="page-grid">
+      {notice && <InlineAlert tone={notice.tone} title={notice.title} message={notice.message} />}
       <div className="inline-header">
         <button className="button secondary" type="button" onClick={onBack}>Back to UI map</button>
         <div>
@@ -459,4 +485,10 @@ export function UiMapDetailPage({
       {rawOpen && <RawJsonViewer title="UI element raw records" data={elements} />}
     </div>
   );
+
+  function reportNotice(cause: unknown, fallback: string) {
+    const message = cause instanceof Error ? cause.message : fallback;
+    setNotice({ tone: "red", title: "Save failed", message });
+    showToast(message);
+  }
 }

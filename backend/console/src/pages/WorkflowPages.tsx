@@ -1,8 +1,10 @@
 import { Check, Plus, Play, RefreshCw, Save, Upload, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { AppRecord, BackendApi, ExecutionPolicy, Workflow, WorkflowJob, WorkflowReviewReport, WorkflowStep, WorkflowSummary } from "../api";
-import { EmptyTableRow, Panel, StatusBadge, StatusPill, SummaryItem } from "../components/console";
+import { EmptyTableRow, InlineAlert, Panel, StatusBadge, StatusPill, SummaryItem } from "../components/console";
 import { describeStep, formatDate } from "../utils/format";
+
+type Notice = { tone: "red" | "green" | "yellow" | "gray"; title: string; message: string };
 
 export function UploadWorkflowPage({
   app,
@@ -20,13 +22,16 @@ export function UploadWorkflowPage({
   const [workflowName, setWorkflowName] = useState("New onboarding workflow");
   const [description, setDescription] = useState("Recorded workflow video for Mia to understand and compile.");
   const [file, setFile] = useState<File | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
 
   const upload = async () => {
     if (!app) {
+      setNotice({ tone: "yellow", title: "No app selected", message: "Create an app before uploading workflow videos." });
       showToast("Create an app first.");
       return;
     }
     if (!file) {
+      setNotice({ tone: "yellow", title: "No video selected", message: "Choose a workflow recording before uploading." });
       showToast("Choose a workflow video first.");
       return;
     }
@@ -34,15 +39,17 @@ export function UploadWorkflowPage({
       const result = await api.uploadWorkflowVideo(app.id, { file, name: workflowName, description });
       await api.processWorkflowJob(result.jobId);
       await refresh(app.id);
+      setNotice(null);
       showToast("Workflow video uploaded and processing started");
       onJobs();
     } catch (cause) {
-      showToast(cause instanceof Error ? cause.message : "Unable to upload workflow video");
+      reportNotice(cause, "Unable to upload workflow video");
     }
   };
 
   return (
     <div className="page-grid narrow">
+      {notice && <InlineAlert tone={notice.tone} title={notice.title} message={notice.message} />}
       <Panel title="Upload workflow video" action={<StatusBadge status="uploaded" />}>
         <div className="form-grid single">
           <label>
@@ -67,6 +74,12 @@ export function UploadWorkflowPage({
       </Panel>
     </div>
   );
+
+  function reportNotice(cause: unknown, fallback: string) {
+    const message = cause instanceof Error ? cause.message : fallback;
+    setNotice({ tone: "red", title: "Upload failed", message });
+    showToast(message);
+  }
 }
 
 export function WorkflowJobsPage({
@@ -84,19 +97,26 @@ export function WorkflowJobsPage({
   onOpenWorkflow: (workflowId: string) => void;
   showToast: (message: string) => void;
 }) {
+  const [notice, setNotice] = useState<Notice | null>(null);
+
   const process = async (job: WorkflowJob) => {
     try {
       await api.processWorkflowJob(job.id);
       await refresh(job.appId);
+      setNotice(null);
       showToast("Workflow processing started");
     } catch (cause) {
-      showToast(cause instanceof Error ? cause.message : "Unable to process job");
+      const message = cause instanceof Error ? cause.message : "Unable to process job";
+      setNotice({ tone: "red", title: "Processing failed", message });
+      showToast(message);
     }
   };
 
   return (
-    <Panel title="Workflow processing jobs">
-      <table>
+    <div className="page-grid">
+      {notice && <InlineAlert tone={notice.tone} title={notice.title} message={notice.message} />}
+      <Panel title="Workflow processing jobs">
+        <table>
         <thead>
           <tr>
             <th>Job ID</th>
@@ -132,8 +152,9 @@ export function WorkflowJobsPage({
             </tr>
           ))}
         </tbody>
-      </table>
-    </Panel>
+        </table>
+      </Panel>
+    </div>
   );
 }
 
@@ -159,6 +180,7 @@ export function WorkflowReviewPage({
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [reviewReport, setReviewReport] = useState<WorkflowReviewReport | null>(null);
   const [rawOpen, setRawOpen] = useState(false);
+  const [notice, setNotice] = useState<Notice | null>(null);
 
   useEffect(() => {
     setName(workflow?.name ?? "");
@@ -173,7 +195,7 @@ export function WorkflowReviewPage({
     }
     void api.getWorkflowReviewReport(workflow.workflowId)
       .then(setReviewReport)
-      .catch((cause) => showToast(cause instanceof Error ? cause.message : "Unable to load workflow review report"));
+      .catch((cause) => reportNotice(cause, "Unable to load workflow review report"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, workflow?.workflowId]);
 
@@ -194,9 +216,10 @@ export function WorkflowReviewPage({
         triggerPhrases: triggerPhrases.split("\n").map((phrase) => phrase.trim()).filter(Boolean)
       });
       await selectWorkflow(workflow.workflowId);
+      setNotice(null);
       showToast("Workflow draft saved");
     } catch (cause) {
-      showToast(cause instanceof Error ? cause.message : "Unable to save workflow");
+      reportNotice(cause, "Unable to save workflow");
     } finally {
       setPendingAction(null);
     }
@@ -208,9 +231,10 @@ export function WorkflowReviewPage({
       await api.approveWorkflow(workflow.workflowId, { reviewedBy: "local-console", notes });
       await refresh(workflow.appId);
       await selectWorkflow(workflow.workflowId);
+      setNotice(null);
       showToast("Workflow approved");
     } catch (cause) {
-      showToast(cause instanceof Error ? cause.message : "Unable to approve workflow");
+      reportNotice(cause, "Unable to approve workflow");
     } finally {
       setPendingAction(null);
     }
@@ -222,9 +246,10 @@ export function WorkflowReviewPage({
       await api.publishWorkflow(workflow.workflowId);
       await refresh(workflow.appId);
       await selectWorkflow(workflow.workflowId);
+      setNotice(null);
       showToast("Workflow published");
     } catch (cause) {
-      showToast(cause instanceof Error ? cause.message : "Unable to publish workflow");
+      reportNotice(cause, "Unable to publish workflow");
     } finally {
       setPendingAction(null);
     }
@@ -236,9 +261,10 @@ export function WorkflowReviewPage({
       await api.archiveWorkflow(workflow.workflowId);
       await refresh(workflow.appId);
       await selectWorkflow(workflow.workflowId);
+      setNotice(null);
       showToast("Workflow archived");
     } catch (cause) {
-      showToast(cause instanceof Error ? cause.message : "Unable to archive workflow");
+      reportNotice(cause, "Unable to archive workflow");
     } finally {
       setPendingAction(null);
     }
@@ -248,6 +274,7 @@ export function WorkflowReviewPage({
     await refresh(workflow.appId);
     await selectWorkflow(workflow.workflowId);
     setReviewReport(await api.getWorkflowReviewReport(workflow.workflowId));
+    setNotice(null);
     showToast(message);
   };
 
@@ -261,7 +288,7 @@ export function WorkflowReviewPage({
       });
       await reloadEditedWorkflow("Step added");
     } catch (cause) {
-      showToast(cause instanceof Error ? cause.message : "Unable to add step");
+      reportNotice(cause, "Unable to add step");
     } finally {
       setPendingAction(null);
     }
@@ -273,7 +300,7 @@ export function WorkflowReviewPage({
       await api.updateWorkflowStep(workflow.workflowId, stepId, patch);
       await reloadEditedWorkflow("Step saved");
     } catch (cause) {
-      showToast(cause instanceof Error ? cause.message : "Unable to save step");
+      reportNotice(cause, "Unable to save step");
     } finally {
       setPendingAction(null);
     }
@@ -285,7 +312,7 @@ export function WorkflowReviewPage({
       await api.deleteWorkflowStep(workflow.workflowId, stepId);
       await reloadEditedWorkflow("Step deleted");
     } catch (cause) {
-      showToast(cause instanceof Error ? cause.message : "Unable to delete step");
+      reportNotice(cause, "Unable to delete step");
     } finally {
       setPendingAction(null);
     }
@@ -303,7 +330,7 @@ export function WorkflowReviewPage({
       await api.reorderWorkflowSteps(workflow.workflowId, stepIds);
       await reloadEditedWorkflow("Steps reordered");
     } catch (cause) {
-      showToast(cause instanceof Error ? cause.message : "Unable to reorder steps");
+      reportNotice(cause, "Unable to reorder steps");
     } finally {
       setPendingAction(null);
     }
@@ -311,6 +338,7 @@ export function WorkflowReviewPage({
 
   return (
     <div className="page-grid">
+      {notice && <InlineAlert tone={notice.tone} title={notice.title} message={notice.message} />}
       <Panel
         title="Workflow review"
         action={
@@ -429,6 +457,12 @@ export function WorkflowReviewPage({
       </section>
     </div>
   );
+
+  function reportNotice(cause: unknown, fallback: string) {
+    const message = cause instanceof Error ? cause.message : fallback;
+    setNotice({ tone: "red", title: "Workflow action failed", message });
+    showToast(message);
+  }
 }
 
 export function WorkflowStepCard({

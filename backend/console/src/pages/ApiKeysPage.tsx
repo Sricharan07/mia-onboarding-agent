@@ -1,8 +1,10 @@
 import { Copy, KeyRound, Plus, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ApiKeyRecord, ApiKeyScope, AppRecord, BackendApi, CreatedApiKey } from "../api";
-import { EmptyTableRow, Panel, StatusPill } from "../components/console";
+import { EmptyTableRow, InlineAlert, Panel, StatusPill } from "../components/console";
 import { formatDate } from "../utils/format";
+
+type Notice = { tone: "red" | "green" | "yellow" | "gray"; title: string; message: string };
 
 const scopeOptions: ApiKeyScope[] = ["apps:read", "ui-map:read", "workflows:read", "runtime:write", "logs:write", "logs:read", "admin"];
 const presets: Array<{ label: string; scopes: ApiKeyScope[] }> = [
@@ -31,12 +33,13 @@ export function ApiKeysPage({
   const [allowedOrigins, setAllowedOrigins] = useState(() => defaultOrigin(apps.find((app) => app.id === selectedAppId)));
   const [createdKey, setCreatedKey] = useState<CreatedApiKey | null>(null);
   const [pendingKeyId, setPendingKeyId] = useState<string | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
 
   const load = async () => {
     try {
       setKeys((await api.listApiKeys()).items);
     } catch (cause) {
-      showToast(cause instanceof Error ? cause.message : "Unable to load API keys");
+      reportNotice(cause, "Unable to load API keys");
     }
   };
 
@@ -57,7 +60,9 @@ export function ApiKeysPage({
 
   const create = async () => {
     if (!scopes.includes("admin") && (!appId || parseOrigins(allowedOrigins).length === 0)) {
-      showToast("Choose an app and at least one allowed origin for non-admin keys.");
+      const message = "Choose an app and at least one allowed origin for non-admin keys.";
+      setNotice({ tone: "yellow", title: "API key needs an app boundary", message });
+      showToast(message);
       return;
     }
     try {
@@ -68,9 +73,10 @@ export function ApiKeysPage({
       });
       setCreatedKey(next);
       await load();
+      setNotice(null);
       showToast("API key created");
     } catch (cause) {
-      showToast(cause instanceof Error ? cause.message : "Unable to create API key");
+      reportNotice(cause, "Unable to create API key");
     }
   };
 
@@ -79,9 +85,10 @@ export function ApiKeysPage({
     try {
       await api.revokeApiKey(keyId);
       await load();
+      setNotice(null);
       showToast("API key revoked");
     } catch (cause) {
-      showToast(cause instanceof Error ? cause.message : "Unable to revoke API key");
+      reportNotice(cause, "Unable to revoke API key");
     } finally {
       setPendingKeyId(null);
     }
@@ -101,6 +108,7 @@ export function ApiKeysPage({
 
   return (
     <div className="page-grid">
+      {notice && <InlineAlert tone={notice.tone} title={notice.title} message={notice.message} />}
       <Panel title="Create API key" action={<StatusPill tone="green" label="Hashed at rest" />}>
         <div className="form-grid single">
           <label>
@@ -249,6 +257,12 @@ export function ApiKeysPage({
       </Panel>
     </div>
   );
+
+  function reportNotice(cause: unknown, fallback: string) {
+    const message = cause instanceof Error ? cause.message : fallback;
+    setNotice({ tone: "red", title: "API key action failed", message });
+    showToast(message);
+  }
 }
 
 function defaultOrigin(app: AppRecord | undefined): string {

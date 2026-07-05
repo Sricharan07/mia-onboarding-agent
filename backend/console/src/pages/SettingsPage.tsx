@@ -1,10 +1,11 @@
 import { AlertTriangle, Archive, Database, KeyRound, RefreshCw, Save, ShieldCheck, Users } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import type { AppRecord, BackendApi, ConsoleAuthUser, ConsoleSession, SystemReadiness, UiScanAuthMode } from "../api";
 import { InlineAlert, Panel, ServiceRow, StatusPill } from "../components/console";
 import { formatDate } from "../utils/format";
 
 type SettingsTab = "backend" | "app" | "scan" | "privacy" | "admins" | "danger";
+type Notice = { tone: "red" | "green" | "yellow" | "gray"; title: string; message: string };
 
 const tabs: Array<{ id: SettingsTab; label: string }> = [
   { id: "backend", label: "Backend" },
@@ -39,6 +40,7 @@ export function SettingsPage({
   showToast: (message: string) => void;
 }) {
   const [tab, setTab] = useState<SettingsTab>("backend");
+  const [notice, setNotice] = useState<Notice | null>(null);
   const [urlDraft, setUrlDraft] = useState(backendUrl);
   const [name, setName] = useState(selectedApp?.name ?? "MIA onboarding app");
   const [slug, setSlug] = useState(selectedApp?.slug ?? "mia-onboarding");
@@ -112,11 +114,36 @@ export function SettingsPage({
   const saveBackendUrl = () => {
     window.localStorage.setItem("mia-console-backend-url", urlDraft);
     setBackendUrl(urlDraft);
+    setNotice(null);
     showToast("Backend URL saved");
+  };
+
+  const activateTab = (nextTab: SettingsTab) => {
+    setTab(nextTab);
+    setNotice(null);
+    window.requestAnimationFrame(() => document.getElementById(settingsTabId(nextTab))?.focus());
+  };
+
+  const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const nextIndex = event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? tabs.length - 1
+        : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+    activateTab(tabs[nextIndex]!.id);
+  };
+
+  const reportNotice = (cause: unknown, fallback: string) => {
+    const message = cause instanceof Error ? cause.message : fallback;
+    setNotice({ tone: "red", title: "Action failed", message });
+    showToast(message);
   };
 
   const saveApp = async () => {
     if (saveDisabledReason) {
+      setNotice({ tone: "yellow", title: "Scan password", message: saveDisabledReason });
       showToast(saveDisabledReason);
       return;
     }
@@ -149,9 +176,10 @@ export function SettingsPage({
       await refresh(app.id);
       setPassword("");
       setClearPassword(false);
+      setNotice(null);
       showToast("App and scan profile saved");
     } catch (cause) {
-      showToast(cause instanceof Error ? cause.message : "Unable to save app");
+      reportNotice(cause, "Unable to save app");
     } finally {
       setPending("");
     }
@@ -164,9 +192,10 @@ export function SettingsPage({
       await api.archiveApp(selectedApp.id);
       await refresh();
       setArchiveConfirm("");
+      setNotice(null);
       showToast("App archived");
     } catch (cause) {
-      showToast(cause instanceof Error ? cause.message : "Unable to archive app");
+      reportNotice(cause, "Unable to archive app");
     } finally {
       setPending("");
     }
@@ -178,7 +207,7 @@ export function SettingsPage({
       setUsers(nextUsers.items);
       setSessions(nextSessions.items);
     } catch (cause) {
-      showToast(cause instanceof Error ? cause.message : "Unable to load console admins");
+      reportNotice(cause, "Unable to load console admins");
     }
   };
 
@@ -190,9 +219,10 @@ export function SettingsPage({
       setNewAdminEmail("");
       setNewAdminPassword("");
       await loadAdmins();
+      setNotice(null);
       showToast("Console admin created");
     } catch (cause) {
-      showToast(cause instanceof Error ? cause.message : "Unable to create admin");
+      reportNotice(cause, "Unable to create admin");
     } finally {
       setPending("");
     }
@@ -205,9 +235,10 @@ export function SettingsPage({
       await api.changeConsoleUserPassword(consoleUser.id, { currentPassword, nextPassword });
       setCurrentPassword("");
       setNextPassword("");
+      setNotice(null);
       showToast("Password changed");
     } catch (cause) {
-      showToast(cause instanceof Error ? cause.message : "Unable to change password");
+      reportNotice(cause, "Unable to change password");
     } finally {
       setPending("");
     }
@@ -218,9 +249,10 @@ export function SettingsPage({
     try {
       await api.disableConsoleUser(userId);
       await loadAdmins();
+      setNotice(null);
       showToast("Console user disabled");
     } catch (cause) {
-      showToast(cause instanceof Error ? cause.message : "Unable to disable user");
+      reportNotice(cause, "Unable to disable user");
     } finally {
       setPending("");
     }
@@ -231,9 +263,10 @@ export function SettingsPage({
     try {
       await api.revokeConsoleSession(sessionId);
       await loadAdmins();
+      setNotice(null);
       showToast("Session revoked");
     } catch (cause) {
-      showToast(cause instanceof Error ? cause.message : "Unable to revoke session");
+      reportNotice(cause, "Unable to revoke session");
     } finally {
       setPending("");
     }
@@ -242,20 +275,29 @@ export function SettingsPage({
   return (
     <div className="page-grid narrow">
       <div className="segmented-tabs" role="tablist" aria-label="Settings sections">
-        {tabs.map((item) => (
+        {tabs.map((item, index) => (
           <button
             key={item.id}
+            id={settingsTabId(item.id)}
+            role="tab"
             type="button"
             className={tab === item.id ? "is-active" : ""}
-            onClick={() => setTab(item.id)}
+            aria-selected={tab === item.id}
+            aria-controls={settingsPanelId(item.id)}
+            tabIndex={tab === item.id ? 0 : -1}
+            onClick={() => activateTab(item.id)}
+            onKeyDown={(event) => handleTabKeyDown(event, index)}
           >
             {item.label}
           </button>
         ))}
       </div>
 
+      {notice && <InlineAlert tone={notice.tone} title={notice.title} message={notice.message} />}
+
       {tab === "backend" && (
-        <Panel title="Backend connection" action={<StatusPill tone="green" label="Self-hosted" />}>
+        <section id={settingsPanelId("backend")} role="tabpanel" aria-labelledby={settingsTabId("backend")}>
+          <Panel title="Backend connection" action={<StatusPill tone="green" label="Self-hosted" />}>
           <div className="form-grid single">
             <label>
               Backend URL
@@ -281,11 +323,12 @@ export function SettingsPage({
           {readiness?.secrets.status === "missing_config" && (
             <InlineAlert tone="yellow" title="Secret storage" message={readiness.secrets.message} />
           )}
-        </Panel>
+          </Panel>
+        </section>
       )}
 
       {tab === "app" && (
-        <>
+        <section id={settingsPanelId("app")} role="tabpanel" aria-labelledby={settingsTabId("app")}>
           <Panel title="Application record" action={<span className="muted">{apps.length} active app(s)</span>}>
             <div className="form-grid">
               <label>
@@ -341,11 +384,12 @@ export function SettingsPage({
               </tbody>
             </table>
           </Panel>
-        </>
+        </section>
       )}
 
       {tab === "scan" && (
-        <Panel title="UI scan profile" action={<StatusPill tone={authMode === "manual" ? "yellow" : "green"} label={authSummary} />}>
+        <section id={settingsPanelId("scan")} role="tabpanel" aria-labelledby={settingsTabId("scan")}>
+          <Panel title="UI scan profile" action={<StatusPill tone={authMode === "manual" ? "yellow" : "green"} label={authSummary} />}>
           <div className="form-grid">
             <label>
               Default routes
@@ -413,11 +457,13 @@ export function SettingsPage({
               {pending === "save-app" ? "Saving" : "Save scan profile"}
             </button>
           </div>
-        </Panel>
+          </Panel>
+        </section>
       )}
 
       {tab === "privacy" && (
-        <Panel title="Scan safety and privacy">
+        <section id={settingsPanelId("privacy")} role="tabpanel" aria-labelledby={settingsTabId("privacy")}>
+          <Panel title="Scan safety and privacy">
           <div className="form-grid">
             <label>
               Ignored selectors
@@ -443,11 +489,12 @@ export function SettingsPage({
               {pending === "save-app" ? "Saving" : "Save privacy settings"}
             </button>
           </div>
-        </Panel>
+          </Panel>
+        </section>
       )}
 
       {tab === "admins" && (
-        <>
+        <section id={settingsPanelId("admins")} role="tabpanel" aria-labelledby={settingsTabId("admins")}>
           <Panel title="Console admins" action={<button className="button secondary small" type="button" onClick={() => void loadAdmins()}><RefreshCw size={14} />Refresh</button>}>
             <div className="form-grid">
               <label>
@@ -550,11 +597,12 @@ export function SettingsPage({
               </tbody>
             </table>
           </Panel>
-        </>
+        </section>
       )}
 
       {tab === "danger" && (
-        <Panel title="Archive app" action={<AlertTriangle size={16} />}>
+        <section id={settingsPanelId("danger")} role="tabpanel" aria-labelledby={settingsTabId("danger")}>
+          <Panel title="Archive app" action={<AlertTriangle size={16} />}>
           {selectedApp ? (
             <>
               <InlineAlert tone="yellow" title="Archive app" message="Archiving removes this app from active setup and runtime configuration, but keeps historical maps, workflows, logs, and metrics in the database." />
@@ -577,10 +625,19 @@ export function SettingsPage({
           ) : (
             <div className="empty-state">No active app selected.</div>
           )}
-        </Panel>
+          </Panel>
+        </section>
       )}
     </div>
   );
+}
+
+function settingsTabId(tab: SettingsTab): string {
+  return `settings-tab-${tab}`;
+}
+
+function settingsPanelId(tab: SettingsTab): string {
+  return `settings-panel-${tab}`;
 }
 
 function readinessLabel(status?: string): string {
