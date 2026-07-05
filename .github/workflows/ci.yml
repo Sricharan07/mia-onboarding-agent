@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root workspace dependencies
+        run: npm ci
+
+      - name: Test backend and SDK
+        run: npm run test
+
+      - name: Build backend and SDK
+        run: npm run build
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev
+
+      - name: Validate SDK package contents
+        run: npm run pack:sdk
+
+      - name: Install console dependencies
+        run: npm ci --prefix backend/console
+
+      - name: Build console
+        run: npm run build:console
+
+      - name: Audit console production dependencies
+        run: npm --prefix backend/console audit --omit=dev
+
+      - name: Install SDK demo dependencies
+        run: npm ci --prefix example/demo-crm+sdk
+
+      - name: Build SDK demo
+        run: npm run build:demo
+
+      - name: Audit SDK demo production dependencies
+        run: npm --prefix example/demo-crm+sdk audit --omit=dev
+
+  docker:
+    name: Docker Smoke Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t mia-onboarding-agent:ci .
+
+      - name: Start container
+        run: |
+          docker run --rm -d \
+            --name mia-onboarding-agent-ci \
+            -p 4000:4000 \
+            -e PORT=4000 \
+            -e CORS_ORIGIN=http://localhost:3000 \
+            -e BOOTSTRAP_ADMIN_TOKEN=ci-bootstrap-token \
+            -e MIA_SECRET_ENCRYPTION_KEY=ci-secret-key \
+            mia-onboarding-agent:ci
+
+      - name: Check health endpoint
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:4000/health; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs mia-onboarding-agent-ci
+          exit 1
+
+      - name: Stop container
+        if: always()
+        run: docker stop mia-onboarding-agent-ci || true

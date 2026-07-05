@@ -1,0 +1,39 @@
+name: Bug Report
+description: Report a reproducible product or developer-experience issue.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Include commands, routes, UI actions, SDK calls, or configuration needed to reproduce.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Node version, browser, Docker version, deployment mode, and package versions.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or Screenshots
+      description: Paste relevant logs with secrets redacted.
+      render: shell
+    validations:
+      required: false
