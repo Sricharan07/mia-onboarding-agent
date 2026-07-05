@@ -617,6 +617,7 @@ function testConfig(dir: string): AppConfig {
     CORS_ORIGIN: "*",
     DATABASE_URL: `file:${join(dir, "local.db")}`,
     LOCAL_UPLOAD_DIR: join(dir, "uploads"),
+    CONSOLE_DIST_DIR: join(dir, "console-dist"),
     BOOTSTRAP_ADMIN_TOKEN: "bootstrap-secret",
     RATE_LIMIT_WINDOW_MS: 60_000,
     RATE_LIMIT_MAX: 300,

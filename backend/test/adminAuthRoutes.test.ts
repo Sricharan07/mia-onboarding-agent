@@ -590,6 +590,7 @@ function testConfig(dir: string): AppConfig {
     CORS_ORIGIN: "*",
     DATABASE_URL: `file:${join(dir, "local.db")}`,
     LOCAL_UPLOAD_DIR: join(dir, "uploads"),
+    CONSOLE_DIST_DIR: join(dir, "console-dist"),
     MIA_SECRET_ENCRYPTION_KEY: "test-secret-encryption-key",
     BOOTSTRAP_ADMIN_TOKEN: "bootstrap-secret",
     CONSOLE_SESSION_TTL_SECONDS: 28800,

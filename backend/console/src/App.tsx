@@ -27,7 +27,9 @@ import { UsagePage } from "./pages/UsagePage";
 import { UploadWorkflowPage, WorkflowJobsPage, WorkflowReviewPage, WorkflowsPage } from "./pages/WorkflowPages";
 import type { LoadState, RouteId } from "./types";
 
-const defaultBackendUrl = window.localStorage.getItem("mia-console-backend-url") ?? import.meta.env.VITE_MIA_BACKEND_URL ?? "http://localhost:4000";
+const configuredBackendUrl = (import.meta.env.VITE_MIA_BACKEND_URL as string | undefined)?.trim() || undefined;
+const storedBackendUrl = window.localStorage.getItem("mia-console-backend-url")?.trim() || undefined;
+const defaultBackendUrl = storedBackendUrl ?? configuredBackendUrl ?? window.location.origin;
 const defaultConsoleSessionToken = window.sessionStorage.getItem("mia-console-session-token") ?? "";
 
 function App() {

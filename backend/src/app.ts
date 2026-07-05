@@ -1,7 +1,9 @@
 import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
+import fastifyStatic from "@fastify/static";
 import Fastify, { type FastifyInstance } from "fastify";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { ZodError } from "zod";
 import type { AppConfig } from "./config/env.js";
 import { validateRuntimeConfig } from "./config/env.js";
@@ -47,6 +49,7 @@ export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
   });
   registerErrorHandler(app);
   await registerRoutes(app, dependencies);
+  await registerConsoleStatic(app, config);
   dependencies.services.uiMap.resumeUnfinishedScans((error) => app.log.error(error));
   dependencies.services.videoProcessing.resumeUnfinishedJobs((error) => app.log.error(error));
   return app;
@@ -55,6 +58,20 @@ export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
 function corsOrigin(value: string): true | string[] {
   if (value.trim() === "*") return true;
   return value.split(",").map((origin) => origin.trim()).filter(Boolean);
+}
+
+async function registerConsoleStatic(app: FastifyInstance, config: AppConfig): Promise<void> {
+  const indexPath = join(config.CONSOLE_DIST_DIR, "index.html");
+  if (!existsSync(indexPath)) {
+    app.log.warn({ consoleDistDir: config.CONSOLE_DIST_DIR }, "Console dist directory not found; serving API only.");
+    return;
+  }
+
+  await app.register(fastifyStatic, {
+    root: config.CONSOLE_DIST_DIR,
+    prefix: "/",
+    decorateReply: false
+  });
 }
 
 function createDependencies(config: AppConfig) {

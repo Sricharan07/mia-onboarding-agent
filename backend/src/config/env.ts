@@ -21,6 +21,7 @@ const envSchema = z.object({
   CORS_ORIGIN: z.string().default("*"),
   DATABASE_URL: z.string().default("file:./data/sqlite/local.db"),
   LOCAL_UPLOAD_DIR: z.string().default("./data/uploads"),
+  CONSOLE_DIST_DIR: z.string().default("./backend/console/dist"),
   MIA_SECRET_ENCRYPTION_KEY: z.string().optional(),
   BOOTSTRAP_ADMIN_TOKEN: z.string().optional(),
   CONSOLE_SESSION_TTL_SECONDS: z.coerce.number().int().positive().default(60 * 60 * 8),
@@ -87,6 +88,7 @@ function normalizePaths(config: AppConfig): AppConfig {
       ? `file:${resolveMaybeRelative(config.DATABASE_URL.slice("file:".length))}`
       : resolveMaybeRelative(config.DATABASE_URL),
     LOCAL_UPLOAD_DIR: resolveMaybeRelative(config.LOCAL_UPLOAD_DIR),
+    CONSOLE_DIST_DIR: resolveMaybeRelative(config.CONSOLE_DIST_DIR),
     SEMANTIC_INDEX_DIR: resolveMaybeRelative(config.SEMANTIC_INDEX_DIR)
   };
 }

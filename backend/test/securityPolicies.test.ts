@@ -76,6 +76,7 @@ function config(overrides: Partial<AppConfig> = {}): AppConfig {
     CORS_ORIGIN: "https://app.example.com",
     DATABASE_URL: `file:${join(tmpdir(), "mia-security-policy-test.db")}`,
     LOCAL_UPLOAD_DIR: join(tmpdir(), "mia-security-policy-uploads"),
+    CONSOLE_DIST_DIR: join(tmpdir(), "mia-security-policy-console-dist"),
     MIA_SECRET_ENCRYPTION_KEY: "test-secret-encryption-key",
     BOOTSTRAP_ADMIN_TOKEN: "bootstrap-secret",
     CONSOLE_SESSION_TTL_SECONDS: 28800,

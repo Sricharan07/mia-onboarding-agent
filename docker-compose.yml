@@ -9,6 +9,7 @@ services:
       CORS_ORIGIN: "${CORS_ORIGIN:?Set CORS_ORIGIN to the console and host app origins}"
       DATABASE_URL: file:/app/data/sqlite/local.db
       LOCAL_UPLOAD_DIR: /app/data/uploads
+      CONSOLE_DIST_DIR: /app/backend/console/dist
       MIA_SECRET_ENCRYPTION_KEY: ${MIA_SECRET_ENCRYPTION_KEY:-}
       BOOTSTRAP_ADMIN_TOKEN: ${BOOTSTRAP_ADMIN_TOKEN:-}
       CONSOLE_SESSION_TTL_SECONDS: ${CONSOLE_SESSION_TTL_SECONDS:-28800}

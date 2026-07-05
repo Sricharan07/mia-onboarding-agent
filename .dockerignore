@@ -5,7 +5,7 @@
 node_modules
 backend/dist
 sdk/dist
-backend/console
+backend/console/dist
 example
 docs
 data

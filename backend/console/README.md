@@ -17,8 +17,8 @@ Start the backend separately from the repo root:
 npm run dev:backend
 ```
 
-The console defaults to `http://localhost:4000` for backend API calls. You can change this in the console Settings page.
-Set `VITE_MIA_BACKEND_URL` in `backend/console/.env` to change the default for fresh browsers or deployments.
+The console uses `VITE_MIA_BACKEND_URL` when it is set, otherwise it defaults to the current browser origin. You can change this in the console Settings page.
+For local Vite development, copy `backend/console/.env.example` to `backend/console/.env` so the console talks to `http://localhost:4000`.
 
 Console login:
 
