@@ -1,0 +1,114 @@
+# HTTP API
+
+All API routes live under `/api/v1`. The console uses the same API as operators, and the SDK uses app-bound scoped keys.
+
+## Authentication
+
+Pass either:
+
+```http
+Authorization: Bearer mia_...
+```
+
+or:
+
+```http
+x-api-key: mia_...
+```
+
+Console admin sessions are also accepted for admin routes through the console login flow.
+
+## Scopes
+
+- `admin`: full administrative access.
+- `apps:read`: list/read accessible apps.
+- `ui-map:read`: read UI map versions, pages, and elements.
+- `workflows:read`: read workflow jobs and workflows.
+- `runtime:write`: resolve runtime requests, create/update runtime workflow sessions, and mint Gemini Live tokens.
+- `logs:write`: write execution logs.
+- `logs:read`: read execution logs and usage metrics.
+
+Non-admin keys must be bound to one app and at least one allowed browser origin.
+
+## System
+
+- `GET /api/v1/health`: lightweight process health.
+- `GET /api/v1/system/readiness`: database, config, provider, secret-storage, and local storage readiness.
+
+## Console Auth
+
+- `GET /api/v1/console/auth/status`
+- `POST /api/v1/console/auth/setup`
+- `POST /api/v1/console/auth/login`
+- `POST /api/v1/console/auth/logout`
+- `GET /api/v1/console/users`
+- `POST /api/v1/console/users`
+- `PATCH /api/v1/console/users/:userId/password`
+- `POST /api/v1/console/users/:userId/disable`
+- `GET /api/v1/console/sessions`
+- `POST /api/v1/console/sessions/:sessionId/revoke`
+
+`setup` requires `x-bootstrap-admin-token` and creates the first console admin only.
+
+## Apps And API Keys
+
+- `GET /api/v1/apps`
+- `POST /api/v1/apps`
+- `POST /api/v1/apps/:appId/archive`
+- `GET /api/v1/api-keys`
+- `POST /api/v1/api-keys`
+- `DELETE /api/v1/api-keys/:keyId`
+
+App records include base URL and optional UI scan profile settings. API key creation returns the raw key once; store it immediately.
+
+## UI Map
+
+- `POST /api/v1/apps/:appId/ui-map/preflight`
+- `POST /api/v1/apps/:appId/ui-map/scan`
+- `GET /api/v1/apps/:appId/ui-map/versions`
+- `GET /api/v1/ui-map/:uiMapVersionId/pages`
+- `GET /api/v1/pages/:pageId/elements`
+- `PATCH /api/v1/apps/:appId/ui-map/elements/:elementRowId`
+- `GET /api/v1/ui-map/interactive-sessions`
+- `POST /api/v1/apps/:appId/ui-map/interactive-sessions`
+- `GET /api/v1/ui-map/interactive-sessions/:sessionId`
+- `POST /api/v1/ui-map/interactive-sessions/:sessionId/goto`
+- `POST /api/v1/ui-map/interactive-sessions/:sessionId/capture-state`
+- `POST /api/v1/ui-map/interactive-sessions/:sessionId/finish`
+- `POST /api/v1/ui-map/interactive-sessions/:sessionId/cancel`
+
+Automated scans accept explicit routes and optional auth mode. Route discovery is configured on the app scan profile and stays on the app origin.
+
+## Workflows
+
+- `POST /api/v1/apps/:appId/workflow-videos`
+- `GET /api/v1/apps/:appId/workflow-jobs`
+- `GET /api/v1/workflow-jobs/:jobId`
+- `POST /api/v1/workflow-jobs/:jobId/process`
+- `GET /api/v1/apps/:appId/workflows`
+- `GET /api/v1/workflows/:workflowId`
+- `GET /api/v1/workflows/:workflowId/review-report`
+- `PATCH /api/v1/workflows/:workflowId`
+- `POST /api/v1/workflows/:workflowId/approve`
+- `POST /api/v1/workflows/:workflowId/publish`
+- `POST /api/v1/workflows/:workflowId/archive`
+- `POST /api/v1/workflows/:workflowId/steps`
+- `PATCH /api/v1/workflows/:workflowId/steps/:stepId`
+- `DELETE /api/v1/workflows/:workflowId/steps/:stepId`
+- `POST /api/v1/workflows/:workflowId/steps/reorder`
+
+Workflow video uploads must be MP4, MOV, WebM, MKV, or MPEG and must match the claimed container type.
+
+## Runtime, Voice, Logs, And Metrics
+
+- `POST /api/v1/runtime/resolve`
+- `POST /api/v1/runtime/workflow-sessions`
+- `PATCH /api/v1/runtime/workflow-sessions/:runtimeSessionId`
+- `POST /api/v1/gemini/live-token`
+- `POST /api/v1/logs/execution`
+- `GET /api/v1/logs`
+- `GET /api/v1/metrics/usage`
+- `GET /api/v1/metrics/usage/timeseries`
+- `POST /api/v1/apps/:appId/semantic-index/rebuild`
+
+Runtime and log write routes are intended for app-bound SDK keys. Metrics and log reads are intended for console operators or server-side integrations.

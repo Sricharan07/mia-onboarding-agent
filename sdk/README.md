@@ -2,6 +2,8 @@
 
 Browser SDK for the self-hosted MIA onboarding agent.
 
+Full integration guidance lives in the repository's [SDK guide](https://github.com/Sricharan07/mia-onboarding-agent/blob/main/docs/sdk.md).
+
 ## Install
 
 ```bash
@@ -49,6 +51,7 @@ Create an app-bound SDK key in the MIA console with:
 - allowed browser origins for the host app
 
 Do not ship admin API keys in browser code.
+The SDK key's allowed origins must include the exact browser origin that loads the host app.
 
 ## Configuration
 
@@ -79,6 +82,8 @@ Voice mode requires the backend to be configured with Gemini Live credentials an
 await AIOnboardingAgent.startVoice();
 await AIOnboardingAgent.stopVoice();
 ```
+
+If voice fails, check the backend readiness endpoint and confirm the SDK key has `runtime:write`.
 
 ## License
 

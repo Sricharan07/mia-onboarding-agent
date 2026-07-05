@@ -1,13 +1,24 @@
 # MIA Onboarding Agent
 
-Open-source, self-hosted AI onboarding agent for SaaS products.
+Open-source, self-hosted AI onboarding agent for SaaS products. MIA maps a product UI, turns approved workflow recordings into guided onboarding flows, and exposes a browser SDK that can answer user requests and execute published workflows inside the host app.
 
-## What Exists Now
+## Project Layout
 
 - `backend/` contains the TypeScript backend, SQLite persistence, API routes, UI mapper, workflow processing, Gemini Live token minting, and provider adapters.
 - `backend/console/` contains the backend-connected console UI.
 - `sdk/` contains the browser SDK with Mia cursor, Gemini Live voice/screen streaming, runtime context, and workflow execution.
 - `example/demo-crm+sdk/` demonstrates the SDK inside a host app.
+
+## Documentation
+
+- [Production deployment](docs/production.md)
+- [SDK integration](docs/sdk.md)
+- [HTTP API](docs/api.md)
+- [Security model](docs/security.md)
+- [Database operations](docs/database.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Contributing](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
 
 ## Local Setup
 
@@ -22,7 +33,7 @@ The backend listens on `http://localhost:4000` by default.
 
 Set `CORS_ORIGIN` to your host app origin in production, for example `https://app.example.com`. Use comma-separated origins for multiple apps.
 
-Required minimum provider config:
+Required minimum production config:
 
 ```bash
 GEMINI_API_KEY=...
@@ -30,6 +41,8 @@ BOOTSTRAP_ADMIN_TOKEN=long-random-bootstrap-token
 MIA_SECRET_ENCRYPTION_KEY=long-random-secret-encryption-key
 OPENAI_API_KEY=...
 ```
+
+`BOOTSTRAP_ADMIN_TOKEN` is needed only while creating the first console admin. Keep `MIA_SECRET_ENCRYPTION_KEY` stable for the lifetime of the database so saved scan credentials remain decryptable.
 
 Create the first console admin in the console, or with the setup endpoint:
 
@@ -60,7 +73,7 @@ curl -X POST http://localhost:4000/api/v1/api-keys \
 
 All non-admin keys must include `appId` and `allowedOrigins`. Console users manage SDK keys from the self-hosted console.
 
-Rebuild the local semantic index for an existing app after scans/workflow imports:
+Rebuild the local semantic index for an existing app after scans or workflow imports:
 
 ```bash
 curl -X POST http://localhost:4000/api/v1/apps/<app_id>/semantic-index/rebuild \
@@ -74,7 +87,7 @@ cp .env.example .env
 docker compose up --build
 ```
 
-The backend container stores SQLite, uploads, and LanceDB semantic index files in the `mia-data` volume.
+The Docker image serves the console at `/` and the API under `/api/v1`. The backend container stores SQLite, uploads, and LanceDB semantic index files in the `mia-data` volume. See [Production deployment](docs/production.md) before exposing the service publicly.
 
 ## Console
 
@@ -92,7 +105,7 @@ Gemini, OpenAI embeddings, and LanceDB local storage are required for provider-b
 
 Runtime-sensitive SDK/backend routes are protected with scoped API keys. API key management requires a signed-in console admin or an `admin` API key.
 
-To add a customer web app for UI mapping:
+To add a web app for UI mapping:
 
 1. Open Console -> Overview and follow the activation checklist.
 2. Create an application record with the app name, slug, and base URL.
@@ -127,8 +140,11 @@ For authenticated UI ingestion, prefer the per-app scan profile in the console. 
 ## Useful Commands
 
 ```bash
+npm run verify
 npm run build
 npm run test
 npm run dev:backend
-cd backend/console && npm run build
+npm run dev:console
+npm run build:console
+npm run pack:sdk
 ```

@@ -4,6 +4,8 @@ Local Vite console for operating the MIA onboarding backend.
 
 The console connects to the backend APIs in `backend/src/routes` and intentionally avoids local mock data for backend-backed features.
 
+In the production Docker image, the backend serves the built console at `/` and API routes under `/api/v1`.
+
 ## Run Locally
 
 ```bash
@@ -41,3 +43,10 @@ Create the first admin with BOOTSTRAP_ADMIN_TOKEN, then sign in with admin email
 - First-run activation: app setup, scan profile, UI map, SDK key, and runtime verification checklist.
 - UI map preflight: base URL, route, auth selector, privacy selector, and route-discovery checks before scan.
 - Console admins: create admins, change password, disable users, and revoke console sessions.
+
+## Operator Docs
+
+- [Production deployment](../../docs/production.md)
+- [HTTP API](../../docs/api.md)
+- [Security model](../../docs/security.md)
+- [Troubleshooting](../../docs/troubleshooting.md)
