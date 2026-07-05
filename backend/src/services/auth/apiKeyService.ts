@@ -12,6 +12,9 @@ export class ApiKeyService {
   create(input: { name: string; scopes: ApiKeyScope[]; appId?: string | null; allowedOrigins?: string[] }): ApiKeyRecord & { key: string } {
     const appId = input.appId?.trim() || null;
     const allowedOrigins = normalizeAllowedOrigins(input.allowedOrigins ?? []);
+    if (appId) {
+      this.repositories.getActiveApp(appId);
+    }
     if (!input.scopes.includes("admin")) {
       if (!appId) {
         throw new AppError("API_KEY_APP_REQUIRED", "Non-admin API keys must be bound to an app.", 400);
@@ -19,7 +22,6 @@ export class ApiKeyService {
       if (allowedOrigins.length === 0) {
         throw new AppError("API_KEY_ORIGIN_REQUIRED", "Non-admin API keys must include at least one allowed origin.", 400);
       }
-      this.repositories.getApp(appId);
     }
 
     const prefix = randomBytes(5).toString("hex");
@@ -95,6 +97,7 @@ export class ApiKeyService {
       throw new AppError("API_KEY_REQUIRED", "A valid API key is required for this endpoint.", 401);
     }
     const key = auth;
+    if (appId) this.repositories.getActiveApp(appId);
     if (key.scopes.includes("admin")) return;
     if (!appId) {
       throw new AppError("API_KEY_APP_REQUIRED", "An appId is required for this API key.", 403);
@@ -102,7 +105,6 @@ export class ApiKeyService {
     if (!key.appId || key.appId !== appId) {
       throw new AppError("API_KEY_APP_FORBIDDEN", "API key is not allowed to access this app.", 403);
     }
-
     const requestOrigin = requestOriginFromHeaders(headers);
     if (!requestOrigin || !key.allowedOrigins.includes(requestOrigin)) {
       throw new AppError("API_KEY_ORIGIN_FORBIDDEN", "Request origin is not allowed for this API key.", 403, {

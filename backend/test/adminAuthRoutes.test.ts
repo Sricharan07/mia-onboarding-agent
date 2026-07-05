@@ -8,6 +8,7 @@ import type { AppConfig } from "../src/config/env.js";
 import { createDatabase } from "../src/db/database.js";
 import { Repositories } from "../src/db/repositories.js";
 import type { Workflow } from "../src/schemas/domain.js";
+import { AppError } from "../src/utils/errors.js";
 
 test("admin routes require an admin API key after bootstrap", async () => {
   const dir = mkdtempSync(join(tmpdir(), "mia-auth-"));
@@ -29,6 +30,14 @@ test("admin routes require an admin API key after bootstrap", async () => {
     });
     assert.equal(bootstrap.statusCode, 200);
     const adminKey = bootstrap.json<{ key: string }>().key;
+
+    const invalidSlug = await app.inject({
+      method: "POST",
+      url: "/api/v1/apps",
+      headers: { authorization: `Bearer ${adminKey}` },
+      payload: { name: "Bad slug app", slug: "bad slug", baseUrl: "http://localhost:3000" }
+    });
+    assert.equal(invalidSlug.statusCode, 400);
 
     const authenticatedCreate = await app.inject({
       method: "POST",
@@ -143,6 +152,21 @@ test("console users sign in with email and password and authorize admin routes",
     });
     assert.equal(authenticatedList.statusCode, 200);
     assert.equal(authenticatedList.json<{ items: unknown[] }>().items.length, 1);
+
+    const archived = await app.inject({
+      method: "POST",
+      url: `/api/v1/apps/${appId}/archive`,
+      headers: { authorization: `Bearer ${loginToken}` },
+      payload: {}
+    });
+    assert.equal(archived.statusCode, 200);
+
+    const archivedWorkflows = await app.inject({
+      method: "GET",
+      url: `/api/v1/apps/${appId}/workflows`,
+      headers: { authorization: `Bearer ${loginToken}` }
+    });
+    assert.equal(archivedWorkflows.statusCode, 404);
   } finally {
     await app.close();
     rmSync(dir, { recursive: true, force: true });
@@ -248,6 +272,34 @@ test("app scan config is app-scoped and does not expose stored passwords", async
   }
 });
 
+test("encrypted scan config fails loudly when the secret key is wrong", () => {
+  const dir = mkdtempSync(join(tmpdir(), "mia-scan-secret-"));
+  const config = testConfig(dir);
+  const db = createDatabase(config);
+  const repositories = new Repositories(db, "correct-secret-key");
+
+  try {
+    repositories.upsertApp({
+      name: "Secret app",
+      slug: "secret-app",
+      baseUrl: "http://localhost:3000",
+      uiScanConfig: {
+        authMode: "login_form",
+        password: "stored-password"
+      }
+    });
+
+    const wrongKeyRepositories = new Repositories(db, "wrong-secret-key");
+    assert.throws(
+      () => wrongKeyRepositories.listApps(),
+      (error) => error instanceof AppError && error.code === "SECRET_DECRYPTION_FAILED"
+    );
+  } finally {
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("workflow metadata patch accepts only editable fields", async () => {
   const dir = mkdtempSync(join(tmpdir(), "mia-workflow-routes-"));
   const config = testConfig(dir);
@@ -264,9 +316,10 @@ test("workflow metadata patch accepts only editable fields", async () => {
     });
     const adminKey = bootstrap.json<{ key: string }>().key;
 
+    const appId = repositories.upsertApp({ name: "Route app", slug: "route", baseUrl: "http://localhost:3000" }).id;
     repositories.saveWorkflow(workflow({
       workflowId: "workflow_patchable",
-      appId: "app_route"
+      appId
     }));
 
     const patch = await app.inject({
@@ -313,11 +366,12 @@ test("CORS preflight allows console mutation methods", async () => {
         headers: {
           origin: "http://127.0.0.1:5191",
           "access-control-request-method": method,
-          "access-control-request-headers": "authorization,content-type"
+          "access-control-request-headers": "authorization,content-type,x-api-key"
         }
       });
       assert.equal(preflight.statusCode, 204);
       assert.match(String(preflight.headers["access-control-allow-methods"]), new RegExp(method));
+      assert.match(String(preflight.headers["access-control-allow-headers"]), /x-api-key/i);
     }
   } finally {
     await app.close();
@@ -396,6 +450,42 @@ test("non-admin API keys are bound to one app and allowed origins", async () => 
       payload: { eventType: "session_started" }
     });
     assert.equal(missingApp.statusCode, 403);
+
+    const archived = await app.inject({
+      method: "POST",
+      url: `/api/v1/apps/${appId}/archive`,
+      headers: { authorization: `Bearer ${adminKey}` },
+      payload: {}
+    });
+    assert.equal(archived.statusCode, 200);
+
+    const archivedAdminRead = await app.inject({
+      method: "GET",
+      url: `/api/v1/apps/${appId}/workflows`,
+      headers: { authorization: `Bearer ${adminKey}` }
+    });
+    assert.equal(archivedAdminRead.statusCode, 404);
+
+    const archivedKeyUse = await app.inject({
+      method: "POST",
+      url: "/api/v1/logs/execution",
+      headers: { authorization: `Bearer ${sdkKey}`, origin: "http://localhost:3000" },
+      payload: { appId, eventType: "session_started" }
+    });
+    assert.equal(archivedKeyUse.statusCode, 401);
+
+    const archivedAppKey = await app.inject({
+      method: "POST",
+      url: "/api/v1/api-keys",
+      headers: { authorization: `Bearer ${adminKey}` },
+      payload: {
+        name: "archived SDK key",
+        scopes: ["logs:write"],
+        appId,
+        allowedOrigins: ["http://localhost:3000"]
+      }
+    });
+    assert.equal(archivedAppKey.statusCode, 404);
   } finally {
     await app.close();
     rmSync(dir, { recursive: true, force: true });
@@ -500,6 +590,7 @@ function testConfig(dir: string): AppConfig {
     CORS_ORIGIN: "*",
     DATABASE_URL: `file:${join(dir, "local.db")}`,
     LOCAL_UPLOAD_DIR: join(dir, "uploads"),
+    MIA_SECRET_ENCRYPTION_KEY: "test-secret-encryption-key",
     BOOTSTRAP_ADMIN_TOKEN: "bootstrap-secret",
     CONSOLE_SESSION_TTL_SECONDS: 28800,
     RATE_LIMIT_WINDOW_MS: 60_000,

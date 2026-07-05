@@ -21,6 +21,7 @@ const envSchema = z.object({
   CORS_ORIGIN: z.string().default("*"),
   DATABASE_URL: z.string().default("file:./data/sqlite/local.db"),
   LOCAL_UPLOAD_DIR: z.string().default("./data/uploads"),
+  MIA_SECRET_ENCRYPTION_KEY: z.string().optional(),
   BOOTSTRAP_ADMIN_TOKEN: z.string().optional(),
   CONSOLE_SESSION_TTL_SECONDS: z.coerce.number().int().positive().default(60 * 60 * 8),
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),

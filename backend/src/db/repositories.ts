@@ -2,6 +2,7 @@ import type { Db } from "./database.js";
 import { createId, nowIso, slugToId } from "../utils/id.js";
 import { AppError, NotFoundError } from "../utils/errors.js";
 import type { AppRecord, AppUiScanConfig, UIElementRecord, UiScanAuthMode, Workflow, WorkflowStep } from "../schemas/domain.js";
+import { decryptSecret, encryptSecret, hasSecretEncryptionKey, isEncryptedSecret } from "../services/security/secretCrypto.js";
 
 type Row = Record<string, unknown>;
 export type ApiKeyScope = "apps:read" | "ui-map:read" | "workflows:read" | "runtime:write" | "logs:write" | "logs:read" | "admin";
@@ -71,6 +72,7 @@ export type AppUiScanConfigInput = Partial<Omit<AppUiScanConfigWithSecrets, "pas
 
 export type AppUiScanConfigWithSecrets = AppUiScanConfig & {
   password?: string;
+  passwordSecret?: string;
 };
 
 export type UiMapScanConfig = {
@@ -83,18 +85,29 @@ export type UiMapScanConfig = {
 };
 
 export class Repositories {
-  constructor(private readonly db: Db) {}
+  constructor(
+    private readonly db: Db,
+    private readonly secretEncryptionKey?: string
+  ) {}
+
+  ping(): void {
+    this.db.prepare("SELECT 1").get();
+  }
 
   listApps(): AppRecord[] {
-    return (this.db.prepare("SELECT * FROM apps ORDER BY created_at DESC").all() as Row[]).map(mapApp);
+    return (this.db.prepare("SELECT * FROM apps WHERE archived_at IS NULL ORDER BY created_at DESC").all() as Row[])
+      .map((row) => mapApp(row, this.secretEncryptionKey));
   }
 
   upsertApp(input: { name: string; slug: string; baseUrl: string; uiScanConfig?: AppUiScanConfigInput }): AppRecord {
     const existing = this.db.prepare("SELECT * FROM apps WHERE slug = ?").get(input.slug) as Row | undefined;
+    if (existing?.archived_at) {
+      throw new AppError("APP_ARCHIVED", "Archived apps cannot be updated. Create a new app slug instead.", 409);
+    }
     const now = nowIso();
     const id = existing ? String(existing.id) : slugToId("app", input.slug);
-    const currentScanConfig = parseStoredUiScanConfig(existing?.ui_scan_config_json);
-    const nextScanConfig = mergeUiScanConfig(currentScanConfig, input.uiScanConfig);
+    const currentScanConfig = parseStoredUiScanConfig(existing?.ui_scan_config_json, this.secretEncryptionKey);
+    const nextScanConfig = mergeUiScanConfig(currentScanConfig, input.uiScanConfig, this.secretEncryptionKey);
 
     this.db.prepare(`
       INSERT INTO apps (id, name, slug, base_url, ui_scan_config_json, created_at, updated_at)
@@ -104,7 +117,7 @@ export class Repositories {
         base_url = excluded.base_url,
         ui_scan_config_json = excluded.ui_scan_config_json,
         updated_at = excluded.updated_at
-    `).run(id, input.name, input.slug, input.baseUrl, JSON.stringify(nextScanConfig), existing?.created_at ?? now, now);
+    `).run(id, input.name, input.slug, input.baseUrl, JSON.stringify(serializeUiScanConfig(nextScanConfig, this.secretEncryptionKey)), existing?.created_at ?? now, now);
 
     return this.getApp(id);
   }
@@ -112,13 +125,41 @@ export class Repositories {
   getApp(appId: string): AppRecord {
     const row = this.db.prepare("SELECT * FROM apps WHERE id = ?").get(appId) as Row | undefined;
     if (!row) throw new NotFoundError(`App not found: ${appId}`);
-    return mapApp(row);
+    return mapApp(row, this.secretEncryptionKey);
+  }
+
+  getActiveApp(appId: string): AppRecord {
+    const app = this.getApp(appId);
+    if (app.archivedAt) throw new NotFoundError(`App not found: ${appId}`);
+    return app;
   }
 
   getAppUiScanConfig(appId: string): AppUiScanConfigWithSecrets {
     const row = this.db.prepare("SELECT ui_scan_config_json FROM apps WHERE id = ?").get(appId) as Row | undefined;
     if (!row) throw new NotFoundError(`App not found: ${appId}`);
-    return parseStoredUiScanConfig(row.ui_scan_config_json);
+    return parseStoredUiScanConfig(row.ui_scan_config_json, this.secretEncryptionKey);
+  }
+
+  archiveApp(appId: string): AppRecord {
+    const now = nowIso();
+    let changes = 0;
+    const tx = this.db.transaction(() => {
+      const result = this.db.prepare("UPDATE apps SET archived_at = COALESCE(archived_at, ?), updated_at = ? WHERE id = ?")
+        .run(now, now, appId);
+      changes = result.changes;
+      this.db.prepare("UPDATE api_keys SET revoked_at = COALESCE(revoked_at, ?) WHERE app_id = ?")
+        .run(now, appId);
+    });
+    tx();
+    const result = { changes };
+    if (result.changes === 0) throw new NotFoundError(`App not found: ${appId}`);
+    return this.getAppIncludingArchived(appId);
+  }
+
+  private getAppIncludingArchived(appId: string): AppRecord {
+    const row = this.db.prepare("SELECT * FROM apps WHERE id = ?").get(appId) as Row | undefined;
+    if (!row) throw new NotFoundError(`App not found: ${appId}`);
+    return mapApp(row, this.secretEncryptionKey);
   }
 
   createUiMapVersion(appId: string, source = "runtime_browser_scan", scanConfig?: UiMapScanConfig): { id: string; appId: string; version: string; status: string; createdAt: string } {
@@ -179,6 +220,16 @@ export class Repositories {
       SELECT id, app_id as appId, version, source, status, created_at as createdAt, completed_at as completedAt, error
       FROM ui_map_versions WHERE app_id = ? ORDER BY created_at DESC
     `).all(appId);
+  }
+
+  getLatestCompletedUiMapVersion(appId: string): { id: string; appId: string; version: string; status: string; createdAt: string; completedAt: string | null } | undefined {
+    return this.db.prepare(`
+      SELECT id, app_id as appId, version, status, created_at as createdAt, completed_at as completedAt
+      FROM ui_map_versions
+      WHERE app_id = ? AND status = 'completed'
+      ORDER BY completed_at DESC, created_at DESC
+      LIMIT 1
+    `).get(appId) as { id: string; appId: string; version: string; status: string; createdAt: string; completedAt: string | null } | undefined;
   }
 
   createPage(input: { appId: string; uiMapVersionId: string; name: string; route: string; url: string; title?: string; status: string; error?: string }): string {
@@ -284,28 +335,28 @@ export class Repositories {
     return rows.map((row) => JSON.parse(row.raw_json) as UIElementRecord);
   }
 
+  countUiElementsForVersion(uiMapVersionId: string): number {
+    const row = this.db.prepare("SELECT COUNT(*) as count FROM ui_elements WHERE ui_map_version_id = ?")
+      .get(uiMapVersionId) as { count: number };
+    return Number(row.count);
+  }
+
   getElementByElementId(appId: string, elementId: string): UIElementRecord | undefined {
-    const row = this.db.prepare("SELECT raw_json FROM ui_elements WHERE app_id = ? AND element_id = ? ORDER BY created_at DESC LIMIT 1")
-      .get(appId, elementId) as { raw_json: string } | undefined;
+    const latestVersion = this.getLatestCompletedUiMapVersion(appId);
+    if (!latestVersion) return undefined;
+    const row = this.db.prepare("SELECT raw_json FROM ui_elements WHERE app_id = ? AND ui_map_version_id = ? AND element_id = ? ORDER BY created_at DESC LIMIT 1")
+      .get(appId, latestVersion.id, elementId) as { raw_json: string } | undefined;
     return row ? JSON.parse(row.raw_json) as UIElementRecord : undefined;
   }
 
   listLatestUiElementsForApp(appId: string, limit = 200): UIElementRecord[] {
-    const latestVersion = this.db.prepare(`
-      SELECT id
-      FROM ui_map_versions
-      WHERE app_id = ? AND status = 'completed'
-      ORDER BY created_at DESC
-      LIMIT 1
-    `).get(appId) as { id: string } | undefined;
-
-    const params: unknown[] = latestVersion ? [appId, latestVersion.id, limit] : [appId, limit];
-    const versionClause = latestVersion ? "AND ui_map_version_id = ?" : "";
+    const latestVersion = this.getLatestCompletedUiMapVersion(appId);
+    if (!latestVersion) return [];
     const rows = this.db.prepare(`
       SELECT raw_json
       FROM ui_elements
       WHERE app_id = ?
-      ${versionClause}
+      AND ui_map_version_id = ?
       ORDER BY
         CASE selector_quality
           WHEN 'strong' THEN 0
@@ -316,30 +367,39 @@ export class Repositories {
         route,
         label
       LIMIT ?
-    `).all(...params) as Array<{ raw_json: string }>;
+    `).all(appId, latestVersion.id, limit) as Array<{ raw_json: string }>;
     return rows.map((row) => JSON.parse(row.raw_json) as UIElementRecord);
   }
 
   listUiElementsForApp(appId: string): UIElementRecord[] {
+    const latestVersion = this.getLatestCompletedUiMapVersion(appId);
+    if (!latestVersion) return [];
     const rows = this.db.prepare(`
       SELECT raw_json
       FROM ui_elements
-      WHERE app_id = ?
+      WHERE app_id = ? AND ui_map_version_id = ?
       ORDER BY updated_at DESC
-    `).all(appId) as Array<{ raw_json: string }>;
+    `).all(appId, latestVersion.id) as Array<{ raw_json: string }>;
     return rows.map((row) => JSON.parse(row.raw_json) as UIElementRecord);
   }
 
-  updateElement(elementId: string, input: { description?: string; tags?: string[] }): void {
-    const row = this.db.prepare("SELECT id, raw_json FROM ui_elements WHERE element_id = ? ORDER BY created_at DESC LIMIT 1").get(elementId) as { id: string; raw_json: string } | undefined;
-    if (!row) throw new NotFoundError(`Element not found: ${elementId}`);
+  updateLatestElement(appId: string, elementRowId: string, input: { description?: string; tags?: string[] }): void {
+    const latestVersion = this.getLatestCompletedUiMapVersion(appId);
+    if (!latestVersion) throw new NotFoundError(`Element not found: ${elementRowId}`);
+    const row = this.db.prepare(`
+      SELECT id, raw_json
+      FROM ui_elements
+      WHERE id = ? AND app_id = ? AND ui_map_version_id = ?
+      LIMIT 1
+    `).get(elementRowId, appId, latestVersion.id) as { id: string; raw_json: string } | undefined;
+    if (!row) throw new NotFoundError(`Element not found: ${elementRowId}`);
     const record = JSON.parse(row.raw_json) as UIElementRecord;
     const updated: UIElementRecord = { ...record, ...input, updatedAt: nowIso() };
     this.db.prepare(`
       UPDATE ui_elements
       SET description = ?, tags_json = ?, raw_json = ?, updated_at = ?
-      WHERE id = ?
-    `).run(updated.description, JSON.stringify(updated.tags), JSON.stringify(updated), updated.updatedAt, row.id);
+      WHERE id = ? AND app_id = ? AND ui_map_version_id = ?
+    `).run(updated.description, JSON.stringify(updated.tags), JSON.stringify(updated), updated.updatedAt, row.id, appId, latestVersion.id);
   }
 
   createWorkflowVideo(input: {
@@ -599,11 +659,16 @@ export class Repositories {
   }
 
   updateRuntimeSession(id: string, input: { status: string; currentStepId?: string; values?: Record<string, unknown>; error?: string }): void {
+    const valuesJson = input.values === undefined ? null : JSON.stringify(input.values);
     const result = this.db.prepare(`
       UPDATE runtime_sessions
-      SET status = ?, current_step_id = ?, values_json = ?, completed_at = CASE WHEN ? IN ('completed', 'cancelled', 'failed') THEN ? ELSE completed_at END, error = ?
+      SET status = ?,
+          current_step_id = CASE WHEN ? IN ('completed', 'cancelled', 'failed') THEN NULL ELSE COALESCE(?, current_step_id) END,
+          values_json = COALESCE(?, values_json),
+          completed_at = CASE WHEN ? IN ('completed', 'cancelled', 'failed') THEN ? ELSE completed_at END,
+          error = ?
       WHERE id = ?
-    `).run(input.status, input.currentStepId ?? null, JSON.stringify(input.values ?? {}), input.status, nowIso(), input.error ?? null, id);
+    `).run(input.status, input.status, input.currentStepId ?? null, valuesJson, input.status, nowIso(), input.error ?? null, id);
 
     if (result.changes === 0) {
       throw new NotFoundError(`Runtime session not found: ${id}`);
@@ -720,6 +785,26 @@ export class Repositories {
     return row ? mapConsoleUser(row) : undefined;
   }
 
+  listConsoleUsers(): Array<Omit<ConsoleUserRecord, "passwordHash">> {
+    return (this.db.prepare("SELECT * FROM console_users ORDER BY created_at ASC").all() as Row[])
+      .map((row) => stripConsolePassword(mapConsoleUser(row)));
+  }
+
+  updateConsoleUserPassword(userId: string, passwordHash: string): Omit<ConsoleUserRecord, "passwordHash"> {
+    const result = this.db.prepare("UPDATE console_users SET password_hash = ?, updated_at = ? WHERE id = ? AND disabled_at IS NULL")
+      .run(passwordHash, nowIso(), userId);
+    if (result.changes === 0) throw new NotFoundError(`Console user not found: ${userId}`);
+    return stripConsolePassword(this.getConsoleUserById(userId));
+  }
+
+  disableConsoleUser(userId: string): Omit<ConsoleUserRecord, "passwordHash"> {
+    const result = this.db.prepare("UPDATE console_users SET disabled_at = COALESCE(disabled_at, ?), updated_at = ? WHERE id = ?")
+      .run(nowIso(), nowIso(), userId);
+    if (result.changes === 0) throw new NotFoundError(`Console user not found: ${userId}`);
+    this.db.prepare("UPDATE console_sessions SET revoked_at = COALESCE(revoked_at, ?) WHERE user_id = ?").run(nowIso(), userId);
+    return stripConsolePassword(this.getConsoleUserById(userId));
+  }
+
   markConsoleUserLogin(userId: string): void {
     this.db.prepare("UPDATE console_users SET last_login_at = ?, updated_at = ? WHERE id = ?")
       .run(nowIso(), nowIso(), userId);
@@ -757,6 +842,32 @@ export class Repositories {
     `).get(id) as Row | undefined;
     if (!row) throw new NotFoundError(`Console session not found: ${id}`);
     return mapConsoleSession(row);
+  }
+
+  listConsoleSessions(): Array<Omit<ConsoleSessionRecord, "tokenHash">> {
+    const rows = this.db.prepare(`
+      SELECT
+        console_sessions.id,
+        console_sessions.user_id,
+        console_sessions.token_hash,
+        console_sessions.created_at,
+        console_sessions.expires_at,
+        console_sessions.last_used_at,
+        console_sessions.revoked_at,
+        console_users.id as user_id_value,
+        console_users.email as user_email,
+        console_users.name as user_name,
+        console_users.role as user_role,
+        console_users.created_at as user_created_at,
+        console_users.updated_at as user_updated_at,
+        console_users.last_login_at as user_last_login_at,
+        console_users.disabled_at as user_disabled_at
+      FROM console_sessions
+      INNER JOIN console_users ON console_users.id = console_sessions.user_id
+      ORDER BY console_sessions.created_at DESC
+      LIMIT 100
+    `).all() as Row[];
+    return rows.map((row) => stripConsoleSessionToken(mapConsoleSession(row)));
   }
 
   markConsoleSessionUsed(id: string): void {
@@ -847,10 +958,17 @@ export class Repositories {
 
     return [...points.values()].sort((a, b) => a.bucket.localeCompare(b.bucket));
   }
+
+  assertUiScanConfigsReadable(): void {
+    const rows = this.db.prepare("SELECT ui_scan_config_json FROM apps WHERE ui_scan_config_json IS NOT NULL").all() as Row[];
+    for (const row of rows) {
+      parseStoredUiScanConfig(row.ui_scan_config_json, this.secretEncryptionKey);
+    }
+  }
 }
 
-function mapApp(row: Row): AppRecord {
-  const scanConfig = parseStoredUiScanConfig(row.ui_scan_config_json);
+function mapApp(row: Row, secretEncryptionKey?: string): AppRecord {
+  const scanConfig = parseStoredUiScanConfig(row.ui_scan_config_json, secretEncryptionKey);
   return {
     id: String(row.id),
     name: String(row.name),
@@ -858,25 +976,40 @@ function mapApp(row: Row): AppRecord {
     baseUrl: String(row.base_url),
     uiScanConfig: sanitizeUiScanConfig(scanConfig),
     createdAt: String(row.created_at),
-    updatedAt: String(row.updated_at)
+    updatedAt: String(row.updated_at),
+    archivedAt: row.archived_at ? String(row.archived_at) : null
   };
 }
 
-function mergeUiScanConfig(current: AppUiScanConfigWithSecrets, input?: AppUiScanConfigInput): AppUiScanConfigWithSecrets {
+function mergeUiScanConfig(current: AppUiScanConfigWithSecrets, input?: AppUiScanConfigInput, secretEncryptionKey?: string): AppUiScanConfigWithSecrets {
   if (!input) return current;
-  const password = input.clearPassword
-    ? undefined
-    : input.password !== undefined
-      ? normalizeOptionalString(input.password)
-      : current.password;
+  const nextPassword = input.password !== undefined ? normalizeOptionalString(input.password) : undefined;
+  let password = current.password;
+  let passwordSecret = current.passwordSecret;
+
+  if (input.clearPassword) {
+    password = undefined;
+    passwordSecret = undefined;
+  } else if (input.password !== undefined) {
+    if (nextPassword && !hasSecretEncryptionKey(secretEncryptionKey)) {
+      throw new AppError(
+        "SCAN_SECRET_ENCRYPTION_REQUIRED",
+        "Set MIA_SECRET_ENCRYPTION_KEY before saving per-app scan passwords.",
+        400
+      );
+    }
+    password = nextPassword;
+    passwordSecret = nextPassword ? encryptSecret(nextPassword, secretEncryptionKey) : undefined;
+  }
 
   return {
     routes: input.routes ? normalizeRouteList(input.routes) : current.routes,
     authMode: normalizeAuthMode(input.authMode) ?? current.authMode,
     loginUrl: input.loginUrl !== undefined ? normalizeOptionalString(input.loginUrl) : current.loginUrl,
     username: input.username !== undefined ? normalizeOptionalString(input.username) : current.username,
-    passwordConfigured: Boolean(password),
+    passwordConfigured: Boolean(password || passwordSecret),
     password,
+    passwordSecret,
     usernameSelector: input.usernameSelector !== undefined ? normalizeOptionalString(input.usernameSelector) : current.usernameSelector,
     passwordSelector: input.passwordSelector !== undefined ? normalizeOptionalString(input.passwordSelector) : current.passwordSelector,
     submitSelector: input.submitSelector !== undefined ? normalizeOptionalString(input.submitSelector) : current.submitSelector,
@@ -893,35 +1026,44 @@ function mergeUiScanConfig(current: AppUiScanConfigWithSecrets, input?: AppUiSca
   };
 }
 
-function parseStoredUiScanConfig(value: unknown): AppUiScanConfigWithSecrets {
+function parseStoredUiScanConfig(value: unknown, secretEncryptionKey?: string): AppUiScanConfigWithSecrets {
   const fallback = defaultUiScanConfig();
   if (!value) return fallback;
 
+  let parsed: Partial<AppUiScanConfigWithSecrets>;
   try {
-    const parsed = JSON.parse(String(value)) as Partial<AppUiScanConfigWithSecrets>;
-    const password = normalizeOptionalString(parsed.password);
-    return {
-      routes: parsed.routes ? normalizeRouteList(parsed.routes) : fallback.routes,
-      authMode: normalizeAuthMode(parsed.authMode) ?? fallback.authMode,
-      loginUrl: normalizeOptionalString(parsed.loginUrl),
-      username: normalizeOptionalString(parsed.username),
-      passwordConfigured: Boolean(password),
-      password,
-      usernameSelector: normalizeOptionalString(parsed.usernameSelector),
-      passwordSelector: normalizeOptionalString(parsed.passwordSelector),
-      submitSelector: normalizeOptionalString(parsed.submitSelector),
-      successUrlPattern: normalizeOptionalString(parsed.successUrlPattern),
-      postLoginWaitMs: validNonnegativeInteger(parsed.postLoginWaitMs) ? parsed.postLoginWaitMs : fallback.postLoginWaitMs,
-      ignoredSelectors: parsed.ignoredSelectors ? normalizeStringList(parsed.ignoredSelectors) : fallback.ignoredSelectors,
-      redactedSelectors: parsed.redactedSelectors ? normalizeStringList(parsed.redactedSelectors) : fallback.redactedSelectors,
-      routeDiscovery: {
-        enabled: Boolean(parsed.routeDiscovery?.enabled),
-        maxRoutes: normalizeMaxRoutes(parsed.routeDiscovery?.maxRoutes)
-      }
-    };
+    parsed = JSON.parse(String(value)) as Partial<AppUiScanConfigWithSecrets>;
   } catch {
-    return fallback;
+    throw new AppError("SCAN_CONFIG_INVALID", "Stored UI scan config is not valid JSON.", 500);
   }
+
+  const legacyPassword = normalizeOptionalString(parsed.password);
+  const passwordSecret = normalizeOptionalString(parsed.passwordSecret);
+  const password = passwordSecret
+    ? decryptSecret(passwordSecret, secretEncryptionKey)
+    : legacyPassword && isEncryptedSecret(legacyPassword)
+      ? decryptSecret(legacyPassword, secretEncryptionKey)
+      : legacyPassword;
+  return {
+    routes: parsed.routes ? normalizeRouteList(parsed.routes) : fallback.routes,
+    authMode: normalizeAuthMode(parsed.authMode) ?? fallback.authMode,
+    loginUrl: normalizeOptionalString(parsed.loginUrl),
+    username: normalizeOptionalString(parsed.username),
+    passwordConfigured: Boolean(password || passwordSecret),
+    password,
+    passwordSecret,
+    usernameSelector: normalizeOptionalString(parsed.usernameSelector),
+    passwordSelector: normalizeOptionalString(parsed.passwordSelector),
+    submitSelector: normalizeOptionalString(parsed.submitSelector),
+    successUrlPattern: normalizeOptionalString(parsed.successUrlPattern),
+    postLoginWaitMs: validNonnegativeInteger(parsed.postLoginWaitMs) ? parsed.postLoginWaitMs : fallback.postLoginWaitMs,
+    ignoredSelectors: parsed.ignoredSelectors ? normalizeStringList(parsed.ignoredSelectors) : fallback.ignoredSelectors,
+    redactedSelectors: parsed.redactedSelectors ? normalizeStringList(parsed.redactedSelectors) : fallback.redactedSelectors,
+    routeDiscovery: {
+      enabled: Boolean(parsed.routeDiscovery?.enabled),
+      maxRoutes: normalizeMaxRoutes(parsed.routeDiscovery?.maxRoutes)
+    }
+  };
 }
 
 function defaultUiScanConfig(): AppUiScanConfigWithSecrets {
@@ -936,11 +1078,36 @@ function defaultUiScanConfig(): AppUiScanConfigWithSecrets {
   };
 }
 
-function sanitizeUiScanConfig(config: AppUiScanConfigWithSecrets): AppUiScanConfig {
-  const { password: _password, ...safeConfig } = config;
+function serializeUiScanConfig(config: AppUiScanConfigWithSecrets, secretEncryptionKey?: string): Record<string, unknown> {
+  const {
+    password: _password,
+    passwordSecret: currentPasswordSecret,
+    passwordConfigured: _passwordConfigured,
+    ...safeConfig
+  } = config;
+  let passwordSecret = currentPasswordSecret;
+  let legacyPassword: string | undefined;
+
+  if (config.password) {
+    if (hasSecretEncryptionKey(secretEncryptionKey)) {
+      passwordSecret = currentPasswordSecret ?? encryptSecret(config.password, secretEncryptionKey);
+    } else {
+      legacyPassword = config.password;
+    }
+  }
+
   return {
     ...safeConfig,
-    passwordConfigured: Boolean(config.password)
+    ...(passwordSecret ? { passwordSecret } : {}),
+    ...(legacyPassword ? { password: legacyPassword } : {})
+  };
+}
+
+function sanitizeUiScanConfig(config: AppUiScanConfigWithSecrets): AppUiScanConfig {
+  const { password: _password, passwordSecret: _passwordSecret, ...safeConfig } = config;
+  return {
+    ...safeConfig,
+    passwordConfigured: Boolean(config.password || config.passwordSecret)
   };
 }
 
@@ -1030,6 +1197,16 @@ function mapConsoleSession(row: Row): ConsoleSessionRecord {
 function mapConsoleRole(value: unknown): "admin" {
   if (value === "admin") return "admin";
   throw new AppError("CONSOLE_ROLE_INVALID", `Invalid console user role: ${String(value)}`, 500);
+}
+
+function stripConsolePassword(user: ConsoleUserRecord): Omit<ConsoleUserRecord, "passwordHash"> {
+  const { passwordHash: _passwordHash, ...safeUser } = user;
+  return safeUser;
+}
+
+function stripConsoleSessionToken(session: ConsoleSessionRecord): Omit<ConsoleSessionRecord, "tokenHash"> {
+  const { tokenHash: _tokenHash, ...safeSession } = session;
+  return safeSession;
 }
 
 function parseStringArray(value: unknown): string[] {

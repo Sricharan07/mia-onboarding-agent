@@ -1,6 +1,6 @@
-import { Camera, ChevronRight, FileJson, Navigation, RefreshCw, Square, XCircle } from "lucide-react";
+import { Camera, ChevronRight, FileJson, Filter, Navigation, RefreshCw, Save, Square, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { AppRecord, BackendApi, InteractiveUiMapSession, UiElement, UiMapVersion, UiPage, UiScanAuthMode } from "../api";
+import type { AppRecord, BackendApi, InteractiveUiMapSession, UiElement, UiMapPreflightReport, UiMapVersion, UiPage, UiScanAuthMode } from "../api";
 import { EmptyTableRow, Panel, RawJsonViewer, SelectorQualityBadge, StatusPill } from "../components/console";
 import { formatDate } from "../utils/format";
 
@@ -29,6 +29,8 @@ export function UiMapPage({
   const [routeDraft, setRouteDraft] = useState("/");
   const [stateName, setStateName] = useState("default");
   const [stateReason, setStateReason] = useState("");
+  const [preflight, setPreflight] = useState<UiMapPreflightReport | null>(null);
+  const [pending, setPending] = useState("");
 
   useEffect(() => {
     if (!app) return;
@@ -36,7 +38,32 @@ export function UiMapPage({
     setRoutes(nextRoutes.join("\n"));
     setAuthMode(app.uiScanConfig.authMode);
     setRouteDraft(nextRoutes[0] ?? "/");
+    setPreflight(null);
   }, [app?.id]);
+
+  useEffect(() => {
+    setPreflight(null);
+  }, [routes, authMode]);
+
+  const runPreflight = async (): Promise<UiMapPreflightReport | null> => {
+    if (!app) {
+      showToast("Create an app first.");
+      return null;
+    }
+    const routeList = routes.split("\n").map((route) => route.trim()).filter(Boolean);
+    setPending("preflight");
+    try {
+      const report = await api.preflightUiMap(app.id, routeList, authMode);
+      setPreflight(report);
+      showToast(report.ok ? "Preflight passed" : "Preflight needs attention");
+      return report;
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : "Unable to run UI map preflight");
+      return null;
+    } finally {
+      setPending("");
+    }
+  };
 
   const scan = async () => {
     if (!app) {
@@ -44,16 +71,21 @@ export function UiMapPage({
       return;
     }
     if (authMode === "manual") {
-      showToast("Manual auth requires interactive scan.");
+      showToast("Manual auth uses interactive scan.");
       return;
     }
     const routeList = routes.split("\n").map((route) => route.trim()).filter(Boolean);
+    const report = preflight?.ok ? preflight : await runPreflight();
+    if (!report?.ok) return;
+    setPending("scan");
     try {
       await api.scanUiMap(app.id, routeList, authMode);
       await refresh(app.id);
       showToast("UI map scan started");
     } catch (cause) {
       showToast(cause instanceof Error ? cause.message : "Unable to scan UI map");
+    } finally {
+      setPending("");
     }
   };
 
@@ -63,6 +95,7 @@ export function UiMapPage({
       return;
     }
     const routeList = routes.split("\n").map((route) => route.trim()).filter(Boolean);
+    setPending("interactive");
     try {
       const nextSession = await api.startInteractiveUiMapSession(app.id, { routes: routeList, authMode });
       setSession(nextSession);
@@ -71,6 +104,8 @@ export function UiMapPage({
       showToast("Interactive mapping session started");
     } catch (cause) {
       showToast(cause instanceof Error ? cause.message : "Unable to start interactive mapping");
+    } finally {
+      setPending("");
     }
   };
 
@@ -150,10 +185,17 @@ export function UiMapPage({
               <option value="manual">Manual browser login</option>
             </select>
           </label>
-          <button className="button primary" type="button" onClick={() => void scan()}>
-            <RefreshCw size={16} />
-            Trigger backend scan
-          </button>
+          <div className="button-cluster">
+            <button className="button secondary" type="button" disabled={pending === "preflight"} onClick={() => void runPreflight()}>
+              <Filter size={16} />
+              {pending === "preflight" ? "Checking" : "Run preflight"}
+            </button>
+            <button className="button primary" type="button" disabled={authMode === "manual" || pending === "scan"} onClick={() => void scan()}>
+              <RefreshCw size={16} />
+              {authMode === "manual" ? "Use interactive scan" : pending === "scan" ? "Starting" : "Trigger backend scan"}
+            </button>
+          </div>
+          {preflight && <PreflightPanel report={preflight} />}
         </div>
       </Panel>
 
@@ -166,9 +208,9 @@ export function UiMapPage({
             Start a headed Playwright browser, sign in manually when needed, open hidden menus, modals, drawers, or table actions, then capture each meaningful state. Set <code>UI_SCAN_HEADLESS=false</code> locally to see the browser.
           </div>
           {!session ? (
-            <button className="button primary" type="button" onClick={() => void startInteractive()}>
+            <button className="button primary" type="button" disabled={pending === "interactive"} onClick={() => void startInteractive()}>
               <Camera size={16} />
-              Start interactive scan
+              {pending === "interactive" ? "Starting" : "Start interactive scan"}
             </button>
           ) : (
             <>
@@ -258,6 +300,22 @@ export function UiMapPage({
   );
 }
 
+function PreflightPanel({ report }: { report: UiMapPreflightReport }) {
+  return (
+    <div className="checklist-panel">
+      {report.checks.map((check) => (
+        <div className="check-row-item" key={check.id}>
+          <StatusPill tone={check.status === "passed" ? "green" : check.status === "warning" ? "yellow" : "red"} label={check.status} />
+          <span>
+            <strong>{check.label}</strong>
+            <span>{check.message}{check.fix ? ` ${check.fix}` : ""}</span>
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function stateSummary(elements: UiElement[]): string {
   const states = new Set(elements.map((element) => element.stateName ?? "default"));
   return states.size === 0 ? "None" : [...states].join(", ");
@@ -281,15 +339,33 @@ export function UiMapDetailPage({
   const [rawOpen, setRawOpen] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [savingElementId, setSavingElementId] = useState<string | null>(null);
+  const [qualityFilter, setQualityFilter] = useState("all");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const filteredElements = elements.filter((element) => (qualityFilter === "all" || element.selectorQuality === qualityFilter) && (typeFilter === "all" || element.elementType === typeFilter));
+  const dirtyElements = filteredElements.filter((element) => drafts[element.id] !== undefined && drafts[element.id] !== element.description);
 
   const saveElement = async (element: UiElement) => {
-    setSavingElementId(element.elementId);
+    setSavingElementId(element.id);
     try {
-      await api.updateElement(element.elementId, { description: drafts[element.elementId] ?? element.description });
+      await api.updateElement(element.appId, element.id, { description: drafts[element.id] ?? element.description });
       await refresh(element.appId);
       showToast("Element metadata saved");
     } catch (cause) {
       showToast(cause instanceof Error ? cause.message : "Unable to save element");
+    } finally {
+      setSavingElementId(null);
+    }
+  };
+
+  const saveAll = async () => {
+    setSavingElementId("all");
+    try {
+      await Promise.all(dirtyElements.map((element) => api.updateElement(element.appId, element.id, { description: drafts[element.id] })));
+      await refresh(dirtyElements[0]?.appId);
+      setDrafts({});
+      showToast(`${dirtyElements.length} element metadata records saved`);
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : "Unable to save element metadata");
     } finally {
       setSavingElementId(null);
     }
@@ -306,6 +382,28 @@ export function UiMapDetailPage({
       </div>
 
       <Panel title="Mapped elements" action={<button className="button secondary small" type="button" onClick={() => setRawOpen((open) => !open)}><FileJson size={14} /> Raw JSON</button>}>
+        <div className="filter-row compact">
+          <label>
+            Selector quality
+            <select value={qualityFilter} onChange={(event) => setQualityFilter(event.target.value)}>
+              <option value="all">All qualities</option>
+              <option value="strong">Strong</option>
+              <option value="medium">Medium</option>
+              <option value="weak">Weak</option>
+            </select>
+          </label>
+          <label>
+            Element type
+            <select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}>
+              <option value="all">All types</option>
+              {[...new Set(elements.map((element) => element.elementType))].map((type) => <option key={type} value={type}>{type}</option>)}
+            </select>
+          </label>
+          <button className="button primary" type="button" disabled={dirtyElements.length === 0 || savingElementId === "all"} onClick={() => void saveAll()}>
+            <Save size={16} />
+            {savingElementId === "all" ? "Saving" : `Save ${dirtyElements.length || ""}`.trim()}
+          </button>
+        </div>
         <table>
           <thead>
             <tr>
@@ -321,8 +419,8 @@ export function UiMapDetailPage({
             </tr>
           </thead>
           <tbody>
-            {elements.length === 0 && <EmptyTableRow colSpan={9} message="No elements saved for this page." />}
-            {elements.map((element) => (
+            {filteredElements.length === 0 && <EmptyTableRow colSpan={9} message="No elements match the current filters." />}
+            {filteredElements.map((element) => (
               <tr key={element.id}>
                 <td><code>{element.elementId}</code></td>
                 <td>{element.elementType}</td>
@@ -330,8 +428,8 @@ export function UiMapDetailPage({
                 <td>
                   <input
                     className="table-input"
-                    value={drafts[element.elementId] ?? element.description}
-                    onChange={(event) => setDrafts((current) => ({ ...current, [element.elementId]: event.target.value }))}
+                    value={drafts[element.id] ?? element.description}
+                    onChange={(event) => setDrafts((current) => ({ ...current, [element.id]: event.target.value }))}
                   />
                 </td>
                 <td><code>{element.selector}</code></td>
@@ -346,10 +444,10 @@ export function UiMapDetailPage({
                     className="button secondary small"
                     data-testid={`ui-element-save-${element.elementId}`}
                     type="button"
-                    disabled={savingElementId === element.elementId}
+                    disabled={savingElementId === element.id}
                     onClick={() => saveElement(element)}
                   >
-                    {savingElementId === element.elementId ? "Saving" : "Save"}
+                    {savingElementId === element.id ? "Saving" : "Save"}
                   </button>
                 </td>
               </tr>

@@ -1,7 +1,7 @@
 import { Check, Plus, Play, RefreshCw, Save, Upload, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { AppRecord, BackendApi, ExecutionPolicy, Workflow, WorkflowJob, WorkflowStep, WorkflowSummary } from "../api";
-import { EmptyTableRow, Panel, RawJsonViewer, StatusBadge, SummaryItem } from "../components/console";
+import type { AppRecord, BackendApi, ExecutionPolicy, Workflow, WorkflowJob, WorkflowReviewReport, WorkflowStep, WorkflowSummary } from "../api";
+import { EmptyTableRow, Panel, StatusBadge, StatusPill, SummaryItem } from "../components/console";
 import { describeStep, formatDate } from "../utils/format";
 
 export function UploadWorkflowPage({
@@ -157,12 +157,25 @@ export function WorkflowReviewPage({
   const [triggerPhrases, setTriggerPhrases] = useState("");
   const [notes, setNotes] = useState("");
   const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const [reviewReport, setReviewReport] = useState<WorkflowReviewReport | null>(null);
+  const [rawOpen, setRawOpen] = useState(false);
 
   useEffect(() => {
     setName(workflow?.name ?? "");
     setDescription(workflow?.description ?? "");
     setTriggerPhrases(workflow?.triggerPhrases.join("\n") ?? "");
   }, [workflow]);
+
+  useEffect(() => {
+    if (!workflow) {
+      setReviewReport(null);
+      return;
+    }
+    void api.getWorkflowReviewReport(workflow.workflowId)
+      .then(setReviewReport)
+      .catch((cause) => showToast(cause instanceof Error ? cause.message : "Unable to load workflow review report"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, workflow?.workflowId]);
 
   if (!workflow) {
     return (
@@ -234,6 +247,7 @@ export function WorkflowReviewPage({
   const reloadEditedWorkflow = async (message: string) => {
     await refresh(workflow.appId);
     await selectWorkflow(workflow.workflowId);
+    setReviewReport(await api.getWorkflowReviewReport(workflow.workflowId));
     showToast(message);
   };
 
@@ -367,6 +381,21 @@ export function WorkflowReviewPage({
         </div>
 
         <aside className="review-side">
+          <Panel title="Safety report" action={<StatusPill tone={reviewReport?.publishable ? "green" : "red"} label={reviewReport?.publishable ? "clear" : "blocked"} />}>
+            <div className="review-issue-list">
+              {!reviewReport && <div className="empty-state">Loading review report.</div>}
+              {reviewReport?.issues.length === 0 && <div className="empty-state">No blockers or warnings found.</div>}
+              {reviewReport?.issues.map((issue) => (
+                <div className="review-issue" key={issue.id}>
+                  <StatusPill tone={issue.severity === "blocker" ? "red" : issue.severity === "warning" ? "yellow" : "gray"} label={issue.severity} />
+                  <span>
+                    <strong>{issue.label}</strong>
+                    <span>{issue.message}{issue.fix ? ` ${issue.fix}` : ""}</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          </Panel>
           <Panel title="Actions">
             <div className="action-grid">
               <button
@@ -379,11 +408,11 @@ export function WorkflowReviewPage({
                 <Save size={16} />
                 {pendingAction === "save-metadata" ? "Saving metadata" : "Save metadata"}
               </button>
-              <button className="button secondary" type="button" disabled={pendingAction !== null} onClick={() => approve()}>
+              <button className="button secondary" type="button" disabled={pendingAction !== null || !reviewReport?.publishable} onClick={() => approve()}>
                 <Check size={16} />
                 {pendingAction === "approve" ? "Approving" : "Approve"}
               </button>
-              <button className="button primary" type="button" disabled={pendingAction !== null} onClick={() => publish()}>
+              <button className="button primary" type="button" disabled={pendingAction !== null || workflow.status !== "approved" || !reviewReport?.publishable} onClick={() => publish()}>
                 <Play size={16} />
                 {pendingAction === "publish" ? "Publishing" : "Publish"}
               </button>
@@ -393,7 +422,9 @@ export function WorkflowReviewPage({
               </button>
             </div>
           </Panel>
-          <RawJsonViewer title="Compiled workflow JSON" data={workflow} />
+          <Panel title="Compiled workflow JSON" action={<button className="button secondary small" type="button" onClick={() => setRawOpen((open) => !open)}>Toggle</button>}>
+            {rawOpen ? <pre className="json-viewer">{JSON.stringify(workflow, null, 2)}</pre> : <div className="empty-state">Raw JSON is hidden during normal review.</div>}
+          </Panel>
         </aside>
       </section>
     </div>

@@ -1,5 +1,5 @@
 import { Command, Lock, Mail, Server, UserPlus } from "lucide-react";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 
 type LoginInput = {
   backendUrl: string;
@@ -16,20 +16,34 @@ export function LoginPage({
   backendUrl,
   setupRequired,
   onLogin,
-  onSetup
+  onSetup,
+  onCheckSetupRequired
 }: {
   backendUrl: string;
   setupRequired: boolean;
   onLogin: (input: LoginInput) => Promise<void>;
   onSetup: (input: SetupInput) => Promise<void>;
+  onCheckSetupRequired: (backendUrl: string) => Promise<boolean>;
 }) {
   const [urlDraft, setUrlDraft] = useState(backendUrl);
+  const [draftSetupRequired, setDraftSetupRequired] = useState(setupRequired);
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [bootstrapToken, setBootstrapToken] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    setUrlDraft(backendUrl);
+    setDraftSetupRequired(setupRequired);
+  }, [backendUrl, setupRequired]);
+
+  const checkSetupRequired = async (nextBackendUrl: string): Promise<boolean> => {
+    const nextSetupRequired = await onCheckSetupRequired(nextBackendUrl);
+    setDraftSetupRequired(nextSetupRequired);
+    return nextSetupRequired;
+  };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -47,19 +61,20 @@ export function LoginPage({
       setError("Enter your email and password.");
       return;
     }
-    if (setupRequired && !nextName) {
-      setError("Enter the admin name.");
-      return;
-    }
-    if (setupRequired && !nextBootstrapToken) {
-      setError("Enter the bootstrap token from the backend environment.");
-      return;
-    }
-
     setPending(true);
     setError("");
     try {
-      if (setupRequired) {
+      const nextSetupRequired = await checkSetupRequired(nextBackendUrl);
+      if (nextSetupRequired && !nextName) {
+        setError("Enter the admin name.");
+        return;
+      }
+      if (nextSetupRequired && !nextBootstrapToken) {
+        setError("Enter the bootstrap token from the backend environment.");
+        return;
+      }
+
+      if (nextSetupRequired) {
         await onSetup({
           backendUrl: nextBackendUrl,
           email: nextEmail,
@@ -99,14 +114,14 @@ export function LoginPage({
           </span>
           <div>
             <div className="brand-name">Mia Console</div>
-            <div className="brand-subtitle">{setupRequired ? "Create admin account" : "Admin sign in"}</div>
+            <div className="brand-subtitle">{draftSetupRequired ? "Create admin account" : "Admin sign in"}</div>
           </div>
         </div>
         <form className="login-form" onSubmit={(event) => void submit(event)}>
           <div>
-            <h1>{setupRequired ? "Create the first admin" : "Sign in to console"}</h1>
+            <h1>{draftSetupRequired ? "Create the first admin" : "Sign in to console"}</h1>
             <p>
-              {setupRequired
+              {draftSetupRequired
                 ? "Set up the first console admin with the backend bootstrap token."
                 : "Use your console email and password to manage this backend."}
             </p>
@@ -116,11 +131,19 @@ export function LoginPage({
             Backend URL
             <span className="input-with-icon">
               <Server size={15} />
-              <input value={urlDraft} onChange={(event) => setUrlDraft(event.target.value)} autoComplete="url" />
+              <input
+                value={urlDraft}
+                onBlur={() => {
+                  const nextBackendUrl = urlDraft.trim();
+                  if (nextBackendUrl) void checkSetupRequired(nextBackendUrl).catch((cause) => setError(cause instanceof Error ? cause.message : "Unable to check backend auth status."));
+                }}
+                onChange={(event) => setUrlDraft(event.target.value)}
+                autoComplete="url"
+              />
             </span>
           </label>
 
-          {setupRequired && (
+          {draftSetupRequired && (
             <label>
               Name
               <span className="input-with-icon">
@@ -146,27 +169,28 @@ export function LoginPage({
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 type="password"
-                autoComplete={setupRequired ? "new-password" : "current-password"}
+                autoComplete={draftSetupRequired ? "new-password" : "current-password"}
               />
             </span>
           </label>
 
-          {setupRequired && (
-            <label>
-              Bootstrap token
-              <span className="input-with-icon">
-                <Lock size={15} />
-                <input value={bootstrapToken} onChange={(event) => setBootstrapToken(event.target.value)} type="password" autoComplete="off" />
-              </span>
-            </label>
+          {draftSetupRequired && (
+              <label>
+                Bootstrap token
+                <span className="input-with-icon">
+                  <Lock size={15} />
+                  <input value={bootstrapToken} onChange={(event) => setBootstrapToken(event.target.value)} type="password" autoComplete="off" />
+                </span>
+                <span className="field-help">Use the backend environment value named BOOTSTRAP_ADMIN_TOKEN. It only works before the first admin exists.</span>
+              </label>
           )}
 
           {error && <div className="error-line">{error}</div>}
           <button className="button primary full" type="submit" disabled={pending}>
-            {setupRequired ? <UserPlus size={16} /> : <Lock size={16} />}
-            {pending ? "Please wait" : setupRequired ? "Create admin" : "Sign in"}
+            {draftSetupRequired ? <UserPlus size={16} /> : <Lock size={16} />}
+            {pending ? "Please wait" : draftSetupRequired ? "Create admin" : "Sign in"}
           </button>
-          {setupRequired && <div className="login-hint">The bootstrap token is only accepted while no console admin exists.</div>}
+          {draftSetupRequired && <div className="login-hint">After setup, sign in with this admin email and password. Do not use the bootstrap token as a normal password.</div>}
         </form>
       </section>
     </main>

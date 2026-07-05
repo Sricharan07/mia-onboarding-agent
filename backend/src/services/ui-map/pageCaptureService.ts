@@ -1,10 +1,8 @@
 import type { Page } from "playwright";
 import type { Repositories } from "../../db/repositories.js";
-import type { SemanticSearchAdapter } from "../../adapters/interfaces.js";
 import { scanVisibleElements } from "./domScanner.js";
 import { buildUiElementRecord } from "./selector.js";
-import type { SemanticRecord, UIElementRecord } from "../../schemas/domain.js";
-import { uiElementToSemanticRecord } from "../semantic/semanticRecords.js";
+import type { UIElementRecord } from "../../schemas/domain.js";
 
 export type UiElementDiscoveredBy = UIElementRecord["discoveredBy"];
 
@@ -20,10 +18,7 @@ export type CapturePageResult = {
 };
 
 export class UiMapPageCaptureService {
-  constructor(
-    private readonly repositories: Repositories,
-    private readonly semanticSearch: SemanticSearchAdapter
-  ) {}
+  constructor(private readonly repositories: Repositories) {}
 
   async captureCurrentPage(input: {
     appId: string;
@@ -58,7 +53,6 @@ export class UiMapPageCaptureService {
     let savedElements = 0;
     let duplicateElements = 0;
     let weakSelectors = 0;
-    const semanticRecords: SemanticRecord[] = [];
 
     for (const [index, raw] of rawElements.entries()) {
       const record = await validateElementSelectors(input.page, buildUiElementRecord({
@@ -82,10 +76,7 @@ export class UiMapPageCaptureService {
       }
 
       savedElements += 1;
-      semanticRecords.push(uiElementToSemanticRecord(record));
     }
-
-    await this.semanticSearch.upsertMany(semanticRecords);
 
     return {
       pageId,

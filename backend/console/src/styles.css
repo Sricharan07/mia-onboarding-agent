@@ -152,6 +152,10 @@ code {
   overflow: auto;
 }
 
+.sidebar-backdrop {
+  display: none;
+}
+
 .brand-row,
 .login-brand-row {
   display: flex;
@@ -887,6 +891,15 @@ code {
   color: var(--text);
 }
 
+.button.secondary.danger {
+  border-color: rgba(252, 165, 165, 0.28);
+  color: var(--red-text);
+}
+
+.button.secondary.danger:hover {
+  background: var(--red-weak);
+}
+
 .button.small {
   min-height: 30px;
   padding: 5px 9px;
@@ -895,6 +908,13 @@ code {
 
 .button.full {
   width: 100%;
+}
+
+.button-cluster,
+.preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .text-button,
@@ -1264,6 +1284,26 @@ textarea:focus {
   padding: 9px 10px;
 }
 
+.error-item.yellow {
+  border-color: rgba(251, 191, 36, 0.26);
+  background: var(--orange-weak);
+  color: var(--orange-text);
+}
+
+.error-item.gray {
+  border-color: var(--border);
+  background: var(--muted);
+  color: var(--text-2);
+}
+
+.field-help {
+  display: block;
+  margin-top: 6px;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .empty-state {
   border: 1px dashed var(--border-strong);
   border-radius: var(--radius-s);
@@ -1341,6 +1381,102 @@ textarea:focus {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   margin-top: 8px;
+}
+
+.segmented-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  background: var(--card);
+  padding: 4px;
+}
+
+.segmented-tabs button {
+  min-height: 32px;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--text-2);
+  padding: 0 10px;
+  font-weight: 600;
+}
+
+.segmented-tabs button:hover,
+.segmented-tabs button.is-active {
+  background: var(--muted);
+  color: var(--text);
+}
+
+.activation-list,
+.checklist-panel,
+.review-issue-list,
+.sdk-handoff {
+  display: grid;
+  gap: 10px;
+}
+
+.activation-row,
+.check-row-item,
+.review-issue {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  background: var(--card);
+  padding: 10px;
+}
+
+.check-row-item,
+.review-issue {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+}
+
+.activation-row.is-done {
+  background: rgba(34, 197, 94, 0.07);
+}
+
+.activation-icon {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  color: var(--text-2);
+}
+
+.activation-row.is-done .activation-icon {
+  border-color: rgba(34, 197, 94, 0.24);
+  background: var(--green-weak);
+  color: var(--green-text);
+}
+
+.activation-copy,
+.check-row-item span,
+.review-issue span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.activation-copy span,
+.check-row-item span span,
+.review-issue span span {
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.filter-row.compact {
+  grid-template-columns: minmax(160px, 1fr) minmax(160px, 1fr) auto;
+  align-items: end;
+  margin-bottom: 12px;
 }
 
 .check-row {
@@ -1511,8 +1647,30 @@ textarea:focus {
   }
 
   .sidebar {
-    position: relative;
-    height: auto;
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 30;
+    width: min(82vw, 320px);
+    height: 100vh;
+    transform: translateX(-100%);
+    transition: transform 180ms ease-out;
+  }
+
+  .app-shell.sidebar-is-open .sidebar {
+    transform: translateX(0);
+  }
+
+  .sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 25;
+    display: none;
+    border: 0;
+    background: rgba(0, 0, 0, 0.5);
+  }
+
+  .app-shell.sidebar-is-open .sidebar-backdrop {
+    display: block;
   }
 
   .main-shell {
@@ -1524,16 +1682,18 @@ textarea:focus {
     padding: 0 18px;
   }
 
-  .topbar,
-  .inline-header,
-  .scan-form,
-  .filter-row,
-  .form-grid,
-  .summary-grid,
-  .scope-grid {
-    grid-template-columns: 1fr;
-    align-items: stretch;
-  }
+	  .topbar,
+	  .inline-header,
+	  .scan-form,
+	  .filter-row,
+	  .form-grid,
+	  .summary-grid,
+	  .scope-grid,
+	  .activation-row,
+	  .filter-row.compact {
+	    grid-template-columns: 1fr;
+	    align-items: stretch;
+	  }
 
   .topbar {
     display: flex;
@@ -1545,5 +1705,11 @@ textarea:focus {
 
   .metric-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar {
+    transition: none;
   }
 }

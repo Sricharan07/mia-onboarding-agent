@@ -5,7 +5,7 @@ import { requireApiKeyAppAccess, requireApiKeyScope } from "./auth.js";
 
 const appInputSchema = z.object({
   name: z.string().min(1),
-  slug: z.string().min(1),
+  slug: z.string().trim().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Use lowercase letters, numbers, and single hyphens between words."),
   baseUrl: z.string().url(),
   uiScanConfig: z.object({
     routes: z.array(z.string().trim().min(1)).optional(),
@@ -44,5 +44,12 @@ export async function registerAppRoutes(app: FastifyInstance, dependencies: AppD
   }, async (request) => {
     const body = appInputSchema.parse(request.body);
     return dependencies.repositories.upsertApp(body);
+  });
+
+  app.post("/api/v1/apps/:appId/archive", {
+    preHandler: (request, reply) => requireApiKeyScope(request, reply, dependencies, ["admin"])
+  }, async (request) => {
+    const params = z.object({ appId: z.string().min(1) }).parse(request.params);
+    return dependencies.repositories.archiveApp(params.appId);
   });
 }

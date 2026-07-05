@@ -18,10 +18,16 @@ const interactiveSelector = [
 ].join(",");
 
 export async function scanVisibleElements(page: Page, options: { ignoredSelectors?: string[]; redactedSelectors?: string[] } = {}): Promise<RawElement[]> {
+  const scanOptions = JSON.stringify({
+    interactiveSelector,
+    ignoredSelectors: options.ignoredSelectors ?? [],
+    redactedSelectors: options.redactedSelectors ?? []
+  });
+
   return page.evaluate(`((scanOptions) => {
     const ignoredSelectors = Array.isArray(scanOptions.ignoredSelectors) ? scanOptions.ignoredSelectors : [];
     const redactedSelectors = Array.isArray(scanOptions.redactedSelectors) ? scanOptions.redactedSelectors : [];
-    const nodes = Array.from(document.querySelectorAll(${JSON.stringify(interactiveSelector)}));
+    const nodes = Array.from(document.querySelectorAll(scanOptions.interactiveSelector));
     const text = (value) => {
       const normalized = value?.replace(/\\s+/g, " ").trim();
       return normalized || undefined;
@@ -109,8 +115,5 @@ export async function scanVisibleElements(page: Page, options: { ignoredSelector
           boundingBox: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
         };
       });
-  })`, {
-    ignoredSelectors: options.ignoredSelectors ?? [],
-    redactedSelectors: options.redactedSelectors ?? []
-  }) as Promise<RawElement[]>;
+  })(${scanOptions})`) as Promise<RawElement[]>;
 }

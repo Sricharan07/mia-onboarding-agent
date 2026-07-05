@@ -8,6 +8,23 @@ import { workflowToSemanticRecord } from "../semantic/semanticRecords.js";
 
 const workflowJobStatuses = new Set(["needs_review", "approved", "published", "archived"]);
 
+export type WorkflowReviewIssue = {
+  id: string;
+  severity: "blocker" | "warning" | "info";
+  label: string;
+  message: string;
+  stepId?: string;
+  fix?: string;
+};
+
+export type WorkflowReviewReport = {
+  workflowId: string;
+  publishable: boolean;
+  blockerCount: number;
+  warningCount: number;
+  issues: WorkflowReviewIssue[];
+};
+
 export class WorkflowService {
   constructor(
     private readonly repositories: Repositories,
@@ -22,6 +39,7 @@ export class WorkflowService {
 
   async approveWorkflow(workflowId: string, input: { reviewedBy: string; notes?: string }): Promise<Workflow> {
     const workflow = this.repositories.getWorkflow(workflowId);
+    this.assertReviewClean(workflow);
     const next = workflowSchema.parse({
       ...workflow,
       status: "approved",
@@ -41,10 +59,14 @@ export class WorkflowService {
     if (workflow.status !== "approved") {
       throw new AppError("WORKFLOW_NOT_APPROVED", "Workflow must be approved before publishing.");
     }
-    this.assertPublishable(workflow);
+    this.assertReviewClean(workflow);
     const next = workflowSchema.parse({ ...workflow, status: "published", updatedAt: nowIso() });
     await this.saveWorkflow(next);
     return next;
+  }
+
+  reviewWorkflow(workflowId: string): WorkflowReviewReport {
+    return this.buildReviewReport(this.repositories.getWorkflow(workflowId));
   }
 
   async archiveWorkflow(workflowId: string): Promise<Workflow> {
@@ -97,9 +119,10 @@ export class WorkflowService {
   }
 
   private async saveWorkflow(workflow: Workflow): Promise<void> {
+    this.repositories.getActiveApp(workflow.appId);
+    await this.syncWorkflowIndex(workflow);
     this.repositories.saveWorkflow(workflow);
     this.syncWorkflowJobStatus(workflow);
-    await this.syncWorkflowIndex(workflow);
   }
 
   private syncWorkflowJobStatus(workflow: Workflow): void {
@@ -129,20 +152,129 @@ export class WorkflowService {
     });
   }
 
-  private assertPublishable(workflow: Workflow): void {
-    const issues: string[] = [];
+  private assertReviewClean(workflow: Workflow): void {
+    const report = this.buildReviewReport(workflow);
+    if (!report.publishable) {
+      throw new AppError("WORKFLOW_REVIEW_BLOCKED", "Workflow has blocking review issues.", 400, {
+        issues: report.issues.filter((issue) => issue.severity === "blocker")
+      });
+    }
+  }
 
-    for (const step of workflow.steps) {
-      if (!isExecutableTargetStep(step) || step.executionPolicy !== "auto") continue;
-      const selectors = [step.target.selector, ...(step.target.fallbackSelectors ?? [])];
-      if (!selectors.some(isStableEnoughSelector)) {
-        issues.push(`${step.type} step "${step.id}" targets "${step.target.elementId}" with only brittle selectors.`);
+  private buildReviewReport(workflow: Workflow): WorkflowReviewReport {
+    const issues: WorkflowReviewIssue[] = [];
+    const mappedRoutes = new Set(this.repositories.listUiElementsForApp(workflow.appId).map((element) => element.route));
+
+    if (workflow.triggerPhrases.length === 0) {
+      issues.push({
+        id: "trigger-phrases",
+        severity: "blocker",
+        label: "Trigger phrases",
+        message: "Workflow has no trigger phrases.",
+        fix: "Add at least one phrase users can say or type to start this workflow."
+      });
+    }
+
+    if (workflow.steps.length === 0) {
+      issues.push({
+        id: "steps",
+        severity: "blocker",
+        label: "Steps",
+        message: "Workflow has no steps.",
+        fix: "Add workflow steps before approval."
+      });
+    }
+
+    for (const route of workflow.requiredContext.startingRoutes) {
+      if (!mappedRoutes.has(route)) {
+        issues.push({
+          id: `route:${route}`,
+          severity: "warning",
+          label: "Starting route coverage",
+          message: `Starting route ${route} is not present in the latest UI map.`,
+          fix: "Run a UI map scan that includes this route."
+        });
       }
     }
 
-    if (issues.length) {
-      throw new AppError("WORKFLOW_SELECTOR_NOT_PUBLISHABLE", "Workflow has auto steps with brittle selectors. Re-scan the UI map or edit the target selector before publishing.", 400, { issues });
+    for (const step of workflow.steps) {
+      if (step.source?.matchConfidence !== undefined && step.source.matchConfidence < 0.7) {
+        issues.push({
+          id: `source-confidence:${step.id}`,
+          severity: "warning",
+          label: "Source confidence",
+          message: `Step ${step.id} has low video match confidence (${step.source.matchConfidence.toFixed(2)}).`,
+          stepId: step.id,
+          fix: "Review the step instruction and target before approval."
+        });
+      }
+
+      if (!isExecutableTargetStep(step)) continue;
+      const element = this.repositories.getElementByElementId(workflow.appId, step.target.elementId);
+      if (!element) {
+        issues.push({
+          id: `target-missing:${step.id}`,
+          severity: "blocker",
+          label: "Target missing",
+          message: `Step ${step.id} targets ${step.target.elementId}, which is not in the UI map.`,
+          stepId: step.id,
+          fix: "Re-scan the UI map or choose a mapped target."
+        });
+      } else if (element.selectorQuality === "weak") {
+        issues.push({
+          id: `target-weak:${step.id}`,
+          severity: step.executionPolicy === "auto" ? "blocker" : "warning",
+          label: "Weak selector",
+          message: `Step ${step.id} targets ${element.elementId} with a weak selector.`,
+          stepId: step.id,
+          fix: "Add a stable data attribute or keep the step behind confirmation/manual execution."
+        });
+      }
+
+      if (step.executionPolicy === "blocked") {
+        issues.push({
+          id: `blocked-step:${step.id}`,
+          severity: "blocker",
+          label: "Blocked step",
+          message: `Step ${step.id} is marked blocked.`,
+          stepId: step.id,
+          fix: "Resolve the step or remove it before approval."
+        });
+      } else if (step.executionPolicy === "manual_only") {
+        issues.push({
+          id: `manual-step:${step.id}`,
+          severity: "warning",
+          label: "Manual-only step",
+          message: `Step ${step.id} requires manual execution.`,
+          stepId: step.id,
+          fix: "Confirm this is intentional for the published workflow."
+        });
+      }
+
+      if (step.executionPolicy === "auto") {
+        const selectors = [step.target.selector, ...(step.target.fallbackSelectors ?? [])];
+        if (!selectors.some(isStableEnoughSelector)) {
+          issues.push({
+            id: `brittle-selector:${step.id}`,
+            severity: "blocker",
+            label: "Brittle selector",
+            message: `${step.type} step ${step.id} only has brittle selectors.`,
+            stepId: step.id,
+            fix: "Re-scan the UI map or add a stable selector before publishing."
+          });
+        }
+      }
     }
+
+    const blockerCount = issues.filter((issue) => issue.severity === "blocker").length;
+    const warningCount = issues.filter((issue) => issue.severity === "warning").length;
+    return {
+      workflowId: workflow.workflowId,
+      publishable: blockerCount === 0,
+      blockerCount,
+      warningCount,
+      issues
+    };
   }
 }
 

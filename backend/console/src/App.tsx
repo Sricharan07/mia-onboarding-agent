@@ -1,7 +1,8 @@
-import { Bell, Command, EllipsisVertical, LogOut, PanelLeft, RefreshCw } from "lucide-react";
+import { Command, EllipsisVertical, LogOut, PanelLeft, RefreshCw, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   BackendApi,
+  type ApiKeyRecord,
   type AppRecord,
   type BackendHealth,
   type ConsoleAuthUser,
@@ -26,7 +27,7 @@ import { UsagePage } from "./pages/UsagePage";
 import { UploadWorkflowPage, WorkflowJobsPage, WorkflowReviewPage, WorkflowsPage } from "./pages/WorkflowPages";
 import type { LoadState, RouteId } from "./types";
 
-const defaultBackendUrl = window.localStorage.getItem("mia-console-backend-url") ?? "http://localhost:4000";
+const defaultBackendUrl = window.localStorage.getItem("mia-console-backend-url") ?? import.meta.env.VITE_MIA_BACKEND_URL ?? "http://localhost:4000";
 const defaultConsoleSessionToken = window.sessionStorage.getItem("mia-console-session-token") ?? "";
 
 function App() {
@@ -42,7 +43,9 @@ function App() {
   const [loadState, setLoadState] = useState<LoadState>("idle");
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [apps, setApps] = useState<AppRecord[]>([]);
+  const [apiKeys, setApiKeys] = useState<ApiKeyRecord[]>([]);
   const [selectedAppId, setSelectedAppId] = useState("");
   const [uiMapVersions, setUiMapVersions] = useState<UiMapVersion[]>([]);
   const [pages, setPages] = useState<UiPage[]>([]);
@@ -56,7 +59,7 @@ function App() {
 
   const api = useMemo(() => new BackendApi(backendUrl, { sessionToken }), [backendUrl, sessionToken]);
   const selectedApp = apps.find((app) => app.id === selectedAppId) ?? null;
-  const latestUiMap = uiMapVersions[0] ?? null;
+  const latestUiMap = uiMapVersions.find((version) => version.status === "completed") ?? uiMapVersions[0] ?? null;
   const selectedPage = pages.find((page) => page.id === selectedPageId) ?? pages[0] ?? null;
   const elements = Object.values(elementsByPage).flat();
 
@@ -84,10 +87,11 @@ function App() {
     setLoadState("loading");
     setError("");
     try {
-      const [nextHealth, nextReadiness, appResponse] = await Promise.all([api.health(), api.readiness(), api.listApps()]);
+      const [nextHealth, nextReadiness, appResponse, apiKeyResponse] = await Promise.all([api.health(), api.readiness(), api.listApps(), api.listApiKeys()]);
       setHealth(nextHealth);
       setReadiness(nextReadiness);
       setApps(appResponse.items);
+      setApiKeys(apiKeyResponse.items);
       const nextAppId = preferredAppId || appResponse.items[0]?.id || "";
       setSelectedAppId(nextAppId);
 
@@ -99,6 +103,7 @@ function App() {
         setWorkflowSummaries([]);
         setSelectedWorkflow(null);
         setLogs([]);
+        setApiKeys(apiKeyResponse.items);
         setLoadState("ready");
         return;
       }
@@ -115,11 +120,11 @@ function App() {
       setWorkflowSummaries(workflowResponse.items);
       setLogs(logsResponse.items);
 
-      const latestVersion = versionsResponse.items[0];
+      const latestVersion = versionsResponse.items.find((version) => version.status === "completed") ?? versionsResponse.items[0];
       if (latestVersion) {
         const pageResponse = await api.listPages(latestVersion.id);
         setPages(pageResponse.items);
-        setSelectedPageId((current) => current || pageResponse.items[0]?.id || "");
+        setSelectedPageId((current) => pageResponse.items.some((page) => page.id === current) ? current : pageResponse.items[0]?.id || "");
         const elementEntries = await Promise.all(
           pageResponse.items.map(async (page) => [page.id, (await api.listElements(page.id)).items] as const)
         );
@@ -130,7 +135,8 @@ function App() {
         setSelectedPageId("");
       }
 
-      const nextWorkflowId = selectedWorkflowId || workflowResponse.items[0]?.workflowId || "";
+      const selectedWorkflowStillExists = workflowResponse.items.some((workflow) => workflow.workflowId === selectedWorkflowId);
+      const nextWorkflowId = selectedWorkflowStillExists ? selectedWorkflowId : workflowResponse.items[0]?.workflowId || "";
       setSelectedWorkflowId(nextWorkflowId);
       if (nextWorkflowId) {
         setSelectedWorkflow(await api.getWorkflow(nextWorkflowId));
@@ -201,6 +207,7 @@ function App() {
   const selectApp = async (appId: string) => {
     setSelectedAppId(appId);
     setSelectedWorkflowId("");
+    setSidebarOpen(false);
     await refresh(appId);
   };
 
@@ -246,6 +253,11 @@ function App() {
     completeAuth({ backendUrl: nextBackendUrl, token: result.token, user: result.user });
   };
 
+  const checkSetupRequired = async (inputBackendUrl: string): Promise<boolean> => {
+    const status = await new BackendApi(inputBackendUrl.trim()).authStatus();
+    return status.setupRequired;
+  };
+
   const logout = async () => {
     try {
       if (sessionToken) {
@@ -277,12 +289,12 @@ function App() {
   }
 
   if (!authenticated) {
-    return <LoginPage backendUrl={backendUrl} setupRequired={setupRequired} onLogin={login} onSetup={setup} />;
+    return <LoginPage backendUrl={backendUrl} setupRequired={setupRequired} onLogin={login} onSetup={setup} onCheckSetupRequired={checkSetupRequired} />;
   }
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
+    <div className={`app-shell ${sidebarOpen ? "sidebar-is-open" : ""}`}>
+      <aside className="sidebar" aria-label="Console sidebar">
         <button className="brand-row" type="button" onClick={() => setActiveRoute("overview")}>
           <span className="brand-tile">
             <Command size={17} />
@@ -302,7 +314,10 @@ function App() {
                   className={`nav-item ${activeRoute === item.id ? "is-active" : ""}`}
                   key={item.id}
                   type="button"
-                  onClick={() => setActiveRoute(item.id)}
+                  onClick={() => {
+                    setActiveRoute(item.id);
+                    setSidebarOpen(false);
+                  }}
                 >
                   <item.icon size={16} />
                   <span>{item.label}</span>
@@ -317,7 +332,10 @@ function App() {
             <div>Live backend mode</div>
             <p>Manage UI maps, workflows, runtime keys, and backend readiness from this console.</p>
           </div>
-          <button className="user-card" type="button" onClick={() => setActiveRoute("settings")}>
+          <button className="user-card" type="button" onClick={() => {
+            setActiveRoute("settings");
+            setSidebarOpen(false);
+          }}>
             <span className="avatar">{userInitials(consoleUser)}</span>
             <span className="user-copy">
               <span>{consoleUser?.name ?? "Console admin"}</span>
@@ -331,8 +349,8 @@ function App() {
       <main className="main-shell">
         <header className="topbar">
           <div className="topbar-title">
-            <button className="sidebar-trigger" type="button" aria-label="Sidebar">
-              <PanelLeft size={16} />
+            <button className="sidebar-trigger" type="button" aria-label={sidebarOpen ? "Close sidebar" : "Open sidebar"} aria-expanded={sidebarOpen} onClick={() => setSidebarOpen((open) => !open)}>
+              {sidebarOpen ? <X size={16} /> : <PanelLeft size={16} />}
             </button>
             <div className="breadcrumb">Console / {routeTitle(activeRoute)}</div>
             <h1>{routeTitle(activeRoute)}</h1>
@@ -350,9 +368,6 @@ function App() {
               <RefreshCw size={15} />
               Refresh
             </button>
-            <button className="icon-button" type="button" aria-label="Notifications">
-              <Bell size={15} />
-            </button>
             <button className="button secondary" type="button" onClick={() => void logout()}>
               <LogOut size={15} />
               Sign out
@@ -368,6 +383,7 @@ function App() {
             app={selectedApp}
             health={health}
             readiness={readiness}
+            apiKeys={apiKeys}
             pages={pages}
             elements={elements}
             workflows={workflowSummaries}
@@ -378,7 +394,7 @@ function App() {
               void selectWorkflow(workflowId);
               setActiveRoute("workflow-review");
             }}
-            onOpenSettings={() => setActiveRoute("settings")}
+            onOpenRoute={(route) => setActiveRoute(route)}
           />
         )}
         {activeRoute === "settings" && (
@@ -387,9 +403,11 @@ function App() {
             setBackendUrl={setBackendUrl}
             apps={apps}
             selectedApp={selectedApp}
+            consoleUser={consoleUser}
             api={api}
             readiness={readiness}
             refresh={refresh}
+            selectApp={selectApp}
             showToast={showToast}
           />
         )}
@@ -460,12 +478,14 @@ function App() {
             api={api}
             apps={apps}
             selectedAppId={selectedAppId}
+            backendUrl={backendUrl}
             showToast={showToast}
           />
         )}
       </main>
 
-      {toast && <div className="toast">{toast}</div>}
+      <button className="sidebar-backdrop" type="button" aria-label="Close sidebar" onClick={() => setSidebarOpen(false)} />
+      {toast && <div className="toast" role="status" aria-live="polite">{toast}</div>}
     </div>
   );
 }

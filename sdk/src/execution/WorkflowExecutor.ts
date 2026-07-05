@@ -11,6 +11,7 @@ export class WorkflowExecutor {
   private abortController = new AbortController();
   private resumeWaiter?: () => void;
   private runtimeSessionId?: string;
+  private currentStepId?: string;
 
   constructor(private readonly options: {
     workflow: Workflow;
@@ -91,11 +92,14 @@ export class WorkflowExecutor {
   }
 
   private async runStep(step: WorkflowStep): Promise<void> {
+    this.currentStepId = step.id;
     this.options.onWorkflowEvent?.({ type: "step_started", workflowId: this.options.workflow.workflowId, stepId: step.id });
     await this.log("step_started", step);
+    await this.updateRuntimeStatus("running");
     try {
       await this.executeStep(step);
       await this.log("step_completed", step);
+      await this.updateRuntimeStatus("running");
       this.options.onWorkflowEvent?.({ type: "step_completed", workflowId: this.options.workflow.workflowId, stepId: step.id });
     } catch (error) {
       if (this.cancelled) {
@@ -243,6 +247,7 @@ export class WorkflowExecutor {
     await this.options.backendClient.updateWorkflowSession({
       runtimeSessionId: this.runtimeSessionId,
       status,
+      currentStepId: this.currentStepId,
       values: this.values
     });
   }

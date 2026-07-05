@@ -10,6 +10,7 @@ export type ProviderReadiness = {
 
 export type SystemReadiness = {
   database: ProviderReadiness;
+  secrets: ProviderReadiness;
   providers: {
     gemini: ProviderReadiness;
     semanticSearch: ProviderReadiness;
@@ -25,6 +26,7 @@ export class ReadinessService {
   async check(): Promise<SystemReadiness> {
     return {
       database: this.database(),
+      secrets: this.secretStorage(),
       providers: {
         gemini: this.configOnly("Gemini", ["GEMINI_API_KEY", "GEMINI_TEXT_MODEL", "GEMINI_VISION_MODEL", "GEMINI_LIVE_MODEL"]),
         semanticSearch: this.configOnly("Semantic search", ["OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_EMBEDDING_MODEL", "SEMANTIC_INDEX_DIR"])
@@ -34,7 +36,7 @@ export class ReadinessService {
 
   private database(): ProviderReadiness {
     try {
-      this.repositories.listApps();
+      this.repositories.ping();
       return { configured: true, reachable: true, status: "ok", message: "SQLite database is reachable." };
     } catch (error) {
       return { configured: true, reachable: false, status: "error", message: error instanceof Error ? error.message : "SQLite database check failed." };
@@ -45,6 +47,28 @@ export class ReadinessService {
     const missing = this.missing(keys);
     if (missing.length > 0) return missingConfig(provider, missing);
     return { configured: true, reachable: null, status: "unverified", message: `${provider} is configured. No-credit live operation was not run.` };
+  }
+
+  private secretStorage(): ProviderReadiness {
+    if (!this.config.MIA_SECRET_ENCRYPTION_KEY) {
+      return {
+        configured: false,
+        reachable: false,
+        status: "missing_config",
+        message: "MIA_SECRET_ENCRYPTION_KEY is required to save per-app scan passwords encrypted at rest."
+      };
+    }
+    try {
+      this.repositories.assertUiScanConfigsReadable();
+      return { configured: true, reachable: true, status: "ok", message: "Per-app scan credentials are encrypted at rest." };
+    } catch (error) {
+      return {
+        configured: true,
+        reachable: false,
+        status: "error",
+        message: error instanceof Error ? error.message : "Stored scan credentials could not be read."
+      };
+    }
   }
 
   private missing(keys: Array<keyof AppConfig>): string[] {

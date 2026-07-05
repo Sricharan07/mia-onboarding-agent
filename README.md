@@ -27,6 +27,7 @@ Required minimum provider config:
 ```bash
 GEMINI_API_KEY=...
 BOOTSTRAP_ADMIN_TOKEN=long-random-bootstrap-token
+MIA_SECRET_ENCRYPTION_KEY=long-random-secret-encryption-key
 OPENAI_API_KEY=...
 ```
 
@@ -48,7 +49,7 @@ curl -X POST http://localhost:4000/api/v1/apps \
   -d '{"name":"local app","slug":"local-app","baseUrl":"http://localhost:3000"}'
 ```
 
-Create an SDK key with `runtime:write` and `logs:write`, bound to the target app and allowed browser origins, then pass it to the SDK as `apiKey`:
+Create an SDK key with `runtime:write` and `logs:write`, bound to the target app and allowed browser origins, then pass it to the SDK as `apiKey`. The console generates this install/init snippet after key creation.
 
 ```bash
 curl -X POST http://localhost:4000/api/v1/api-keys \
@@ -84,6 +85,7 @@ npm run dev
 ```
 
 The console defaults to `http://localhost:4000` and can be pointed at another backend URL from Settings.
+For fresh browser sessions or hosted console deployments, set `VITE_MIA_BACKEND_URL` in `backend/console/.env`.
 On first run, create the first console admin with the `BOOTSTRAP_ADMIN_TOKEN` from the backend environment. After setup, sign in with the admin email and password.
 
 Gemini, OpenAI embeddings, and LanceDB local storage are required for provider-backed routes. Missing credentials fail with explicit config errors.
@@ -92,11 +94,13 @@ Runtime-sensitive SDK/backend routes are protected with scoped API keys. API key
 
 To add a customer web app for UI mapping:
 
-1. Open Console -> Settings.
+1. Open Console -> Overview and follow the activation checklist.
 2. Create an application record with the app name, slug, and base URL.
 3. Configure the app's UI scan profile: default routes, auth mode, login selectors when needed, ignored selectors, redacted selectors, and optional same-origin route discovery.
-4. Open Console -> UI Map and run an explicit route scan.
+4. Open Console -> UI Map, run preflight, then run an explicit route scan.
 5. Use interactive scan for manual SSO login, modals, drawers, dropdowns, row action menus, and other hidden states.
+6. Review generated workflows and clear safety blockers before approval/publish.
+7. Create an app-bound SDK key from Console -> API keys and use the generated SDK snippet.
 
 Automated route discovery is opt-in and only follows same-origin links from scanned pages. It filters obvious destructive/logout/binary routes, but production scans should still start with explicit routes.
 
@@ -118,7 +122,7 @@ AIOnboardingAgent.init({
 });
 ```
 
-For authenticated UI ingestion, prefer the per-app scan profile in the console. The `UI_SCAN_*` variables remain as backend-level fallbacks. Use a dedicated demo/test account only. Keep `UI_SCAN_HEADLESS=false` when using the console's interactive mapper so the Playwright browser is visible for manual login and state capture.
+For authenticated UI ingestion, prefer the per-app scan profile in the console. Per-app scan passwords are encrypted at rest when `MIA_SECRET_ENCRYPTION_KEY` is configured, and the backend rejects new per-app scan passwords without that key. The `UI_SCAN_*` variables remain as backend-level fallbacks. Use a dedicated demo/test account only. Keep `UI_SCAN_HEADLESS=false` when using the console's interactive mapper so the Playwright browser is visible for manual login and state capture.
 
 ## Useful Commands
 

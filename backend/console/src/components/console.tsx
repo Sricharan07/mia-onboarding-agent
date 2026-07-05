@@ -95,7 +95,7 @@ export function StatusPill({ tone, label }: { tone: StatusTone; label: string })
 
 export function InlineAlert({ tone, title, message }: { tone: StatusTone; title: string; message: string }) {
   return (
-    <div className={`error-item ${tone}`}>
+    <div className={`error-item ${tone}`} role={tone === "red" ? "alert" : "status"}>
       <AlertTriangle size={15} />
       <strong>{title}:</strong>
       <span>{message}</span>

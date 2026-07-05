@@ -5,16 +5,23 @@ import { EmptyTableRow, Panel, StatusPill } from "../components/console";
 import { formatDate } from "../utils/format";
 
 const scopeOptions: ApiKeyScope[] = ["apps:read", "ui-map:read", "workflows:read", "runtime:write", "logs:write", "logs:read", "admin"];
+const presets: Array<{ label: string; scopes: ApiKeyScope[] }> = [
+  { label: "SDK runtime key", scopes: ["runtime:write", "logs:write"] },
+  { label: "Read-only console key", scopes: ["apps:read", "ui-map:read", "workflows:read", "logs:read"] },
+  { label: "Admin key", scopes: ["admin"] }
+];
 
 export function ApiKeysPage({
   api,
   apps,
   selectedAppId,
+  backendUrl,
   showToast
 }: {
   api: BackendApi;
   apps: AppRecord[];
   selectedAppId: string;
+  backendUrl: string;
   showToast: (message: string) => void;
 }) {
   const [keys, setKeys] = useState<ApiKeyRecord[]>([]);
@@ -39,16 +46,20 @@ export function ApiKeysPage({
   }, [api]);
 
   useEffect(() => {
-    if (!selectedAppId || appId) return;
     setAppId(selectedAppId);
     setAllowedOrigins(defaultOrigin(apps.find((app) => app.id === selectedAppId)));
-  }, [appId, apps, selectedAppId]);
+    setCreatedKey(null);
+  }, [apps, selectedAppId]);
 
   const toggleScope = (scope: ApiKeyScope) => {
     setScopes((current) => current.includes(scope) ? current.filter((item) => item !== scope) : [...current, scope]);
   };
 
   const create = async () => {
+    if (!scopes.includes("admin") && (!appId || parseOrigins(allowedOrigins).length === 0)) {
+      showToast("Choose an app and at least one allowed origin for non-admin keys.");
+      return;
+    }
     try {
       const next = await api.createApiKey({
         name,
@@ -82,20 +93,42 @@ export function ApiKeysPage({
     showToast("API key copied");
   };
 
+  const copySnippet = async () => {
+    if (!createdKey || !selectedAppForKey(apps, createdKey.appId)) return;
+    await navigator.clipboard?.writeText(sdkSnippet(createdKey, selectedAppForKey(apps, createdKey.appId)!, backendUrl));
+    showToast("SDK snippet copied");
+  };
+
   return (
     <div className="page-grid">
       <Panel title="Create API key" action={<StatusPill tone="green" label="Hashed at rest" />}>
         <div className="form-grid single">
           <label>
             Key name
-            <input value={name} onChange={(event) => setName(event.target.value)} />
+            <input value={name} onChange={(event) => {
+              setName(event.target.value);
+              setCreatedKey(null);
+            }} />
           </label>
           <div>
             <div className="field-label">Scopes</div>
+            <div className="preset-row">
+              {presets.map((preset) => (
+                <button className="button secondary small" type="button" key={preset.label} onClick={() => {
+                  setScopes(preset.scopes);
+                  setCreatedKey(null);
+                }}>
+                  {preset.label}
+                </button>
+              ))}
+            </div>
             <div className="scope-grid">
               {scopeOptions.map((scope) => (
                 <label className="check-row" key={scope}>
-                  <input type="checkbox" checked={scopes.includes(scope)} onChange={() => toggleScope(scope)} />
+                  <input type="checkbox" checked={scopes.includes(scope)} onChange={() => {
+                    toggleScope(scope);
+                    setCreatedKey(null);
+                  }} />
                   {scope}
                 </label>
               ))}
@@ -109,6 +142,7 @@ export function ApiKeysPage({
                   const nextAppId = event.target.value;
                   setAppId(nextAppId);
                   setAllowedOrigins(defaultOrigin(apps.find((app) => app.id === nextAppId)));
+                  setCreatedKey(null);
                 }}>
                   <option value="">Select app</option>
                   {apps.map((app) => <option key={app.id} value={app.id}>{app.name}</option>)}
@@ -118,7 +152,10 @@ export function ApiKeysPage({
                 Allowed origins
                 <textarea
                   value={allowedOrigins}
-                  onChange={(event) => setAllowedOrigins(event.target.value)}
+                  onChange={(event) => {
+                    setAllowedOrigins(event.target.value);
+                    setCreatedKey(null);
+                  }}
                   placeholder="https://app.example.com"
                 />
               </label>
@@ -146,6 +183,21 @@ export function ApiKeysPage({
             </button>
           </div>
           <pre className="json-viewer">{createdKey.key}</pre>
+          {selectedAppForKey(apps, createdKey.appId) && (
+            <div className="sdk-handoff">
+              <div className="inline-header compact">
+                <div>
+                  <h2>SDK install snippet</h2>
+                  <p>Use this in the customer web app that matches the allowed origin.</p>
+                </div>
+                <button className="button secondary" type="button" onClick={() => void copySnippet()}>
+                  <Copy size={16} />
+                  Copy snippet
+                </button>
+              </div>
+              <pre className="json-viewer">{sdkSnippet(createdKey, selectedAppForKey(apps, createdKey.appId)!, backendUrl)}</pre>
+            </div>
+          )}
         </Panel>
       )}
 
@@ -212,6 +264,23 @@ function parseOrigins(value: string): string[] {
   return value.split(/[\n,]/).map((origin) => origin.trim()).filter(Boolean);
 }
 
+function selectedAppForKey(apps: AppRecord[], appId: string | null): AppRecord | undefined {
+  return appId ? apps.find((app) => app.id === appId) : undefined;
+}
+
 function appName(apps: AppRecord[], appId: string): string {
   return apps.find((app) => app.id === appId)?.name ?? appId;
+}
+
+function sdkSnippet(key: CreatedApiKey, app: AppRecord, backendUrl: string): string {
+  return `npm install @mia/onboarding-agent
+
+import { AIOnboardingAgent } from "@mia/onboarding-agent";
+
+AIOnboardingAgent.init({
+  appId: "${app.id}",
+  backendUrl: "${backendUrl.replace(/\/+$/, "")}",
+  apiKey: "${key.key}",
+  enableVoice: false
+});`;
 }

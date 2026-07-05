@@ -35,6 +35,7 @@ export async function requireApiKeyScope(
 }
 
 export function requireApiKeyAppAccess(request: FastifyRequest, dependencies: AppDependencies, appId: string | undefined): void {
+  if (appId) dependencies.repositories.getActiveApp(appId);
   if (request.consoleSession?.role === "admin") return;
   dependencies.services.apiKeys.requireAppAccess(request.apiKey, appId, {
     origin: request.headers.origin,

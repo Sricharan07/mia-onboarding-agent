@@ -39,21 +39,7 @@ class AIOnboardingAgentInstance {
       eventType: "session_started",
       payload: { user: config.user?.id }
     }).catch((error) => config.onError?.(toError(error)));
-    if (config.enableVoice) {
-      this.cursor.setState("connecting");
-      this.cursor.setBubbleText("Starting Mia voice...");
-      queueMicrotask(() => {
-        void this.startVoice().catch((error) => {
-          const message = error instanceof Error ? error.message : String(error);
-          this.cursor?.setState("error");
-          this.cursor?.setBubbleText(message);
-          this.promptUi?.showError(message);
-          this.config?.onError?.(error instanceof Error ? error : new Error(message));
-        });
-      });
-    } else {
-      this.cursor.setState("idle");
-    }
+    this.cursor.setState("idle");
   }
 
   async ask(text: string): Promise<void> {
@@ -61,7 +47,7 @@ class AIOnboardingAgentInstance {
       throw new Error("AIOnboardingAgent.init(config) must be called before ask().");
     }
     const context = collectRuntimeContext(this.config, this.sessionId);
-    if (this.config.enableVoice && this.voice instanceof GeminiLiveClient && this.voice.isConnected()) {
+    if (this.isVoiceConnected() && this.voice) {
       this.voice.sendText(text);
       return;
     }
@@ -133,7 +119,7 @@ class AIOnboardingAgentInstance {
       await this.handleControlResult(result);
     } else {
       this.cursor.startBubbleFade();
-      this.setStatus(this.config.enableVoice ? "listening" : "idle");
+      this.setStatus(this.isVoiceConnected() ? "listening" : "idle");
     }
   }
 
@@ -193,7 +179,7 @@ class AIOnboardingAgentInstance {
     if (!this.cursor || !this.config) return;
     if (!this.activeExecutor) {
       this.cursor.startBubbleFade();
-      this.setStatus(this.config.enableVoice ? "listening" : "idle");
+      this.setStatus(this.isVoiceConnected() ? "listening" : "idle");
       return;
     }
 
@@ -271,6 +257,10 @@ class AIOnboardingAgentInstance {
   private setStatus(status: MiaStatus): void {
     if (status !== "ended") this.cursor?.setState(status);
     this.config?.onStatusChange?.(status);
+  }
+
+  private isVoiceConnected(): boolean {
+    return Boolean(this.config?.enableVoice && this.voice instanceof GeminiLiveClient && this.voice.isConnected());
   }
 
 }

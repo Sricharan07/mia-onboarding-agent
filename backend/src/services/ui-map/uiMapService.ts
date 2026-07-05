@@ -9,6 +9,7 @@ import { applyUiScanAuth, type UiScanAuthConfig, type UiScanAuthMode } from "./a
 import { gotoAndSettle } from "./navigation.js";
 import { UiMapPageCaptureService } from "./pageCaptureService.js";
 import { captureSafeExpansions } from "./safeExpansion.js";
+import { syncLatestUiElementSemanticIndex } from "../semantic/syncUiElementSemanticIndex.js";
 
 const SCAN_LEASE_MS = 30 * 60 * 1000;
 
@@ -21,6 +22,20 @@ type StoredUiMapScanConfig = {
   routeDiscovery: { enabled: boolean; maxRoutes: number };
 };
 
+export type UiMapPreflightCheck = {
+  id: string;
+  label: string;
+  status: "passed" | "warning" | "failed";
+  message: string;
+  fix?: string;
+};
+
+export type UiMapPreflightReport = {
+  appId: string;
+  ok: boolean;
+  checks: UiMapPreflightCheck[];
+};
+
 export class UiMapService {
   private readonly capture: UiMapPageCaptureService;
   private readonly activeScans = new Set<string>();
@@ -31,11 +46,11 @@ export class UiMapService {
     private readonly repositories: Repositories,
     private readonly semanticSearch: SemanticSearchAdapter
   ) {
-    this.capture = new UiMapPageCaptureService(repositories, semanticSearch);
+    this.capture = new UiMapPageCaptureService(repositories);
   }
 
   async scanApp(input: { appId: string; routes?: string[]; auth?: { mode: UiScanAuthMode } }): Promise<{ uiMapVersionId: string; status: string }> {
-    const app = this.repositories.getApp(input.appId);
+    const app = this.repositories.getActiveApp(input.appId);
     const appScanConfig = this.repositories.getAppUiScanConfig(input.appId);
     const routes = normalizeRoutes(input.routes?.length ? input.routes : appScanConfig.routes);
     if (routes.length === 0) throw new ValidationAppError("At least one route is required.");
@@ -58,6 +73,52 @@ export class UiMapService {
     this.startScan(version.id);
 
     return { uiMapVersionId: version.id, status: "scanning" };
+  }
+
+  async preflightApp(input: { appId: string; routes?: string[]; auth?: { mode: UiScanAuthMode } }): Promise<UiMapPreflightReport> {
+    const app = this.repositories.getActiveApp(input.appId);
+    const appScanConfig = this.repositories.getAppUiScanConfig(input.appId);
+    const routes = normalizeRoutes(input.routes?.length ? input.routes : appScanConfig.routes);
+    const mode = input.auth?.mode ?? appScanConfig.authMode;
+    const checks: UiMapPreflightCheck[] = [];
+
+    addCheck(checks, "base-url", "Base URL", "passed", `Using ${app.baseUrl}.`);
+    await checkReachable(app.baseUrl, checks, "base-url-reachable", "Base URL reachable");
+
+    if (routes.length === 0) {
+      addCheck(checks, "routes", "Routes", "failed", "At least one route is required.", "Add one or more routes to the scan profile.");
+    } else {
+      addCheck(checks, "routes", "Routes", "passed", `${routes.length} route(s) selected.`);
+      for (const route of routes.slice(0, 5)) {
+        await checkReachable(new URL(route, app.baseUrl).toString(), checks, `route:${route}`, `Route ${route}`);
+      }
+      if (routes.length > 5) {
+        addCheck(checks, "routes-sampled", "Route sample", "warning", "Only the first five routes were reachability-checked.", "Run the scan after fixing any listed route failures.");
+      }
+    }
+
+    if (mode === "manual") {
+      addCheck(checks, "auth-mode", "Auth mode", "warning", "Manual auth requires interactive scan.", "Use Start interactive scan instead of backend scan.");
+    } else if (mode === "login_form") {
+      await this.checkLoginForm(app.baseUrl, appScanConfig, checks);
+    } else {
+      addCheck(checks, "auth-mode", "Auth mode", "passed", "No authentication will be attempted.");
+    }
+
+    addSelectorListCheck(checks, "ignored-selectors", "Ignored selectors", appScanConfig.ignoredSelectors);
+    addSelectorListCheck(checks, "redacted-selectors", "Redacted selectors", appScanConfig.redactedSelectors);
+
+    if (appScanConfig.routeDiscovery.enabled) {
+      addCheck(checks, "route-discovery", "Route discovery", "warning", `Same-origin route discovery can add up to ${appScanConfig.routeDiscovery.maxRoutes} routes.`, "Start with explicit routes for production scans.");
+    } else {
+      addCheck(checks, "route-discovery", "Route discovery", "passed", "Route discovery is disabled.");
+    }
+
+    return {
+      appId: input.appId,
+      ok: !checks.some((check) => check.status === "failed") && mode !== "manual",
+      checks
+    };
   }
 
   resumeUnfinishedScans(onError?: (error: unknown) => void): void {
@@ -156,7 +217,11 @@ export class UiMapService {
         }
       }
       const errorSummary = routeErrors.length ? routeErrors.join("\n") : undefined;
-      this.repositories.updateUiMapVersion(uiMapVersionId, successfulRoutes > 0 ? "completed" : "failed", errorSummary);
+      const status = successfulRoutes > 0 ? "completed" : "failed";
+      this.repositories.updateUiMapVersion(uiMapVersionId, status, errorSummary);
+      if (status === "completed") {
+        await syncLatestUiElementSemanticIndex(this.repositories, this.semanticSearch, appId);
+      }
     } catch (error) {
       this.repositories.updateUiMapVersion(uiMapVersionId, "failed", error instanceof Error ? error.message : String(error));
     } finally {
@@ -164,6 +229,92 @@ export class UiMapService {
       await browser?.close();
     }
   }
+
+  private async checkLoginForm(baseUrl: string, auth: StoredUiMapScanConfig["auth"], checks: UiMapPreflightCheck[]): Promise<void> {
+    const missing = Object.entries({
+      loginUrl: auth?.loginUrl,
+      username: auth?.username,
+      password: auth?.password,
+      usernameSelector: auth?.usernameSelector,
+      passwordSelector: auth?.passwordSelector,
+      submitSelector: auth?.submitSelector
+    }).filter(([, value]) => !value).map(([key]) => key);
+
+    if (missing.length) {
+      addCheck(checks, "login-form-config", "Login form config", "failed", `Missing ${missing.join(", ")}.`, "Complete the login-form fields in Scan profile.");
+      return;
+    }
+
+    addCheck(checks, "login-form-config", "Login form config", "passed", "Required login-form fields are configured.");
+
+    let browser: Browser | undefined;
+    try {
+      browser = await chromium.launch({ headless: true });
+      const page = await (await browser.newContext()).newPage();
+      await gotoAndSettle(page, new URL(auth!.loginUrl!, baseUrl).toString());
+      for (const [id, label, selector] of [
+        ["username-selector", "Username selector", auth!.usernameSelector],
+        ["password-selector", "Password selector", auth!.passwordSelector],
+        ["submit-selector", "Submit selector", auth!.submitSelector]
+      ] as const) {
+        const count = await page.locator(selector!).count();
+        if (count === 1) {
+          addCheck(checks, id, label, "passed", `${selector} matched one element.`);
+        } else {
+          addCheck(checks, id, label, "failed", `${selector} matched ${count} elements.`, "Use a selector that matches exactly one element on the login page.");
+        }
+      }
+    } catch (error) {
+      addCheck(checks, "login-form-page", "Login page", "failed", error instanceof Error ? error.message : String(error), "Confirm login URL and selectors.");
+    } finally {
+      await browser?.close();
+    }
+  }
+}
+
+function addCheck(checks: UiMapPreflightCheck[], id: string, label: string, status: UiMapPreflightCheck["status"], message: string, fix?: string): void {
+  checks.push({ id, label, status, message, fix });
+}
+
+async function checkReachable(url: string, checks: UiMapPreflightCheck[], id: string, label: string): Promise<void> {
+  try {
+    const response = await fetch(url, { method: "GET", signal: AbortSignal.timeout(8000), redirect: "manual" });
+    const status = response.status;
+    if (status >= 200 && status < 500) {
+      addCheck(checks, id, label, "passed", `${url} responded with HTTP ${status}.`);
+      return;
+    }
+    addCheck(checks, id, label, "failed", `${url} responded with HTTP ${status}.`, "Fix the target app route or base URL.");
+  } catch (error) {
+    addCheck(checks, id, label, "failed", error instanceof Error ? error.message : String(error), "Confirm the target app is running and reachable from the backend.");
+  }
+}
+
+function addSelectorListCheck(checks: UiMapPreflightCheck[], id: string, label: string, selectors: string[]): void {
+  for (const selector of selectors) {
+    if (!looksLikeCssSelector(selector)) {
+      addCheck(checks, `${id}:${selector}`, label, "failed", `${selector} is not valid CSS selector syntax.`, "Fix or remove the selector.");
+      return;
+    }
+  }
+  addCheck(checks, id, label, "passed", selectors.length ? `${selectors.length} selector(s) configured.` : "No selectors configured.");
+}
+
+function looksLikeCssSelector(selector: string): boolean {
+  const trimmed = selector.trim();
+  if (!trimmed || /[\r\n]/.test(trimmed) || /^[>+~]/.test(trimmed)) return false;
+  return balanced(trimmed, "[", "]") && balanced(trimmed, "(", ")") && balanced(trimmed, "\"", "\"") && balanced(trimmed, "'", "'");
+}
+
+function balanced(value: string, open: string, close: string): boolean {
+  if (open === close) return value.split(open).length % 2 === 1;
+  let depth = 0;
+  for (const char of value) {
+    if (char === open) depth += 1;
+    if (char === close) depth -= 1;
+    if (depth < 0) return false;
+  }
+  return depth === 0;
 }
 
 function parseScanConfig(value: unknown): StoredUiMapScanConfig {

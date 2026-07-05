@@ -33,7 +33,8 @@ function migrate(db: Db): void {
       base_url TEXT NOT NULL,
       ui_scan_config_json TEXT,
       created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
+      updated_at TEXT NOT NULL,
+      archived_at TEXT
     );
 
     CREATE TABLE IF NOT EXISTS ui_map_versions (
@@ -225,6 +226,7 @@ function migrate(db: Db): void {
   ensureColumn(db, "ui_elements", "discovered_by", "TEXT NOT NULL DEFAULT 'route_scan'");
   ensureColumn(db, "ui_elements", "fingerprint", "TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, "apps", "ui_scan_config_json", "TEXT");
+  ensureColumn(db, "apps", "archived_at", "TEXT");
   ensureColumn(db, "ui_map_versions", "scan_config_json", "TEXT");
   ensureColumn(db, "ui_map_versions", "locked_by", "TEXT");
   ensureColumn(db, "ui_map_versions", "locked_until", "TEXT");

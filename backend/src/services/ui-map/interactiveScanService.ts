@@ -7,6 +7,7 @@ import { createId } from "../../utils/id.js";
 import { applyUiScanAuth, type UiScanAuthMode } from "./auth.js";
 import { gotoAndSettle } from "./navigation.js";
 import { UiMapPageCaptureService, type CapturePageResult } from "./pageCaptureService.js";
+import { syncLatestUiElementSemanticIndex } from "../semantic/syncUiElementSemanticIndex.js";
 
 type InteractiveSession = {
   sessionId: string;
@@ -35,9 +36,9 @@ export class InteractiveUiMapScanService {
   constructor(
     private readonly config: AppConfig,
     private readonly repositories: Repositories,
-    semanticSearch: SemanticSearchAdapter
+    private readonly semanticSearch: SemanticSearchAdapter
   ) {
-    this.capture = new UiMapPageCaptureService(repositories, semanticSearch);
+    this.capture = new UiMapPageCaptureService(repositories);
   }
 
   async start(input: {
@@ -45,7 +46,7 @@ export class InteractiveUiMapScanService {
     routes?: string[];
     auth?: { mode: UiScanAuthMode };
   }): Promise<InteractiveSessionSummary & { initialCapture?: CapturePageResult }> {
-    const app = this.repositories.getApp(input.appId);
+    const app = this.repositories.getActiveApp(input.appId);
     const appScanConfig = this.repositories.getAppUiScanConfig(input.appId);
     const routes = input.routes?.length ? input.routes : appScanConfig.routes;
     if (routes.length === 0) throw new ValidationAppError("At least one route is required.");
@@ -157,7 +158,11 @@ export class InteractiveUiMapScanService {
 
   async finish(sessionId: string): Promise<{ uiMapVersionId: string; status: string }> {
     const session = this.getSession(sessionId);
+    if (this.repositories.countUiElementsForVersion(session.uiMapVersionId) === 0) {
+      throw new ValidationAppError("Capture at least one UI element before finishing interactive map.");
+    }
     this.repositories.updateUiMapVersion(session.uiMapVersionId, "completed");
+    await syncLatestUiElementSemanticIndex(this.repositories, this.semanticSearch, session.appId);
     await this.closeSession(session);
     return { uiMapVersionId: session.uiMapVersionId, status: "completed" };
   }

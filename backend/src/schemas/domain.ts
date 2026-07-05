@@ -32,11 +32,12 @@ export type AppUiScanConfig = z.infer<typeof appUiScanConfigSchema>;
 export const appSchema = z.object({
   id: z.string(),
   name: z.string().min(1),
-  slug: z.string().min(1),
+  slug: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
   baseUrl: z.string().url(),
   uiScanConfig: appUiScanConfigSchema,
   createdAt: z.string(),
-  updatedAt: z.string()
+  updatedAt: z.string(),
+  archivedAt: z.string().nullable().optional()
 });
 export type AppRecord = z.infer<typeof appSchema>;
 

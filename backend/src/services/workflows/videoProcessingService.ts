@@ -18,6 +18,7 @@ export class VideoProcessingService {
 
   startJob(jobId: string, onError?: (error: unknown) => void): { jobId: string; status: string } {
     const job = this.repositories.getWorkflowJob(jobId);
+    this.repositories.getActiveApp(String(job.app_id));
     const status = String(job.status);
     if (!["uploaded", "analyzing", "mapped", "failed"].includes(status)) {
       return { jobId, status };
@@ -45,6 +46,8 @@ export class VideoProcessingService {
   }
 
   async processJob(jobId: string): Promise<void> {
+    const job = this.repositories.getWorkflowJob(jobId);
+    this.repositories.getActiveApp(String(job.app_id));
     if (!this.repositories.claimWorkflowJob(jobId, this.workerId, leaseUntil(JOB_LEASE_MS))) {
       return;
     }

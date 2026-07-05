@@ -19,6 +19,14 @@ export async function registerUiMapRoutes(app: FastifyInstance, dependencies: Ap
     return dependencies.services.uiMap.scanApp({ appId: params.appId, ...body });
   });
 
+  app.post("/api/v1/apps/:appId/ui-map/preflight", {
+    preHandler: (request, reply) => requireApiKeyScope(request, reply, dependencies, ["admin"])
+  }, async (request) => {
+    const params = z.object({ appId: z.string() }).parse(request.params);
+    const body = scanSchema.parse(request.body);
+    return dependencies.services.uiMap.preflightApp({ appId: params.appId, ...body });
+  });
+
   app.get("/api/v1/apps/:appId/ui-map/versions", {
     preHandler: (request, reply) => requireApiKeyScope(request, reply, dependencies, ["ui-map:read"])
   }, async (request) => {
@@ -49,15 +57,16 @@ export async function registerUiMapRoutes(app: FastifyInstance, dependencies: Ap
     return { items: dependencies.repositories.listElements(params.pageId, query) };
   });
 
-  app.patch("/api/v1/elements/:elementId", {
+  app.patch("/api/v1/apps/:appId/ui-map/elements/:elementRowId", {
     preHandler: (request, reply) => requireApiKeyScope(request, reply, dependencies, ["admin"])
   }, async (request) => {
-    const params = z.object({ elementId: z.string() }).parse(request.params);
+    const params = z.object({ appId: z.string(), elementRowId: z.string() }).parse(request.params);
     const body = z.object({
       description: z.string().optional(),
       tags: z.array(z.string()).optional()
     }).parse(request.body);
-    dependencies.repositories.updateElement(params.elementId, body);
+    requireApiKeyAppAccess(request, dependencies, params.appId);
+    dependencies.repositories.updateLatestElement(params.appId, params.elementRowId, body);
     return { ok: true };
   });
 

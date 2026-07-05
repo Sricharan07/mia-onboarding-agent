@@ -22,6 +22,7 @@ export type ProviderReadiness = {
 
 export type SystemReadiness = {
   database: ProviderReadiness;
+  secrets: ProviderReadiness;
   providers: {
     gemini: ProviderReadiness;
     semanticSearch: ProviderReadiness;
@@ -57,6 +58,7 @@ export type AppRecord = {
   uiScanConfig: AppUiScanConfig;
   createdAt: string;
   updatedAt: string;
+  archivedAt?: string | null;
 };
 
 export type UiMapVersion = {
@@ -125,6 +127,20 @@ export type InteractiveUiMapSession = {
   createdAt: string;
   initialCapture?: UiMapCaptureResult;
   capture?: UiMapCaptureResult;
+};
+
+export type UiMapPreflightCheck = {
+  id: string;
+  label: string;
+  status: "passed" | "warning" | "failed";
+  message: string;
+  fix?: string;
+};
+
+export type UiMapPreflightReport = {
+  appId: string;
+  ok: boolean;
+  checks: UiMapPreflightCheck[];
 };
 
 export type WorkflowJob = {
@@ -252,6 +268,23 @@ export type Workflow = {
   updatedAt: string;
 };
 
+export type WorkflowReviewIssue = {
+  id: string;
+  severity: "blocker" | "warning" | "info";
+  label: string;
+  message: string;
+  stepId?: string;
+  fix?: string;
+};
+
+export type WorkflowReviewReport = {
+  workflowId: string;
+  publishable: boolean;
+  blockerCount: number;
+  warningCount: number;
+  issues: WorkflowReviewIssue[];
+};
+
 export type ExecutionLog = {
   id: string;
   eventType: string;
@@ -297,6 +330,16 @@ export type ConsoleAuthStatus = {
 export type ConsoleLoginResponse = {
   token: string;
   expiresAt: string;
+  user: ConsoleAuthUser;
+};
+
+export type ConsoleSession = {
+  id: string;
+  userId: string;
+  createdAt: string;
+  expiresAt: string;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
   user: ConsoleAuthUser;
 };
 
@@ -373,6 +416,14 @@ export class BackendApi {
     return this.request("/api/v1/apps", { method: "POST", body: input });
   }
 
+  archiveApp(appId: string): Promise<AppRecord> {
+    return this.request(`/api/v1/apps/${encodeURIComponent(appId)}/archive`, { method: "POST", body: {} });
+  }
+
+  preflightUiMap(appId: string, routes: string[], authMode: UiScanAuthMode = "none"): Promise<UiMapPreflightReport> {
+    return this.request(`/api/v1/apps/${encodeURIComponent(appId)}/ui-map/preflight`, { method: "POST", body: { routes, auth: { mode: authMode } } });
+  }
+
   scanUiMap(appId: string, routes: string[], authMode: UiScanAuthMode = "none"): Promise<{ uiMapVersionId: string; status: string }> {
     return this.request(`/api/v1/apps/${encodeURIComponent(appId)}/ui-map/scan`, { method: "POST", body: { routes, auth: { mode: authMode } } });
   }
@@ -408,12 +459,15 @@ export class BackendApi {
     return this.request(`/api/v1/ui-map/${encodeURIComponent(uiMapVersionId)}/pages`);
   }
 
-  listElements(pageId: string): Promise<Items<UiElement>> {
-    return this.request(`/api/v1/pages/${encodeURIComponent(pageId)}/elements`);
+  listElements(pageId: string, filters: { selectorQuality?: string; elementType?: string } = {}): Promise<Items<UiElement>> {
+    const params = new URLSearchParams();
+    if (filters.selectorQuality) params.set("selectorQuality", filters.selectorQuality);
+    if (filters.elementType) params.set("elementType", filters.elementType);
+    return this.request(`/api/v1/pages/${encodeURIComponent(pageId)}/elements${params.size ? `?${params}` : ""}`);
   }
 
-  updateElement(elementId: string, input: { description?: string; tags?: string[] }): Promise<{ ok: true }> {
-    return this.request(`/api/v1/elements/${encodeURIComponent(elementId)}`, { method: "PATCH", body: input });
+  updateElement(appId: string, elementRowId: string, input: { description?: string; tags?: string[] }): Promise<{ ok: true }> {
+    return this.request(`/api/v1/apps/${encodeURIComponent(appId)}/ui-map/elements/${encodeURIComponent(elementRowId)}`, { method: "PATCH", body: input });
   }
 
   uploadWorkflowVideo(appId: string, input: { file: File; name?: string; description?: string }): Promise<{ videoId: string; jobId: string; status: string }> {
@@ -439,6 +493,10 @@ export class BackendApi {
 
   getWorkflow(workflowId: string): Promise<Workflow> {
     return this.request(`/api/v1/workflows/${encodeURIComponent(workflowId)}`);
+  }
+
+  getWorkflowReviewReport(workflowId: string): Promise<WorkflowReviewReport> {
+    return this.request(`/api/v1/workflows/${encodeURIComponent(workflowId)}/review-report`);
   }
 
   updateWorkflow(workflowId: string, input: Partial<Workflow>): Promise<{ ok: true }> {
@@ -507,6 +565,30 @@ export class BackendApi {
 
   revokeApiKey(keyId: string): Promise<ApiKeyRecord> {
     return this.request(`/api/v1/api-keys/${encodeURIComponent(keyId)}`, { method: "DELETE" });
+  }
+
+  listConsoleUsers(): Promise<Items<ConsoleAuthUser>> {
+    return this.request("/api/v1/console/users");
+  }
+
+  createConsoleUser(input: { email: string; name: string; password: string }): Promise<ConsoleAuthUser> {
+    return this.request("/api/v1/console/users", { method: "POST", body: input });
+  }
+
+  changeConsoleUserPassword(userId: string, input: { currentPassword?: string; nextPassword: string }): Promise<ConsoleAuthUser> {
+    return this.request(`/api/v1/console/users/${encodeURIComponent(userId)}/password`, { method: "PATCH", body: input });
+  }
+
+  disableConsoleUser(userId: string): Promise<ConsoleAuthUser> {
+    return this.request(`/api/v1/console/users/${encodeURIComponent(userId)}/disable`, { method: "POST", body: {} });
+  }
+
+  listConsoleSessions(): Promise<Items<ConsoleSession>> {
+    return this.request("/api/v1/console/sessions");
+  }
+
+  revokeConsoleSession(sessionId: string): Promise<{ ok: true }> {
+    return this.request(`/api/v1/console/sessions/${encodeURIComponent(sessionId)}/revoke`, { method: "POST", body: {} });
   }
 
   private async request<T>(

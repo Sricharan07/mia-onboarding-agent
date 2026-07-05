@@ -35,7 +35,7 @@ export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
   await app.register(cors, {
     origin: corsOrigin(config.CORS_ORIGIN),
     methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["authorization", "content-type", "x-bootstrap-admin-token"]
+    allowedHeaders: ["authorization", "content-type", "x-api-key", "x-bootstrap-admin-token"]
   });
   await app.register(multipart, { limits: { fileSize: 1024 * 1024 * 500 } });
 
@@ -57,7 +57,7 @@ function corsOrigin(value: string): true | string[] {
 
 function createDependencies(config: AppConfig) {
   const db = createDatabase(config);
-  const repositories = new Repositories(db);
+  const repositories = new Repositories(db, config.MIA_SECRET_ENCRYPTION_KEY);
   const logAiRequest = repositories.insertAiLog.bind(repositories);
   const gateway = new GeminiModelGatewayAdapter(config, logAiRequest);
   const semanticSearch = new LanceDbSemanticSearchAdapter(config, logAiRequest);

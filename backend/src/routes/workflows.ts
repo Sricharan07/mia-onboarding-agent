@@ -21,6 +21,7 @@ export async function registerWorkflowRoutes(app: FastifyInstance, dependencies:
     preHandler: (request, reply) => requireApiKeyScope(request, reply, dependencies, ["admin"])
   }, async (request) => {
     const params = z.object({ appId: z.string() }).parse(request.params);
+    dependencies.repositories.getActiveApp(params.appId);
     const metadata: Record<string, string> = {};
     let file: { buffer: Buffer; filename: string; mimetype: string } | undefined;
 
@@ -102,6 +103,15 @@ export async function registerWorkflowRoutes(app: FastifyInstance, dependencies:
     const workflow = dependencies.repositories.getWorkflow(params.workflowId);
     requireApiKeyAppAccess(request, dependencies, workflow.appId);
     return workflow;
+  });
+
+  app.get("/api/v1/workflows/:workflowId/review-report", {
+    preHandler: (request, reply) => requireApiKeyScope(request, reply, dependencies, ["workflows:read"])
+  }, async (request) => {
+    const params = z.object({ workflowId: z.string() }).parse(request.params);
+    const workflow = dependencies.repositories.getWorkflow(params.workflowId);
+    requireApiKeyAppAccess(request, dependencies, workflow.appId);
+    return dependencies.services.workflow.reviewWorkflow(params.workflowId);
   });
 
   app.patch("/api/v1/workflows/:workflowId", {

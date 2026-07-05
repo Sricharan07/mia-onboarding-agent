@@ -23,6 +23,7 @@ export type AuthenticatedConsoleSession = {
 };
 
 export type ConsoleAuthUser = Omit<ConsoleUserRecord, "passwordHash">;
+export type ConsoleAuthSession = Omit<ConsoleSessionRecord, "tokenHash">;
 
 export class ConsoleAuthService {
   constructor(
@@ -51,6 +52,49 @@ export class ConsoleAuthService {
     });
     this.repositories.markConsoleUserLogin(user.id);
     return this.createSession(this.repositories.getConsoleUserById(user.id));
+  }
+
+  async createUser(input: { email: string; name: string; password: string }): Promise<ConsoleAuthUser> {
+    this.assertPassword(input.password);
+    if (this.repositories.getConsoleUserByEmail(normalizeEmail(input.email))) {
+      throw new AppError("CONSOLE_USER_EXISTS", "A console user with this email already exists.", 409);
+    }
+    return stripPassword(this.repositories.createConsoleUser({
+      email: normalizeEmail(input.email),
+      name: input.name.trim(),
+      role: "admin",
+      passwordHash: await hashPassword(input.password)
+    }));
+  }
+
+  listUsers(): ConsoleAuthUser[] {
+    return this.repositories.listConsoleUsers();
+  }
+
+  listSessions(): ConsoleAuthSession[] {
+    return this.repositories.listConsoleSessions();
+  }
+
+  async changePassword(userId: string, input: { currentPassword?: string; nextPassword: string; actorUserId: string }): Promise<ConsoleAuthUser> {
+    this.assertPassword(input.nextPassword);
+    if (userId === input.actorUserId) {
+      const actor = this.repositories.getConsoleUserById(input.actorUserId);
+      if (!input.currentPassword || !await verifyPassword(input.currentPassword, actor.passwordHash)) {
+        throw new AppError("CONSOLE_CURRENT_PASSWORD_INVALID", "Current password is incorrect.", 401);
+      }
+    }
+    return this.repositories.updateConsoleUserPassword(userId, await hashPassword(input.nextPassword));
+  }
+
+  disableUser(userId: string, actorUserId: string): ConsoleAuthUser {
+    if (userId === actorUserId) {
+      throw new AppError("CONSOLE_USER_SELF_DISABLE_FORBIDDEN", "You cannot disable your own console user.", 400);
+    }
+    return this.repositories.disableConsoleUser(userId);
+  }
+
+  revokeSession(sessionId: string): void {
+    this.repositories.revokeConsoleSession(sessionId);
   }
 
   async login(input: { email: string; password: string }): Promise<LoginResult> {
@@ -128,6 +172,12 @@ export class ConsoleAuthService {
       throw new AppError("BOOTSTRAP_TOKEN_INVALID", "A valid bootstrap token is required to create the first console user.", 401);
     }
   }
+
+  private assertPassword(password: string): void {
+    if (password.length < PASSWORD_MIN_LENGTH) {
+      throw new AppError("CONSOLE_PASSWORD_TOO_SHORT", `Console passwords must be at least ${PASSWORD_MIN_LENGTH} characters.`, 400);
+    }
+  }
 }
 
 type LoginResult = {
@@ -170,6 +220,11 @@ function sessionUser(session: ConsoleSessionRecord): ConsoleAuthUser {
     lastLoginAt: session.user.lastLoginAt,
     disabledAt: session.user.disabledAt
   };
+}
+
+function stripPassword(user: ConsoleUserRecord): ConsoleAuthUser {
+  const { passwordHash: _passwordHash, ...safeUser } = user;
+  return safeUser;
 }
 
 function normalizeEmail(email: string): string {
