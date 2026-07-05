@@ -4,6 +4,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { mkdirSync } from "node:fs";
 import { ZodError } from "zod";
 import type { AppConfig } from "./config/env.js";
+import { validateRuntimeConfig } from "./config/env.js";
 import { AppError } from "./utils/errors.js";
 import { createDatabase } from "./db/database.js";
 import { Repositories } from "./db/repositories.js";
@@ -29,6 +30,7 @@ import { registerRoutes } from "./routes/index.js";
 export type AppDependencies = ReturnType<typeof createDependencies>;
 
 export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
+  validateRuntimeConfig(config);
   mkdirSync(config.LOCAL_UPLOAD_DIR, { recursive: true });
 
   const app = Fastify({ logger: true, trustProxy: config.TRUST_PROXY });

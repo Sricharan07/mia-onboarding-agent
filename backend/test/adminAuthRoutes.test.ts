@@ -608,6 +608,7 @@ function testConfig(dir: string): AppConfig {
     SEMANTIC_INDEX_DIR: join(dir, "lancedb"),
     UI_SCAN_AUTH_MODE: "none",
     UI_SCAN_POST_LOGIN_WAIT_MS: 1000,
-    UI_SCAN_HEADLESS: true
+    UI_SCAN_HEADLESS: true,
+    UI_SCAN_ALLOW_PRIVATE_NETWORKS: false
   };
 }

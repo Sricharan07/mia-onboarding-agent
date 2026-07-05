@@ -2,6 +2,7 @@ import type { Page } from "playwright";
 import type { AppConfig } from "../../config/env.js";
 import { ConfigError } from "../../utils/errors.js";
 import type { AppUiScanConfigWithSecrets } from "../../db/repositories.js";
+import { assertSafeTargetUrl } from "../security/targetUrlPolicy.js";
 import { gotoAndSettle } from "./navigation.js";
 
 export type UiScanAuthMode = "none" | "login_form" | "manual";
@@ -47,7 +48,9 @@ async function loginWithForm(page: Page, baseUrl: string, config: AppConfig, aut
     throw new ConfigError(`UI scan login_form auth is not configured. Missing: ${missing.join(", ")}.`);
   }
 
-  await gotoAndSettle(page, new URL(loginUrl!, baseUrl).toString());
+  const targetUrl = new URL(loginUrl!, baseUrl).toString();
+  await assertSafeTargetUrl(targetUrl, config);
+  await gotoAndSettle(page, targetUrl);
   await page.locator(usernameSelector!).fill(username!);
   await page.locator(passwordSelector!).fill(password!);
   await page.locator(submitSelector!).click();

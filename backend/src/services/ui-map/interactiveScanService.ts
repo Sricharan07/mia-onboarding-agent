@@ -8,6 +8,7 @@ import { applyUiScanAuth, type UiScanAuthMode } from "./auth.js";
 import { gotoAndSettle } from "./navigation.js";
 import { UiMapPageCaptureService, type CapturePageResult } from "./pageCaptureService.js";
 import { syncLatestUiElementSemanticIndex } from "../semantic/syncUiElementSemanticIndex.js";
+import { assertSafeTargetUrl, resolveSameOriginRouteUrl } from "../security/targetUrlPolicy.js";
 
 type InteractiveSession = {
   sessionId: string;
@@ -62,13 +63,16 @@ export class InteractiveUiMapScanService {
     const firstRoute = routes[0]!;
 
     try {
+      await assertSafeTargetUrl(app.baseUrl, this.config);
       await applyUiScanAuth({
         page,
         baseUrl: app.baseUrl,
         config: this.config,
         auth
       });
-      await gotoAndSettle(page, new URL(firstRoute, app.baseUrl).toString());
+      const firstUrl = resolveSameOriginRouteUrl(firstRoute, app.baseUrl);
+      await assertSafeTargetUrl(firstUrl, this.config);
+      await gotoAndSettle(page, firstUrl);
       const initialCapture = auth.mode === "manual"
         ? undefined
         : await this.capture.captureCurrentPage({
@@ -119,7 +123,9 @@ export class InteractiveUiMapScanService {
 
   async goto(sessionId: string, input: { route: string; captureDefault?: boolean }): Promise<InteractiveSessionSummary & { capture?: CapturePageResult }> {
     const session = this.getSession(sessionId);
-    await gotoAndSettle(session.page, new URL(input.route, session.baseUrl).toString());
+    const targetUrl = resolveSameOriginRouteUrl(input.route, session.baseUrl);
+    await assertSafeTargetUrl(targetUrl, this.config);
+    await gotoAndSettle(session.page, targetUrl);
     session.currentRoute = input.route;
 
     const capture = input.captureDefault === false

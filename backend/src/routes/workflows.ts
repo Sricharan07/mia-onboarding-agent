@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { AppDependencies } from "../app.js";
 import { workflowStepSchema } from "../schemas/domain.js";
+import { validateWorkflowVideoUpload } from "../services/security/workflowVideoUploadPolicy.js";
 import { ValidationAppError } from "../utils/errors.js";
 import { requireApiKeyAppAccess, requireApiKeyScope } from "./auth.js";
 
@@ -40,6 +41,7 @@ export async function registerWorkflowRoutes(app: FastifyInstance, dependencies:
     if (!file) {
       throw new ValidationAppError("Workflow video file is required.");
     }
+    validateWorkflowVideoUpload(file);
     const parsedMetadata = workflowVideoMetadataSchema.parse(metadata);
     const saved = await dependencies.adapters.storage.saveBuffer({
       buffer: file.buffer,

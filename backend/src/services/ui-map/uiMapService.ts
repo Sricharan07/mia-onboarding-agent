@@ -10,6 +10,7 @@ import { gotoAndSettle } from "./navigation.js";
 import { UiMapPageCaptureService } from "./pageCaptureService.js";
 import { captureSafeExpansions } from "./safeExpansion.js";
 import { syncLatestUiElementSemanticIndex } from "../semantic/syncUiElementSemanticIndex.js";
+import { assertSafeTargetUrl, resolveSameOriginRouteUrl } from "../security/targetUrlPolicy.js";
 
 const SCAN_LEASE_MS = 30 * 60 * 1000;
 
@@ -83,14 +84,14 @@ export class UiMapService {
     const checks: UiMapPreflightCheck[] = [];
 
     addCheck(checks, "base-url", "Base URL", "passed", `Using ${app.baseUrl}.`);
-    await checkReachable(app.baseUrl, checks, "base-url-reachable", "Base URL reachable");
+    await checkReachable(app.baseUrl, this.config, checks, "base-url-reachable", "Base URL reachable");
 
     if (routes.length === 0) {
       addCheck(checks, "routes", "Routes", "failed", "At least one route is required.", "Add one or more routes to the scan profile.");
     } else {
       addCheck(checks, "routes", "Routes", "passed", `${routes.length} route(s) selected.`);
       for (const route of routes.slice(0, 5)) {
-        await checkReachable(new URL(route, app.baseUrl).toString(), checks, `route:${route}`, `Route ${route}`);
+        await checkReachableRoute(route, app.baseUrl, this.config, checks, `route:${route}`, `Route ${route}`);
       }
       if (routes.length > 5) {
         addCheck(checks, "routes-sampled", "Route sample", "warning", "Only the first five routes were reachability-checked.", "Run the scan after fixing any listed route failures.");
@@ -151,6 +152,7 @@ export class UiMapService {
       browser = await chromium.launch({ headless: this.config.UI_SCAN_HEADLESS });
       const context = await browser.newContext();
       const page = await context.newPage();
+      await assertSafeTargetUrl(config.baseUrl, this.config);
       await applyUiScanAuth({
         page,
         baseUrl: config.baseUrl,
@@ -166,9 +168,11 @@ export class UiMapService {
         const route = pendingRoutes[index]!;
         if (visitedRoutes.has(route)) continue;
         visitedRoutes.add(route);
-        const url = new URL(route, config.baseUrl).toString();
+        let url = "";
         let capturedDefaultState = false;
         try {
+          url = resolveSameOriginRouteUrl(route, config.baseUrl);
+          await assertSafeTargetUrl(url, this.config);
           await gotoAndSettle(page, url);
           await this.capture.captureCurrentPage({
             appId,
@@ -209,7 +213,7 @@ export class UiMapService {
               uiMapVersionId,
               name: route,
               route,
-              url,
+              url: url || route,
               status: "failed",
               error: message
             });
@@ -251,7 +255,9 @@ export class UiMapService {
     try {
       browser = await chromium.launch({ headless: true });
       const page = await (await browser.newContext()).newPage();
-      await gotoAndSettle(page, new URL(auth!.loginUrl!, baseUrl).toString());
+      const loginUrl = new URL(auth!.loginUrl!, baseUrl).toString();
+      await assertSafeTargetUrl(loginUrl, this.config);
+      await gotoAndSettle(page, loginUrl);
       for (const [id, label, selector] of [
         ["username-selector", "Username selector", auth!.usernameSelector],
         ["password-selector", "Password selector", auth!.passwordSelector],
@@ -276,8 +282,9 @@ function addCheck(checks: UiMapPreflightCheck[], id: string, label: string, stat
   checks.push({ id, label, status, message, fix });
 }
 
-async function checkReachable(url: string, checks: UiMapPreflightCheck[], id: string, label: string): Promise<void> {
+async function checkReachable(url: string, config: AppConfig, checks: UiMapPreflightCheck[], id: string, label: string): Promise<void> {
   try {
+    await assertSafeTargetUrl(url, config);
     const response = await fetch(url, { method: "GET", signal: AbortSignal.timeout(8000), redirect: "manual" });
     const status = response.status;
     if (status >= 200 && status < 500) {
@@ -287,6 +294,14 @@ async function checkReachable(url: string, checks: UiMapPreflightCheck[], id: st
     addCheck(checks, id, label, "failed", `${url} responded with HTTP ${status}.`, "Fix the target app route or base URL.");
   } catch (error) {
     addCheck(checks, id, label, "failed", error instanceof Error ? error.message : String(error), "Confirm the target app is running and reachable from the backend.");
+  }
+}
+
+async function checkReachableRoute(route: string, baseUrl: string, config: AppConfig, checks: UiMapPreflightCheck[], id: string, label: string): Promise<void> {
+  try {
+    await checkReachable(resolveSameOriginRouteUrl(route, baseUrl), config, checks, id, label);
+  } catch (error) {
+    addCheck(checks, id, label, "failed", error instanceof Error ? error.message : String(error), "Use a relative route on the configured app origin.");
   }
 }
 

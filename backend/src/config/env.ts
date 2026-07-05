@@ -48,7 +48,8 @@ const envSchema = z.object({
   UI_SCAN_SUBMIT_SELECTOR: z.string().optional(),
   UI_SCAN_SUCCESS_URL_PATTERN: z.string().optional(),
   UI_SCAN_POST_LOGIN_WAIT_MS: z.coerce.number().int().nonnegative().default(1000),
-  UI_SCAN_HEADLESS: booleanStringSchema.default(true)
+  UI_SCAN_HEADLESS: booleanStringSchema.default(true),
+  UI_SCAN_ALLOW_PRIVATE_NETWORKS: booleanStringSchema.default(false)
 });
 
 export type AppConfig = z.infer<typeof envSchema>;
@@ -60,7 +61,9 @@ export function loadConfig(): AppConfig {
     throw new ConfigError("Environment validation failed.", result.error.issues);
   }
 
-  return normalizePaths(result.data);
+  const config = normalizePaths(result.data);
+  validateRuntimeConfig(config);
+  return config;
 }
 
 export function requireConfig(config: AppConfig, keys: Array<keyof AppConfig>, provider: string): void {
@@ -68,6 +71,12 @@ export function requireConfig(config: AppConfig, keys: Array<keyof AppConfig>, p
 
   if (missing.length > 0) {
     throw new ConfigError(`${provider} is not configured. Missing: ${missing.join(", ")}.`);
+  }
+}
+
+export function validateRuntimeConfig(config: AppConfig): void {
+  if (config.NODE_ENV === "production" && config.CORS_ORIGIN.trim() === "*") {
+    throw new ConfigError("CORS_ORIGIN must be an explicit origin list in production.");
   }
 }
 

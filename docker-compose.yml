@@ -6,7 +6,7 @@ services:
       BACKEND_HOST: 0.0.0.0
       BACKEND_PORT: 4000
       TRUST_PROXY: ${TRUST_PROXY:-false}
-      CORS_ORIGIN: "${CORS_ORIGIN:-*}"
+      CORS_ORIGIN: "${CORS_ORIGIN:?Set CORS_ORIGIN to the console and host app origins}"
       DATABASE_URL: file:/app/data/sqlite/local.db
       LOCAL_UPLOAD_DIR: /app/data/uploads
       MIA_SECRET_ENCRYPTION_KEY: ${MIA_SECRET_ENCRYPTION_KEY:-}
@@ -37,6 +37,7 @@ services:
       UI_SCAN_SUCCESS_URL_PATTERN: ${UI_SCAN_SUCCESS_URL_PATTERN:-}
       UI_SCAN_POST_LOGIN_WAIT_MS: ${UI_SCAN_POST_LOGIN_WAIT_MS:-1000}
       UI_SCAN_HEADLESS: "true"
+      UI_SCAN_ALLOW_PRIVATE_NETWORKS: ${UI_SCAN_ALLOW_PRIVATE_NETWORKS:-false}
     ports:
       - "4000:4000"
     volumes:
