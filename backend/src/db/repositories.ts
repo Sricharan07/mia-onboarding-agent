@@ -84,6 +84,25 @@ export type UiMapScanConfig = {
   routeDiscovery: AppUiScanConfig["routeDiscovery"];
 };
 
+export type UiMapVersionSummary = {
+  id: string;
+  appId: string;
+  version: string;
+  source: string;
+  status: string;
+  createdAt: string;
+  completedAt: string | null;
+  error: string | null;
+  routes: string[];
+  routeCount: number;
+  pageCount: number;
+  failedPageCount: number;
+  elementCount: number;
+  strongSelectorCount: number;
+  mediumSelectorCount: number;
+  weakSelectorCount: number;
+};
+
 export class Repositories {
   constructor(
     private readonly db: Db,
@@ -215,11 +234,29 @@ export class Repositories {
     `).all(now) as Array<{ id: string }>;
   }
 
-  listUiMapVersions(appId: string): unknown[] {
-    return this.db.prepare(`
-      SELECT id, app_id as appId, version, source, status, created_at as createdAt, completed_at as completedAt, error
-      FROM ui_map_versions WHERE app_id = ? ORDER BY created_at DESC
-    `).all(appId);
+  listUiMapVersions(appId: string): UiMapVersionSummary[] {
+    const rows = this.db.prepare(`
+      SELECT
+        v.id,
+        v.app_id as appId,
+        v.version,
+        v.source,
+        v.status,
+        v.scan_config_json as scanConfigJson,
+        v.created_at as createdAt,
+        v.completed_at as completedAt,
+        v.error,
+        (SELECT COUNT(*) FROM pages p WHERE p.ui_map_version_id = v.id) as pageCount,
+        (SELECT COUNT(*) FROM pages p WHERE p.ui_map_version_id = v.id AND p.status = 'failed') as failedPageCount,
+        (SELECT COUNT(*) FROM ui_elements e WHERE e.ui_map_version_id = v.id) as elementCount,
+        (SELECT COUNT(*) FROM ui_elements e WHERE e.ui_map_version_id = v.id AND e.selector_quality = 'strong') as strongSelectorCount,
+        (SELECT COUNT(*) FROM ui_elements e WHERE e.ui_map_version_id = v.id AND e.selector_quality = 'medium') as mediumSelectorCount,
+        (SELECT COUNT(*) FROM ui_elements e WHERE e.ui_map_version_id = v.id AND e.selector_quality = 'weak') as weakSelectorCount
+      FROM ui_map_versions v
+      WHERE v.app_id = ?
+      ORDER BY v.created_at DESC
+    `).all(appId) as Row[];
+    return rows.map(mapUiMapVersionSummary);
   }
 
   getLatestCompletedUiMapVersion(appId: string): { id: string; appId: string; version: string; status: string; createdAt: string; completedAt: string | null } | undefined {
@@ -263,8 +300,23 @@ export class Repositories {
 
   listPages(uiMapVersionId: string): unknown[] {
     return this.db.prepare(`
-      SELECT id, name, route, url, title, status, error, created_at as createdAt
-      FROM pages WHERE ui_map_version_id = ? ORDER BY route
+      SELECT
+        p.id,
+        p.name,
+        p.route,
+        p.url,
+        p.title,
+        p.status,
+        p.error,
+        p.created_at as createdAt,
+        (SELECT COUNT(*) FROM ui_elements e WHERE e.page_id = p.id) as elementCount,
+        (SELECT COUNT(DISTINCT e.state_name) FROM ui_elements e WHERE e.page_id = p.id) as stateCount,
+        (SELECT COUNT(*) FROM ui_elements e WHERE e.page_id = p.id AND e.selector_quality = 'strong') as strongSelectorCount,
+        (SELECT COUNT(*) FROM ui_elements e WHERE e.page_id = p.id AND e.selector_quality = 'medium') as mediumSelectorCount,
+        (SELECT COUNT(*) FROM ui_elements e WHERE e.page_id = p.id AND e.selector_quality = 'weak') as weakSelectorCount
+      FROM pages p
+      WHERE p.ui_map_version_id = ?
+      ORDER BY p.route
     `).all(uiMapVersionId);
   }
 
@@ -702,7 +754,14 @@ export class Repositories {
     }
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     return this.db.prepare(`
-      SELECT id, event_type as eventType, created_at as createdAt, payload_json as payload
+      SELECT id,
+             app_id as appId,
+             session_id as sessionId,
+             workflow_id as workflowId,
+             step_id as stepId,
+             event_type as eventType,
+             created_at as createdAt,
+             payload_json as payload
       FROM execution_logs ${where} ORDER BY created_at DESC LIMIT 200
     `).all(...params).map((row) => ({ ...(row as Row), payload: JSON.parse(String((row as Row).payload)) }));
   }
@@ -981,6 +1040,39 @@ function mapApp(row: Row, secretEncryptionKey?: string): AppRecord {
   };
 }
 
+function mapUiMapVersionSummary(row: Row): UiMapVersionSummary {
+  const routes = parseStoredUiMapVersionRoutes(row.scanConfigJson);
+  return {
+    id: String(row.id),
+    appId: String(row.appId),
+    version: String(row.version),
+    source: String(row.source),
+    status: String(row.status),
+    createdAt: String(row.createdAt),
+    completedAt: row.completedAt ? String(row.completedAt) : null,
+    error: row.error ? String(row.error) : null,
+    routes,
+    routeCount: routes.length,
+    pageCount: Number(row.pageCount ?? 0),
+    failedPageCount: Number(row.failedPageCount ?? 0),
+    elementCount: Number(row.elementCount ?? 0),
+    strongSelectorCount: Number(row.strongSelectorCount ?? 0),
+    mediumSelectorCount: Number(row.mediumSelectorCount ?? 0),
+    weakSelectorCount: Number(row.weakSelectorCount ?? 0)
+  };
+}
+
+function parseStoredUiMapVersionRoutes(value: unknown): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(String(value)) as { routes?: unknown };
+    if (!Array.isArray(parsed.routes)) return [];
+    return normalizeStringList(parsed.routes).map((route) => route.startsWith("/") ? route : `/${route}`);
+  } catch {
+    return [];
+  }
+}
+
 function mergeUiScanConfig(current: AppUiScanConfigWithSecrets, input?: AppUiScanConfigInput, secretEncryptionKey?: string): AppUiScanConfigWithSecrets {
   if (!input) return current;
   const nextPassword = input.password !== undefined ? normalizeOptionalString(input.password) : undefined;
@@ -1003,6 +1095,7 @@ function mergeUiScanConfig(current: AppUiScanConfigWithSecrets, input?: AppUiSca
   }
 
   return {
+    runtimeMode: input.runtimeMode === "qa_only" || input.runtimeMode === "workflow" ? input.runtimeMode : current.runtimeMode,
     routes: input.routes ? normalizeRouteList(input.routes) : current.routes,
     authMode: normalizeAuthMode(input.authMode) ?? current.authMode,
     loginUrl: input.loginUrl !== undefined ? normalizeOptionalString(input.loginUrl) : current.loginUrl,
@@ -1045,6 +1138,7 @@ function parseStoredUiScanConfig(value: unknown, secretEncryptionKey?: string): 
       ? decryptSecret(legacyPassword, secretEncryptionKey)
       : legacyPassword;
   return {
+    runtimeMode: parsed.runtimeMode === "qa_only" || parsed.runtimeMode === "workflow" ? parsed.runtimeMode : fallback.runtimeMode,
     routes: parsed.routes ? normalizeRouteList(parsed.routes) : fallback.routes,
     authMode: normalizeAuthMode(parsed.authMode) ?? fallback.authMode,
     loginUrl: normalizeOptionalString(parsed.loginUrl),
@@ -1068,6 +1162,7 @@ function parseStoredUiScanConfig(value: unknown, secretEncryptionKey?: string): 
 
 function defaultUiScanConfig(): AppUiScanConfigWithSecrets {
   return {
+    runtimeMode: "workflow",
     routes: ["/"],
     authMode: "none",
     passwordConfigured: false,

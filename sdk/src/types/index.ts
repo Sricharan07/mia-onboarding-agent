@@ -10,6 +10,9 @@ export type SDKConfig = {
   apiKey?: string;
   enableVoice: boolean;
   enableScreenShare?: boolean;
+  voice?: {
+    voiceName?: string;
+  };
   navigate?: (route: string) => void | Promise<void>;
   privacy?: {
     redactText?: boolean;
@@ -28,6 +31,7 @@ export type SDKConfig = {
     theme?: MiaTheme;
     bubbleMaxWidth?: number;
     bubbleLingerMs?: number;
+    assistantPanel?: boolean;
   };
   onStatusChange?: (status: MiaStatus) => void;
   onTranscript?: (entry: { role: "user" | "assistant" | "system"; text: string }) => void;
@@ -91,8 +95,9 @@ export type Workflow = {
 export type ResolveResponse =
   | { type: "workflow"; workflow: Workflow; message: string }
   | { type: "control"; action: "cancel" | "pause" | "resume"; message: string }
-  | { type: "answer"; message: string }
-  | { type: "no_match"; message: string };
+  | { type: "element_action"; action: "click" | "focus"; target: RuntimeElementContext; executionPolicy: "auto" | "requires_confirmation"; message: string }
+  | { type: "answer"; message: string; target?: RuntimeElementContext }
+  | { type: "no_match"; message: string; target?: RuntimeElementContext };
 
 export type GeminiLiveTokenResponse = {
   token: string;

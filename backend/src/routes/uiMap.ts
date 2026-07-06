@@ -8,6 +8,10 @@ const scanSchema = z.object({
   auth: z.object({ mode: z.enum(["none", "login_form", "manual"]) }).optional()
 });
 
+const routeDiscoverySchema = scanSchema.extend({
+  maxRoutes: z.number().int().positive().max(200).optional()
+});
+
 const interactiveSessionParamsSchema = z.object({ sessionId: z.string().min(1) });
 
 export async function registerUiMapRoutes(app: FastifyInstance, dependencies: AppDependencies): Promise<void> {
@@ -25,6 +29,14 @@ export async function registerUiMapRoutes(app: FastifyInstance, dependencies: Ap
     const params = z.object({ appId: z.string() }).parse(request.params);
     const body = scanSchema.parse(request.body);
     return dependencies.services.uiMap.preflightApp({ appId: params.appId, ...body });
+  });
+
+  app.post("/api/v1/apps/:appId/ui-map/discover-routes", {
+    preHandler: (request, reply) => requireApiKeyScope(request, reply, dependencies, ["admin"])
+  }, async (request) => {
+    const params = z.object({ appId: z.string() }).parse(request.params);
+    const body = routeDiscoverySchema.parse(request.body);
+    return dependencies.services.uiMap.discoverRoutes({ appId: params.appId, ...body });
   });
 
   app.get("/api/v1/apps/:appId/ui-map/versions", {

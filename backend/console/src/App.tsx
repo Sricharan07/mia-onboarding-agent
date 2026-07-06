@@ -21,6 +21,7 @@ import { LoginPage } from "./pages/LoginPage";
 import { LogsPage } from "./pages/LogsPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { TestMiaPage } from "./pages/TestMiaPage";
 import { UiMapDetailPage, UiMapPage } from "./pages/UiMapPages";
 import { ApiKeysPage } from "./pages/ApiKeysPage";
 import { UsagePage } from "./pages/UsagePage";
@@ -62,6 +63,7 @@ function App() {
   const api = useMemo(() => new BackendApi(backendUrl, { sessionToken }), [backendUrl, sessionToken]);
   const selectedApp = apps.find((app) => app.id === selectedAppId) ?? null;
   const latestUiMap = uiMapVersions.find((version) => version.status === "completed") ?? uiMapVersions[0] ?? null;
+  const activeUiMapScan = uiMapVersions.find((version) => version.status === "scanning") ?? null;
   const selectedPage = pages.find((page) => page.id === selectedPageId) ?? pages[0] ?? null;
   const elements = Object.values(elementsByPage).flat();
 
@@ -125,11 +127,11 @@ function App() {
       const latestVersion = versionsResponse.items.find((version) => version.status === "completed") ?? versionsResponse.items[0];
       if (latestVersion) {
         const pageResponse = await api.listPages(latestVersion.id);
-        setPages(pageResponse.items);
-        setSelectedPageId((current) => pageResponse.items.some((page) => page.id === current) ? current : pageResponse.items[0]?.id || "");
         const elementEntries = await Promise.all(
           pageResponse.items.map(async (page) => [page.id, (await api.listElements(page.id)).items] as const)
         );
+        setPages(pageResponse.items);
+        setSelectedPageId((current) => pageResponse.items.some((page) => page.id === current) ? current : pageResponse.items[0]?.id || "");
         setElementsByPage(Object.fromEntries(elementEntries));
       } else {
         setPages([]);
@@ -194,7 +196,8 @@ function App() {
 
   useEffect(() => {
     const hasActiveWorkflowJob = jobs.some((job) => ["uploaded", "analyzing", "mapped"].includes(job.status));
-    if (!authenticated || !selectedAppId || !hasActiveWorkflowJob) {
+    const hasActiveUiMapScan = uiMapVersions.some((version) => version.status === "scanning");
+    if (!authenticated || !selectedAppId || (!hasActiveWorkflowJob && !hasActiveUiMapScan)) {
       return;
     }
 
@@ -204,7 +207,7 @@ function App() {
 
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authenticated, selectedAppId, jobs]);
+  }, [authenticated, selectedAppId, jobs, uiMapVersions]);
 
   const selectApp = async (appId: string) => {
     setSelectedAppId(appId);
@@ -331,8 +334,8 @@ function App() {
 
         <div className="sidebar-footer">
           <div className="support-card">
-            <div>Live backend mode</div>
-            <p>Manage UI maps, workflows, runtime keys, and backend readiness from this console.</p>
+            <div>Operator console</div>
+            <p>Follow the launch desk first. It shows the blocker, evidence, and next action for the selected app.</p>
           </div>
           <button className="user-card" type="button" onClick={() => {
             setActiveRoute("settings");
@@ -359,11 +362,14 @@ function App() {
           </div>
           <div className="topbar-actions">
             {selectedApp && (
-              <select aria-label="Active application" value={selectedApp.id} onChange={(event) => void selectApp(event.target.value)}>
-                {apps.map((app) => (
-                  <option value={app.id} key={app.id}>{app.name}</option>
-                ))}
-              </select>
+              <label className="topbar-app-select">
+                <span>Active app</span>
+                <select aria-label="Active application" value={selectedApp.id} onChange={(event) => void selectApp(event.target.value)}>
+                  {apps.map((app) => (
+                    <option value={app.id} key={app.id}>{app.name}</option>
+                  ))}
+                </select>
+              </label>
             )}
             <StatusPill tone={health?.ok ? "green" : "red"} label={health?.ok ? "Backend healthy" : "Backend offline"} />
             <button className="button secondary" type="button" onClick={() => void refresh()}>
@@ -419,6 +425,8 @@ function App() {
             pages={pages}
             elements={elements}
             latestUiMap={latestUiMap}
+            activeUiMapScan={activeUiMapScan}
+            uiMapVersions={uiMapVersions}
             api={api}
             refresh={refresh}
             onOpenPage={(pageId) => {
@@ -448,6 +456,7 @@ function App() {
             api={api}
             refresh={refresh}
             showToast={showToast}
+            onUpload={() => setActiveRoute("upload")}
             onOpenWorkflow={(workflowId) => {
               void selectWorkflow(workflowId);
               setActiveRoute("workflow-review");
@@ -461,16 +470,31 @@ function App() {
             api={api}
             refresh={refresh}
             selectWorkflow={selectWorkflow}
+            onUpload={() => setActiveRoute("upload")}
             showToast={showToast}
           />
         )}
         {activeRoute === "workflows" && (
           <WorkflowsPage
             workflows={workflowSummaries}
+            onUpload={() => setActiveRoute("upload")}
             onReview={(workflowId) => {
               void selectWorkflow(workflowId);
               setActiveRoute("workflow-review");
             }}
+          />
+        )}
+        {activeRoute === "test-mia" && (
+          <TestMiaPage
+            app={selectedApp}
+            pages={pages}
+            elements={elements}
+            workflows={workflowSummaries}
+            logs={logs}
+            api={api}
+            refresh={refresh}
+            onOpenRoute={(route) => setActiveRoute(route)}
+            showToast={showToast}
           />
         )}
         {activeRoute === "logs" && <LogsPage logs={logs} />}

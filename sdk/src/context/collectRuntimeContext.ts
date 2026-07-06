@@ -14,7 +14,27 @@ export function collectRuntimeContext(config: SDKConfig, sessionId: string): SDK
 }
 
 function collectVisibleElements(config: SDKConfig): RuntimeElementContext[] {
-  const nodes = Array.from(document.querySelectorAll("button,a,input,textarea,select,[role='button'],[role='tab'],[role='menuitem']"));
+  const nodes = Array.from(document.querySelectorAll([
+    "button",
+    "a",
+    "input",
+    "textarea",
+    "select",
+    "[contenteditable='true']",
+    "[data-ai-id]",
+    "[data-testid]",
+    "[role='button']",
+    "[role='checkbox']",
+    "[role='combobox']",
+    "[role='link']",
+    "[role='menuitem']",
+    "[role='menuitemcheckbox']",
+    "[role='menuitemradio']",
+    "[role='option']",
+    "[role='switch']",
+    "[role='tab']",
+    "[tabindex]:not([tabindex='-1'])"
+  ].join(",")));
   return nodes
     .filter((node) => {
       if (node instanceof HTMLElement && isSdkOwnedElement(node)) return false;
@@ -33,15 +53,74 @@ function inspectElement(node: Element | null, config: SDKConfig): RuntimeElement
   if (isRedactedElement(node, config)) return undefined;
   const rect = node.getBoundingClientRect();
   const redactText = config.privacy?.redactText !== false || isSensitiveInput(node);
+  const selector = selectorForElement(node);
   return {
     tagName: node.tagName,
     role: node.getAttribute("role") ?? undefined,
-    label: redactText ? undefined : node.getAttribute("aria-label") ?? node.innerText?.trim() ?? undefined,
-    text: redactText ? undefined : node.innerText?.trim() || node.textContent?.trim() || undefined,
-    selector: node.getAttribute("data-ai-id") ? `[data-ai-id='${node.getAttribute("data-ai-id")}']` : undefined,
-    elementId: node.getAttribute("data-ai-id") ?? undefined,
+    label: redactText ? undefined : readableLabel(node),
+    text: redactText ? undefined : readableText(node),
+    selector,
+    elementId: node.getAttribute("data-ai-id") ?? (node.id || undefined),
     boundingBox: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
   };
+}
+
+function readableLabel(node: HTMLElement): string | undefined {
+  const ariaLabel = node.getAttribute("aria-label")?.trim();
+  if (ariaLabel) return ariaLabel;
+
+  const labelledBy = node.getAttribute("aria-labelledby");
+  if (labelledBy) {
+    const label = labelledBy
+      .split(/\s+/)
+      .map((id) => document.getElementById(id)?.innerText?.trim() || document.getElementById(id)?.textContent?.trim())
+      .filter(Boolean)
+      .join(" ")
+      .trim();
+    if (label) return label;
+  }
+
+  if (node.id) {
+    const explicitLabel = document.querySelector(`label[for="${cssEscape(node.id)}"]`)?.textContent?.trim();
+    if (explicitLabel) return explicitLabel;
+  }
+
+  if (node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement) {
+    return firstNonEmpty(node.placeholder, node.name, node.id);
+  }
+
+  if (node instanceof HTMLSelectElement) {
+    return firstNonEmpty(node.name, node.id);
+  }
+
+  return readableText(node);
+}
+
+function readableText(node: HTMLElement): string | undefined {
+  return firstNonEmpty(node.innerText, node.textContent);
+}
+
+function selectorForElement(node: HTMLElement): string | undefined {
+  const dataAiId = node.getAttribute("data-ai-id");
+  if (dataAiId) return `[data-ai-id='${cssEscape(dataAiId)}']`;
+  const testId = node.getAttribute("data-testid");
+  if (testId) return `[data-testid='${cssEscape(testId)}']`;
+  if (node.id) return `#${cssEscape(node.id)}`;
+  return undefined;
+}
+
+function firstNonEmpty(...values: Array<string | null | undefined>): string | undefined {
+  for (const value of values) {
+    const trimmed = value?.trim();
+    if (trimmed) return trimmed;
+  }
+  return undefined;
+}
+
+function cssEscape(value: string): string {
+  return typeof CSS !== "undefined" && typeof CSS.escape === "function"
+    ? CSS.escape(value)
+    : value.replace(/["'\\]/g, "\\$&");
 }
 
 function isRedactedElement(node: HTMLElement, config: SDKConfig): boolean {

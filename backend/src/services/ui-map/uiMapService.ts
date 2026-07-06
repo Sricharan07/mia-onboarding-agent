@@ -1,5 +1,5 @@
 import { chromium } from "playwright";
-import type { Browser } from "playwright";
+import type { Browser, Page } from "playwright";
 import { randomUUID } from "node:crypto";
 import type { Repositories } from "../../db/repositories.js";
 import type { SemanticSearchAdapter } from "../../adapters/interfaces.js";
@@ -14,6 +14,8 @@ import { assertSafeTargetUrl, resolveSameOriginRouteUrl } from "../security/targ
 import { installUiScanRequestGuard } from "./requestGuard.js";
 
 const SCAN_LEASE_MS = 30 * 60 * 1000;
+const ROUTE_PREFLIGHT_CONCURRENCY = 5;
+const ROUTE_DISCOVERY_MAX_ROUTES = 200;
 
 type StoredUiMapScanConfig = {
   baseUrl: string;
@@ -36,6 +38,20 @@ export type UiMapPreflightReport = {
   appId: string;
   ok: boolean;
   checks: UiMapPreflightCheck[];
+};
+
+export type UiMapRouteDiscoveryReport = {
+  appId: string;
+  baseUrl: string;
+  routes: string[];
+  checkedRoutes: Array<{
+    route: string;
+    status: "passed" | "failed";
+    url?: string;
+    discoveredRoutes: string[];
+    error?: string;
+  }>;
+  truncated: boolean;
 };
 
 export class UiMapService {
@@ -91,12 +107,9 @@ export class UiMapService {
       addCheck(checks, "routes", "Routes", "failed", "At least one route is required.", "Add one or more routes to the scan profile.");
     } else {
       addCheck(checks, "routes", "Routes", "passed", `${routes.length} route(s) selected.`);
-      for (const route of routes.slice(0, 5)) {
-        await checkReachableRoute(route, app.baseUrl, this.config, checks, `route:${route}`, `Route ${route}`);
-      }
-      if (routes.length > 5) {
-        addCheck(checks, "routes-sampled", "Route sample", "warning", "Only the first five routes were reachability-checked.", "Run the scan after fixing any listed route failures.");
-      }
+      const routeChecks = await mapLimit(routes, ROUTE_PREFLIGHT_CONCURRENCY, (route) =>
+        buildReachableRouteCheck(route, app.baseUrl, this.config, `route:${route}`, `Route ${route}`));
+      checks.push(...routeChecks);
     }
 
     if (mode === "manual") {
@@ -120,6 +133,80 @@ export class UiMapService {
       appId: input.appId,
       ok: !checks.some((check) => check.status === "failed") && mode !== "manual",
       checks
+    };
+  }
+
+  async discoverRoutes(input: { appId: string; routes?: string[]; auth?: { mode: UiScanAuthMode }; maxRoutes?: number }): Promise<UiMapRouteDiscoveryReport> {
+    const app = this.repositories.getActiveApp(input.appId);
+    const appScanConfig = this.repositories.getAppUiScanConfig(input.appId);
+    const seedRoutes = normalizeRoutes(input.routes?.length ? input.routes : appScanConfig.routes);
+    const maxRoutes = clampRouteLimit(input.maxRoutes ?? appScanConfig.routeDiscovery.maxRoutes);
+    const mode = input.auth?.mode ?? appScanConfig.authMode;
+    if (mode === "manual") {
+      throw new ValidationAppError("Manual auth requires interactive mapping. Use login_form or no auth for route discovery.");
+    }
+    if (seedRoutes.length === 0) {
+      throw new ValidationAppError("At least one seed route is required for route discovery.");
+    }
+
+    const auth = {
+      ...appScanConfig,
+      mode
+    };
+    const discovered = new Set(seedRoutes.slice(0, maxRoutes));
+    const pendingRoutes = [...discovered];
+    const checkedRoutes: UiMapRouteDiscoveryReport["checkedRoutes"] = [];
+    let browser: Browser | undefined;
+
+    try {
+      await assertSafeTargetUrl(app.baseUrl, this.config);
+      browser = await chromium.launch({ headless: this.config.UI_SCAN_HEADLESS });
+      const context = await browser.newContext();
+      await installUiScanRequestGuard(context, this.config);
+      const page = await context.newPage();
+      await applyUiScanAuth({
+        page,
+        baseUrl: app.baseUrl,
+        config: this.config,
+        auth
+      });
+
+      for (let index = 0; index < pendingRoutes.length && index < maxRoutes; index += 1) {
+        const route = pendingRoutes[index]!;
+        let url = "";
+        try {
+          url = resolveSameOriginRouteUrl(route, app.baseUrl);
+          await assertSafeTargetUrl(url, this.config);
+          await gotoAndSettle(page, url);
+          const newRoutes: string[] = [];
+          for (const candidate of await discoverSameOriginRoutes(page, app.baseUrl)) {
+            if (discovered.has(candidate)) continue;
+            discovered.add(candidate);
+            pendingRoutes.push(candidate);
+            newRoutes.push(candidate);
+            if (discovered.size >= maxRoutes) break;
+          }
+          checkedRoutes.push({ route, status: "passed", url, discoveredRoutes: newRoutes });
+        } catch (error) {
+          checkedRoutes.push({
+            route,
+            status: "failed",
+            url: url || undefined,
+            discoveredRoutes: [],
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+    } finally {
+      await browser?.close();
+    }
+
+    return {
+      appId: input.appId,
+      baseUrl: app.baseUrl,
+      routes: [...discovered],
+      checkedRoutes,
+      truncated: discovered.size >= maxRoutes
     };
   }
 
@@ -287,25 +374,44 @@ function addCheck(checks: UiMapPreflightCheck[], id: string, label: string, stat
 }
 
 async function checkReachable(url: string, config: AppConfig, checks: UiMapPreflightCheck[], id: string, label: string): Promise<void> {
+  checks.push(await buildReachableCheck(url, config, id, label));
+}
+
+async function buildReachableCheck(url: string, config: AppConfig, id: string, label: string): Promise<UiMapPreflightCheck> {
   try {
     await assertSafeTargetUrl(url, config);
     const response = await fetch(url, { method: "GET", signal: AbortSignal.timeout(8000), redirect: "manual" });
     const status = response.status;
     if (status >= 200 && status < 500) {
-      addCheck(checks, id, label, "passed", `${url} responded with HTTP ${status}.`);
-      return;
+      return { id, label, status: "passed", message: `${url} responded with HTTP ${status}.` };
     }
-    addCheck(checks, id, label, "failed", `${url} responded with HTTP ${status}.`, "Fix the target app route or base URL.");
+    return { id, label, status: "failed", message: `${url} responded with HTTP ${status}.`, fix: "Fix the target app route or base URL." };
   } catch (error) {
-    addCheck(checks, id, label, "failed", error instanceof Error ? error.message : String(error), "Confirm the target app is running and reachable from the backend.");
+    return {
+      id,
+      label,
+      status: "failed",
+      message: error instanceof Error ? error.message : String(error),
+      fix: "Confirm the target app is running and reachable from the backend."
+    };
   }
 }
 
 async function checkReachableRoute(route: string, baseUrl: string, config: AppConfig, checks: UiMapPreflightCheck[], id: string, label: string): Promise<void> {
+  checks.push(await buildReachableRouteCheck(route, baseUrl, config, id, label));
+}
+
+async function buildReachableRouteCheck(route: string, baseUrl: string, config: AppConfig, id: string, label: string): Promise<UiMapPreflightCheck> {
   try {
-    await checkReachable(resolveSameOriginRouteUrl(route, baseUrl), config, checks, id, label);
+    return await buildReachableCheck(resolveSameOriginRouteUrl(route, baseUrl), config, id, label);
   } catch (error) {
-    addCheck(checks, id, label, "failed", error instanceof Error ? error.message : String(error), "Use a relative route on the configured app origin.");
+    return {
+      id,
+      label,
+      status: "failed",
+      message: error instanceof Error ? error.message : String(error),
+      fix: "Use a relative route on the configured app origin."
+    };
   }
 }
 
@@ -367,7 +473,7 @@ function leaseUntil(ms: number): string {
   return new Date(Date.now() + ms).toISOString();
 }
 
-async function discoverSameOriginRoutes(page: import("playwright").Page, baseUrl: string): Promise<string[]> {
+async function discoverSameOriginRoutes(page: Page, baseUrl: string): Promise<string[]> {
   const base = new URL(baseUrl);
   const hrefs = await page.evaluate(() => Array.from(document.querySelectorAll("a[href]"))
     .map((anchor) => anchor instanceof HTMLAnchorElement ? anchor.href : "")
@@ -400,4 +506,23 @@ function normalizeStringArray(value: unknown): string[] {
 
 function normalizeAuthMode(value: unknown): UiScanAuthMode | undefined {
   return value === "none" || value === "login_form" || value === "manual" ? value : undefined;
+}
+
+function clampRouteLimit(value: unknown): number {
+  if (!Number.isInteger(value) || Number(value) < 1) return 25;
+  return Math.min(Number(value), ROUTE_DISCOVERY_MAX_ROUTES);
+}
+
+async function mapLimit<T, R>(items: T[], limit: number, mapper: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      results[currentIndex] = await mapper(items[currentIndex]!);
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }

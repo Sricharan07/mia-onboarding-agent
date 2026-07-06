@@ -1,6 +1,6 @@
 # SDK Integration
 
-The SDK runs in a host web app and talks to the self-hosted MIA backend. It collects page context, resolves user requests, logs workflow execution, and can start Gemini Live voice sessions when enabled.
+The SDK runs in a host web app and talks to the self-hosted MIA backend. It mounts Mia's cursor and end-user control panel, collects page context, resolves user requests, logs workflow execution, and can start Gemini Live voice sessions when enabled.
 
 ## Install
 
@@ -44,6 +44,12 @@ AIOnboardingAgent.init({
   backendUrl: "https://mia.example.com",
   apiKey: "mia_<prefix>_<secret>",
   enableVoice: true,
+  ui: {
+    assistantPanel: true
+  },
+  voice: {
+    voiceName: "Aoede"
+  },
   user: {
     id: "user_123",
     role: "admin"
@@ -88,18 +94,23 @@ Prefer deterministic app selectors such as `data-private` or `data-mia-redact` f
 
 ## UI Options
 
+The assistant panel is enabled by default. It gives end users a visible Ask box, start/stop voice controls, a Stop Mia button, suggested prompts from the current page, privacy status, and a local transcript. Disable it only if the host app provides an equivalent control surface.
+
 ```ts
 AIOnboardingAgent.init({
   appId: "app_example",
   backendUrl: "https://mia.example.com",
   apiKey: "mia_<prefix>_<secret>",
   ui: {
+    assistantPanel: true,
     theme: "auto",
     cursorOffset: { x: 20, y: 20 },
     bubbleMaxWidth: 320
   }
 });
 ```
+
+After installing the SDK, use Console -> Test Mia for a resolver dry-run and Console -> Logs to confirm real host-app sessions, prompts, targets, voice transcripts, and element actions.
 
 ## Voice
 
@@ -116,12 +127,22 @@ await AIOnboardingAgent.stopVoice();
 
 The backend mints short-lived Gemini Live tokens. The SDK does not need direct provider credentials.
 
+When `enableVoice` is true, the SDK also registers push-to-talk: hold `Control+Space` to start a voice session and stream microphone audio, then release either key to pause microphone streaming. Calling `startVoice()` directly still starts a normal open-mic voice session.
+
+Mia uses Gemini Live voice `Aoede` by default. Override `voice.voiceName` only after testing the replacement voice in Google AI Studio.
+
+Mia is DOM-first. Runtime pointing, simple visible-element actions such as click/focus, workflow execution, and screen-aware answers use collected DOM context, stable selectors, and element bounding boxes. Set `enableScreenShare: true` only when Mia must understand visual content the DOM cannot describe well, such as canvas charts, images, videos, PDFs, or custom-rendered surfaces. The browser asks the user before any screen frames are streamed.
+
+The SDK writes voice transcripts, final assistant speech, runtime resolution results, and voice errors to execution logs. Use those logs to diagnose what Mia heard, what she said, and whether she routed a request through the backend.
+
 ## Common Integration Issues
 
 - `401 API_KEY_REQUIRED`: pass `apiKey`, or ensure the backend URL points at the MIA backend.
 - `403 API_KEY_ORIGIN_FORBIDDEN`: add the host app origin to the SDK key's allowed origins.
 - `403 API_KEY_APP_FORBIDDEN`: use a key bound to the same `appId` passed to `init`.
 - Voice does not start: confirm backend Gemini config and check `/api/v1/system/readiness` with an admin credential.
+- Mia cannot point at UI: make sure runtime context contains usable selectors or reviewed visible text. Use `enableScreenShare: true` only for non-DOM visual surfaces.
+- Mia only talks and does not move the cursor: run Console -> Test Mia, then ask from the host app and inspect Console -> Logs. A point/click request needs a mapped element with a stable selector or current-page bounding box.
 - Context includes sensitive text: add `privacy.redactedSelectors` or a screen redaction callback.
 
 See [Troubleshooting](troubleshooting.md) for backend and console checks.

@@ -11,7 +11,7 @@ const nextConfig = {
     removeConsole: process.env.NODE_ENV === "production",
   },
   outputFileTracingRoot: workspaceRoot,
-  transpilePackages: ["sdk"],
+  transpilePackages: ["@mia/onboarding-agent"],
   turbopack: {
     root: workspaceRoot,
   },

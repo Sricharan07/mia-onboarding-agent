@@ -1,16 +1,16 @@
-import { Copy, KeyRound, Plus, X } from "lucide-react";
+import { AlertTriangle, Copy, KeyRound, Plus, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ApiKeyRecord, ApiKeyScope, AppRecord, BackendApi, CreatedApiKey } from "../api";
-import { EmptyTableRow, InlineAlert, Panel, StatusPill } from "../components/console";
+import { EmptyTableRow, InlineAlert, PageIntro, Panel, StatusPill } from "../components/console";
 import { formatDate } from "../utils/format";
 
 type Notice = { tone: "red" | "green" | "yellow" | "gray"; title: string; message: string };
+type KeyMode = "browser" | "admin";
 
-const scopeOptions: ApiKeyScope[] = ["apps:read", "ui-map:read", "workflows:read", "runtime:write", "logs:write", "logs:read", "admin"];
+const browserScopeOptions: ApiKeyScope[] = ["runtime:write", "logs:write", "apps:read", "ui-map:read", "workflows:read", "logs:read"];
 const presets: Array<{ label: string; scopes: ApiKeyScope[] }> = [
   { label: "SDK runtime key", scopes: ["runtime:write", "logs:write"] },
-  { label: "Read-only console key", scopes: ["apps:read", "ui-map:read", "workflows:read", "logs:read"] },
-  { label: "Admin key", scopes: ["admin"] }
+  { label: "Read-only integration key", scopes: ["apps:read", "ui-map:read", "workflows:read", "logs:read"] }
 ];
 
 export function ApiKeysPage({
@@ -27,6 +27,7 @@ export function ApiKeysPage({
   showToast: (message: string) => void;
 }) {
   const [keys, setKeys] = useState<ApiKeyRecord[]>([]);
+  const [keyMode, setKeyMode] = useState<KeyMode>("browser");
   const [name, setName] = useState("Local SDK key");
   const [scopes, setScopes] = useState<ApiKeyScope[]>(["runtime:write", "logs:write"]);
   const [appId, setAppId] = useState(selectedAppId);
@@ -34,6 +35,7 @@ export function ApiKeysPage({
   const [createdKey, setCreatedKey] = useState<CreatedApiKey | null>(null);
   const [pendingKeyId, setPendingKeyId] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const visibleKeys = keys.filter((key) => keyMode === "admin" ? key.scopes.includes("admin") : !key.scopes.includes("admin"));
 
   const load = async () => {
     try {
@@ -59,7 +61,8 @@ export function ApiKeysPage({
   };
 
   const create = async () => {
-    if (!scopes.includes("admin") && (!appId || parseOrigins(allowedOrigins).length === 0)) {
+    const nextScopes: ApiKeyScope[] = keyMode === "admin" ? ["admin"] : scopes;
+    if (keyMode === "browser" && (!appId || parseOrigins(allowedOrigins).length === 0)) {
       const message = "Choose an app and at least one allowed origin for non-admin keys.";
       setNotice({ tone: "yellow", title: "API key needs an app boundary", message });
       showToast(message);
@@ -68,8 +71,8 @@ export function ApiKeysPage({
     try {
       const next = await api.createApiKey({
         name,
-        scopes,
-        ...(scopes.includes("admin") ? {} : { appId, allowedOrigins: parseOrigins(allowedOrigins) })
+        scopes: nextScopes,
+        ...(keyMode === "admin" ? {} : { appId, allowedOrigins: parseOrigins(allowedOrigins) })
       });
       setCreatedKey(next);
       await load();
@@ -108,8 +111,37 @@ export function ApiKeysPage({
 
   return (
     <div className="page-grid">
+      <PageIntro
+        title={keyMode === "admin" ? "Backend admin keys" : "Browser SDK keys"}
+        description={keyMode === "admin"
+          ? "Create server-side keys for trusted backend automation. Admin keys are never safe for browser code."
+          : "Create app-bound runtime keys for the installed web SDK, with explicit scopes and allowed origins."}
+        action={<StatusPill tone={visibleKeys.some((key) => !key.revokedAt) ? "green" : "gray"} label={`${visibleKeys.length} keys`} />}
+      />
       {notice && <InlineAlert tone={notice.tone} title={notice.title} message={notice.message} />}
+      <div className="segmented-tabs" role="tablist" aria-label="API key type">
+        <button className={keyMode === "browser" ? "is-active" : ""} type="button" role="tab" aria-selected={keyMode === "browser"} onClick={() => {
+          setKeyMode("browser");
+          setName("Local SDK key");
+          setScopes(["runtime:write", "logs:write"]);
+          setCreatedKey(null);
+        }}>
+          Browser SDK keys
+        </button>
+        <button className={keyMode === "admin" ? "is-active" : ""} type="button" role="tab" aria-selected={keyMode === "admin"} onClick={() => {
+          setKeyMode("admin");
+          setName("Backend admin key");
+          setScopes(["admin"]);
+          setCreatedKey(null);
+        }}>
+          Admin keys
+        </button>
+      </div>
+
       <Panel title="Create API key" action={<StatusPill tone="green" label="Hashed at rest" />}>
+        {keyMode === "admin" && (
+          <InlineAlert tone="red" title="Admin key" message="Admin keys can control this backend. Never put an admin key in browser code, demos, screenshots, or client-side environment variables." />
+        )}
         <div className="form-grid single">
           <label>
             Key name
@@ -118,6 +150,7 @@ export function ApiKeysPage({
               setCreatedKey(null);
             }} />
           </label>
+          {keyMode === "browser" ? (
           <div>
             <div className="field-label">Scopes</div>
             <div className="preset-row">
@@ -131,7 +164,7 @@ export function ApiKeysPage({
               ))}
             </div>
             <div className="scope-grid">
-              {scopeOptions.map((scope) => (
+              {browserScopeOptions.map((scope) => (
                 <label className="check-row" key={scope}>
                   <input type="checkbox" checked={scopes.includes(scope)} onChange={() => {
                     toggleScope(scope);
@@ -142,7 +175,16 @@ export function ApiKeysPage({
               ))}
             </div>
           </div>
-          {!scopes.includes("admin") && (
+          ) : (
+            <div className="admin-key-confirm">
+              <AlertTriangle size={18} />
+              <div>
+                <strong>Server-side use only</strong>
+                <span>This key skips app and origin boundaries. Use it only for trusted backend automation and rotate it aggressively.</span>
+              </div>
+            </div>
+          )}
+          {keyMode === "browser" && (
             <>
               <label>
                 Bound app
@@ -173,7 +215,7 @@ export function ApiKeysPage({
         <div className="panel-actions">
           <button className="button primary" type="button" onClick={() => void create()}>
             <Plus size={16} />
-            Create key
+            {keyMode === "admin" ? "Create admin key" : "Create browser SDK key"}
           </button>
         </div>
       </Panel>
@@ -209,51 +251,55 @@ export function ApiKeysPage({
         </Panel>
       )}
 
-      <Panel title="API keys" action={<KeyRound size={16} />}>
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Prefix</th>
-              <th>Scopes</th>
-              <th>App</th>
-              <th>Origins</th>
-              <th>Created</th>
-              <th>Last used</th>
-              <th>Status</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {keys.length === 0 && <EmptyTableRow colSpan={9} message="No API keys created yet." />}
-            {keys.map((key) => (
-              <tr key={key.id}>
-                <td>{key.name}</td>
-                <td><code>{key.prefix}</code></td>
-                <td>{key.scopes.join(", ")}</td>
-                <td>{key.appId ? appName(apps, key.appId) : <span className="muted">Global</span>}</td>
-                <td>{key.allowedOrigins.length ? key.allowedOrigins.join(", ") : <span className="muted">None</span>}</td>
-                <td>{formatDate(key.createdAt)}</td>
-                <td>{key.lastUsedAt ? formatDate(key.lastUsedAt) : <span className="muted">Never</span>}</td>
-                <td><StatusPill tone={key.revokedAt ? "red" : "green"} label={key.revokedAt ? "revoked" : "active"} /></td>
-                <td>
-                  {!key.revokedAt && (
-                    <button
-                      className="button secondary small"
-                      data-testid={`api-key-revoke-${key.id}`}
-                      type="button"
-                      disabled={pendingKeyId === key.id}
-                      onClick={() => revoke(key.id)}
-                    >
-                      <X size={14} />
-                      {pendingKeyId === key.id ? "Revoking" : "Revoke"}
-                    </button>
-                  )}
-                </td>
+      <Panel title={keyMode === "admin" ? "Admin keys" : "Browser SDK keys"} action={<KeyRound size={16} />}>
+        <div className="table-frame">
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Prefix</th>
+                <th>Scopes</th>
+                <th>App</th>
+                <th>Origins</th>
+                <th>Created</th>
+                <th>Last used</th>
+                <th>Status</th>
+                <th></th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {visibleKeys.length === 0 && (
+                <EmptyTableRow colSpan={9} message={keyMode === "admin" ? "No admin keys created yet." : "No browser SDK keys created yet."} />
+              )}
+              {visibleKeys.map((key) => (
+                <tr key={key.id}>
+                  <td>{key.name}</td>
+                  <td><code>{key.prefix}</code></td>
+                  <td>{key.scopes.join(", ")}</td>
+                  <td>{key.appId ? appName(apps, key.appId) : <span className="muted">Global</span>}</td>
+                  <td>{key.allowedOrigins.length ? key.allowedOrigins.join(", ") : <span className="muted">None</span>}</td>
+                  <td>{formatDate(key.createdAt)}</td>
+                  <td>{key.lastUsedAt ? formatDate(key.lastUsedAt) : <span className="muted">Never</span>}</td>
+                  <td><StatusPill tone={key.revokedAt ? "red" : "green"} label={key.revokedAt ? "revoked" : "active"} /></td>
+                  <td>
+                    {!key.revokedAt && (
+                      <button
+                        className="button secondary small"
+                        data-testid={`api-key-revoke-${key.id}`}
+                        type="button"
+                        disabled={pendingKeyId === key.id}
+                        onClick={() => revoke(key.id)}
+                      >
+                        <X size={14} />
+                        {pendingKeyId === key.id ? "Revoking" : "Revoke"}
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </Panel>
     </div>
   );
@@ -302,6 +348,11 @@ AIOnboardingAgent.init({
   appId: "${app.id}",
   backendUrl: "${backendUrl.replace(/\/+$/, "")}",
   apiKey: "${key.key}",
-  enableVoice: false
-});`;
+  enableVoice: false,
+  ui: {
+    assistantPanel: true
+  }
+});
+
+// Then open Console -> Test Mia and Console -> Logs to verify live runtime targets.`;
 }

@@ -32,7 +32,7 @@ Create the first admin with BOOTSTRAP_ADMIN_TOKEN, then sign in with admin email
 
 - Apps: list and create/update.
 - Health: backend status.
-- UI map: scan, list versions, list pages, list elements, update element descriptions.
+- UI map: discover routes, run full preflight, start scans, poll progress, review pages/elements, and copy source-fix reports for weak selectors.
 - Workflow videos: upload and start processing.
 - Workflow jobs: list and process.
 - Workflows: list, review metadata, add/edit/delete/reorder steps, approve, publish, archive.
@@ -41,7 +41,7 @@ Create the first admin with BOOTSTRAP_ADMIN_TOKEN, then sign in with admin email
 - API keys: create, list, and revoke local scoped API keys, including app-bound SDK keys with allowed browser origins.
 - Provider readiness: database/config checks, secret-storage readiness, and no-credit provider reachability where safe.
 - First-run activation: app setup, scan profile, UI map, SDK key, and runtime verification checklist.
-- UI map preflight: base URL, route, auth selector, privacy selector, and route-discovery checks before scan.
+- UI map preflight: base URL, every selected route, auth selector, privacy selector, and route-discovery readiness before scan.
 - Console admins: create admins, change password, disable users, and revoke console sessions.
 
 ## Operator Docs

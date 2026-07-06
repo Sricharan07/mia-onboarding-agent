@@ -1,12 +1,12 @@
 # MIA Onboarding Agent
 
-Open-source, self-hosted AI onboarding agent for SaaS products. MIA maps a product UI, turns approved workflow recordings into guided onboarding flows, and exposes a browser SDK that can answer user requests and execute published workflows inside the host app.
+Open-source, self-hosted AI onboarding agent for SaaS products. MIA maps a product UI, turns approved workflow recordings into guided onboarding flows, and exposes a browser SDK that can answer user requests, point at live UI, and execute published workflows inside the host app.
 
 ## Project Layout
 
 - `backend/` contains the TypeScript backend, SQLite persistence, API routes, UI mapper, workflow processing, Gemini Live token minting, and provider adapters.
 - `backend/console/` contains the backend-connected console UI.
-- `sdk/` contains the browser SDK with Mia cursor, Gemini Live voice/screen streaming, runtime context, and workflow execution.
+- `sdk/` contains the browser SDK with Mia cursor, end-user assistant panel, Gemini Live voice/screen streaming, runtime context, and workflow execution.
 - `example/demo-crm+sdk/` demonstrates the SDK inside a host app.
 
 ## Documentation
@@ -105,17 +105,23 @@ Gemini, OpenAI embeddings, and LanceDB local storage are required for provider-b
 
 Runtime-sensitive SDK/backend routes are protected with scoped API keys. API key management requires a signed-in console admin or an `admin` API key.
 
+The app runtime mode lives in Settings -> Application record. Use "Q&A and pointing only" when the installed product should answer and point but not run guided workflows yet. Use workflow mode only after at least one reviewed workflow is published.
+
 To add a web app for UI mapping:
 
 1. Open Console -> Overview and follow the activation checklist.
 2. Create an application record with the app name, slug, and base URL.
 3. Configure the app's UI scan profile: default routes, auth mode, login selectors when needed, ignored selectors, redacted selectors, and optional same-origin route discovery.
-4. Open Console -> UI Map, run preflight, then run an explicit route scan.
-5. Use interactive scan for manual SSO login, modals, drawers, dropdowns, row action menus, and other hidden states.
-6. Review generated workflows and clear safety blockers before approval/publish.
-7. Create an app-bound SDK key from Console -> API keys and use the generated SDK snippet.
+4. Open Console -> UI Map, use the route workbench to discover/import routes, save the scan profile, run full preflight, then start the backend scan.
+5. Watch scan progress in the UI Map page; route/page/element counts update until the new map completes.
+6. Use interactive scan for manual SSO login, modals, drawers, dropdowns, row action menus, and other hidden states.
+7. Review selector quality from page detail and copy the source-fix report for weak selectors before publishing workflows.
+8. Review generated workflows and clear safety blockers before approval/publish.
+9. Create an app-bound browser SDK key from Console -> API keys and use the generated SDK snippet. Admin keys are for trusted server-side automation only.
+10. Open Console -> Test Mia to dry-run answer, pointing, and action resolution from the UI map.
+11. Open the host app with the SDK installed, ask Mia from the assistant panel, then inspect Console -> Logs for real sessions, prompts, targets, transcripts, and element actions.
 
-Automated route discovery is opt-in and only follows same-origin links from scanned pages. It filters obvious destructive/logout/binary routes, but production scans should still start with explicit routes.
+Automated route discovery only follows same-origin links from scanned or seed pages. It filters obvious destructive/logout/binary routes, but production scans should still review and save an explicit route profile before running workflow-critical scans.
 
 The SDK redacts visible DOM text by default before context leaves the browser. Keep `redactText` enabled unless the host app has reviewed the data that may be sent to the backend/model provider:
 
@@ -134,6 +140,8 @@ AIOnboardingAgent.init({
   }
 });
 ```
+
+For a demo or reviewed internal app where Mia should point at visible UI by spoken request, set `privacy.redactText: false` or provide stable readable selectors. Enable screen sharing only for visual surfaces the DOM cannot describe, such as canvas charts, images, videos, PDFs, or custom-rendered UI.
 
 For authenticated UI ingestion, prefer the per-app scan profile in the console. Per-app scan passwords are encrypted at rest when `MIA_SECRET_ENCRYPTION_KEY` is configured, and the backend rejects new per-app scan passwords without that key. The `UI_SCAN_*` variables remain as backend-level fallbacks. Use a dedicated demo/test account only. Keep `UI_SCAN_HEADLESS=false` when using the console's interactive mapper so the Playwright browser is visible for manual login and state capture.
 

@@ -32,6 +32,7 @@ export type SystemReadiness = {
 export type UiScanAuthMode = "none" | "login_form" | "manual";
 
 export type AppUiScanConfig = {
+  runtimeMode: "qa_only" | "workflow";
   routes: string[];
   authMode: UiScanAuthMode;
   loginUrl?: string;
@@ -70,6 +71,14 @@ export type UiMapVersion = {
   createdAt: string;
   completedAt?: string | null;
   error?: string | null;
+  routes?: string[];
+  routeCount?: number;
+  pageCount?: number;
+  failedPageCount?: number;
+  elementCount?: number;
+  strongSelectorCount?: number;
+  mediumSelectorCount?: number;
+  weakSelectorCount?: number;
 };
 
 export type UiPage = {
@@ -81,6 +90,11 @@ export type UiPage = {
   status: string;
   error?: string | null;
   createdAt: string;
+  elementCount?: number;
+  stateCount?: number;
+  strongSelectorCount?: number;
+  mediumSelectorCount?: number;
+  weakSelectorCount?: number;
 };
 
 export type UiElement = {
@@ -141,6 +155,20 @@ export type UiMapPreflightReport = {
   appId: string;
   ok: boolean;
   checks: UiMapPreflightCheck[];
+};
+
+export type UiMapRouteDiscoveryReport = {
+  appId: string;
+  baseUrl: string;
+  routes: string[];
+  checkedRoutes: Array<{
+    route: string;
+    status: "passed" | "failed";
+    url?: string;
+    discoveredRoutes: string[];
+    error?: string;
+  }>;
+  truncated: boolean;
 };
 
 export type WorkflowJob = {
@@ -287,9 +315,40 @@ export type WorkflowReviewReport = {
 
 export type ExecutionLog = {
   id: string;
+  appId?: string | null;
+  sessionId?: string | null;
+  workflowId?: string | null;
+  stepId?: string | null;
   eventType: string;
   createdAt: string;
   payload: unknown;
+};
+
+export type RuntimeElementContext = {
+  tagName: string;
+  role?: string;
+  label?: string;
+  text?: string;
+  selector?: string;
+  elementId?: string;
+  boundingBox?: { x: number; y: number; width: number; height: number };
+};
+
+export type RuntimeResolveResponse =
+  | { type: "workflow"; workflow: Workflow; message: string }
+  | { type: "control"; action: "cancel" | "pause" | "resume"; message: string }
+  | { type: "element_action"; action: "click" | "focus"; target: RuntimeElementContext; executionPolicy: "auto" | "requires_confirmation"; message: string }
+  | { type: "answer"; message: string; target?: RuntimeElementContext }
+  | { type: "no_match"; message: string; target?: RuntimeElementContext };
+
+export type RuntimeResolveContext = {
+  currentUrl: string;
+  currentRoute: string;
+  pageTitle?: string;
+  focusedElement?: RuntimeElementContext | null;
+  hoveredElement?: RuntimeElementContext | null;
+  visibleElements?: RuntimeElementContext[];
+  userMetadata?: Record<string, unknown>;
 };
 
 export type ApiKeyScope = "apps:read" | "ui-map:read" | "workflows:read" | "runtime:write" | "logs:write" | "logs:read" | "admin";
@@ -428,6 +487,13 @@ export class BackendApi {
     return this.request(`/api/v1/apps/${encodeURIComponent(appId)}/ui-map/scan`, { method: "POST", body: { routes, auth: { mode: authMode } } });
   }
 
+  discoverUiMapRoutes(appId: string, input: { routes: string[]; authMode?: UiScanAuthMode; maxRoutes?: number }): Promise<UiMapRouteDiscoveryReport> {
+    return this.request(`/api/v1/apps/${encodeURIComponent(appId)}/ui-map/discover-routes`, {
+      method: "POST",
+      body: { routes: input.routes, auth: { mode: input.authMode ?? "none" }, maxRoutes: input.maxRoutes }
+    });
+  }
+
   startInteractiveUiMapSession(appId: string, input: { routes: string[]; authMode: UiScanAuthMode }): Promise<InteractiveUiMapSession> {
     return this.request(`/api/v1/apps/${encodeURIComponent(appId)}/ui-map/interactive-sessions`, {
       method: "POST",
@@ -537,6 +603,15 @@ export class BackendApi {
       if (value) params.set(key, value);
     }
     return this.request(`/api/v1/logs${params.size ? `?${params}` : ""}`);
+  }
+
+  resolveRuntime(input: {
+    appId: string;
+    sessionId: string;
+    utterance: string;
+    context: RuntimeResolveContext;
+  }): Promise<RuntimeResolveResponse> {
+    return this.request("/api/v1/runtime/resolve", { method: "POST", body: input });
   }
 
   usage(filters: { appId?: string; from?: string; to?: string } = {}): Promise<UsageSummary> {

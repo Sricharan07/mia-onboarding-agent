@@ -47,7 +47,7 @@
     "react-is": "^19.2.7",
     "react-resizable-panels": "^4.11.2",
     "recharts": "^3.8.0",
-    "sdk": "file:../../sdk",
+    "@mia/onboarding-agent": "file:../../sdk",
     "simple-icons": "^16.22.0",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.6.0",

@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 
-import { AIOnboardingAgent } from "sdk";
+import { AIOnboardingAgent } from "@mia/onboarding-agent";
 
 declare global {
   interface Window {
@@ -13,6 +13,12 @@ declare global {
 const requiredScopes = "runtime:write and logs:write";
 
 export function MiaOnboardingAgent() {
+  const askMia = (text: string) => {
+    void AIOnboardingAgent.ask(text).catch((error) => {
+      console.error("Mia demo prompt failed", error);
+    });
+  };
+
   useEffect(() => {
     if (window.__miaOnboardingAgentInitialized) return;
 
@@ -40,6 +46,12 @@ export function MiaOnboardingAgent() {
           source: "demo-crm-sdk",
         },
       },
+      privacy: {
+        redactText: false,
+      },
+      voice: {
+        voiceName: "Aoede",
+      },
       ui: {
         theme: "auto",
         cursorOffset: { x: 20, y: 20 },
@@ -54,5 +66,28 @@ export function MiaOnboardingAgent() {
     };
   }, []);
 
-  return null;
+  return (
+    <aside className="fixed right-4 bottom-24 z-40 hidden w-72 rounded-lg border bg-background/95 p-3 shadow-sm backdrop-blur md:block" data-mia-demo-proof>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <strong className="text-sm font-semibold">Try Mia</strong>
+        <span className="rounded-md border px-2 py-1 text-xs text-muted-foreground">Live SDK</span>
+      </div>
+      <div className="grid gap-2">
+        {[
+          "Where is the Recent Opportunities table?",
+          "Click the Stage filter",
+          "What does lead-to-deal rate mean?",
+        ].map((prompt) => (
+          <button
+            className="rounded-md border px-2.5 py-2 text-left text-xs font-medium transition-colors hover:bg-muted"
+            type="button"
+            key={prompt}
+            onClick={() => askMia(prompt)}
+          >
+            {prompt}
+          </button>
+        ))}
+      </div>
+    </aside>
+  );
 }

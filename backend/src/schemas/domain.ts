@@ -8,8 +8,10 @@ export const jobStatusSchema = z.enum(["uploaded", "analyzing", "mapped", "needs
 
 export const uiScanAuthModeSchema = z.enum(["none", "login_form", "manual"]);
 export type UiScanAuthMode = z.infer<typeof uiScanAuthModeSchema>;
+export const appRuntimeModeSchema = z.enum(["qa_only", "workflow"]);
 
 export const appUiScanConfigSchema = z.object({
+  runtimeMode: appRuntimeModeSchema.default("workflow"),
   routes: z.array(z.string().min(1)).default(["/"]),
   authMode: uiScanAuthModeSchema.default("none"),
   loginUrl: z.string().optional(),

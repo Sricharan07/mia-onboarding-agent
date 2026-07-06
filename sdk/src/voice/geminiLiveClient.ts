@@ -7,11 +7,14 @@ const INPUT_AUDIO_RATE = 16000;
 const OUTPUT_AUDIO_RATE = 24000;
 const SCREEN_FRAME_INTERVAL_MS = 1000;
 const MAX_SCREEN_WIDTH = 1280;
+const DEFAULT_VOICE_NAME = "Aoede";
 
 type GeminiLiveHandlers = {
   sessionId: string;
   context: SDKRuntimeContext;
   enableScreenShare: boolean;
+  microphoneInitiallyEnabled?: boolean;
+  voiceName?: string;
   getContext: () => SDKRuntimeContext;
   redactScreenFrame?: (canvas: HTMLCanvasElement, context: CanvasRenderingContext2D) => void;
   onEvent: (event: GeminiLiveEvent) => void;
@@ -44,6 +47,7 @@ export class GeminiLiveClient {
   private setupResolve?: () => void;
   private setupReject?: (error: Error) => void;
   private connected = false;
+  private microphoneEnabled = true;
 
   constructor(private readonly backendClient: BackendClient) {}
 
@@ -54,6 +58,10 @@ export class GeminiLiveClient {
   async connect(input: GeminiLiveHandlers): Promise<void> {
     if (this.isConnected()) return;
     this.handlers = input;
+    this.microphoneEnabled = input.microphoneInitiallyEnabled ?? true;
+    if (input.enableScreenShare) {
+      await this.startScreenShare(input);
+    }
     input.onStage?.("Requesting Gemini Live token...");
     const token = await withTimeout(this.backendClient.createGeminiLiveToken({
       clientSessionId: input.sessionId
@@ -71,7 +79,12 @@ export class GeminiLiveClient {
     };
     socket.onclose = (event) => {
       this.connected = false;
-      this.setupReject?.(webSocketCloseError(event));
+      const closeError = webSocketCloseError(event);
+      if (this.setupReject) {
+        this.setupReject(closeError);
+        this.emitError(closeError);
+        return;
+      }
       input.onEvent({ type: "ended", status: "ended" });
     };
 
@@ -87,9 +100,6 @@ export class GeminiLiveClient {
 
       input.onStage?.("Requesting microphone permission...");
       await this.startMicrophone(input);
-      if (input.enableScreenShare) {
-        await this.startScreenShare(input);
-      }
       input.onStage?.("Listening");
       input.onEvent({ type: "listening", status: "listening" });
     } catch (error) {
@@ -113,11 +123,23 @@ export class GeminiLiveClient {
     });
   }
 
+  setMicrophoneEnabled(enabled: boolean): void {
+    const wasEnabled = this.microphoneEnabled;
+    this.microphoneEnabled = enabled;
+    if (!enabled) {
+      this.handlers?.onInputLevel?.(0);
+      if (wasEnabled && this.isConnected()) {
+        this.send({ realtimeInput: { audioStreamEnd: true } });
+      }
+    }
+  }
+
   async disconnect(): Promise<void> {
     this.stopScreenShare();
     this.stopMicrophone();
     this.stopOutputAudio();
     this.connected = false;
+    this.microphoneEnabled = true;
     const socket = this.socket;
     this.socket = undefined;
     if (socket && socket.readyState !== WebSocket.CLOSED && socket.readyState !== WebSocket.CLOSING) {
@@ -131,6 +153,13 @@ export class GeminiLiveClient {
         model: model.startsWith("models/") ? model : `models/${model}`,
         generationConfig: {
           responseModalities: ["AUDIO"],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: {
+                voiceName: input.voiceName ?? DEFAULT_VOICE_NAME
+              }
+            }
+          },
           thinkingConfig: { thinkingLevel: "MINIMAL" }
         },
         systemInstruction: {
@@ -142,7 +171,7 @@ export class GeminiLiveClient {
         tools: [{
           functionDeclarations: [{
             name: "resolve_mia_request",
-            description: "Resolve saved workflow and control requests against Mia's runtime. Use this when the user wants to start, cancel, pause, or resume an in-app task. Answer general screen questions directly from live context.",
+            description: "Resolve Mia runtime requests against the host app. Use this for saved workflows, cancel/pause/resume, and every request that depends on the current product UI: where something is, pointing or highlighting, explaining a visible element, clicking, filling, selecting, or navigating. Do not answer those UI requests directly.",
             parameters: {
               type: "OBJECT",
               properties: {
@@ -179,7 +208,7 @@ export class GeminiLiveClient {
       throw new Error("No microphone audio track was available.");
     }
 
-    this.meter = new MicLevelMeter(track, input.onInputLevel ?? (() => undefined));
+    this.meter = new MicLevelMeter(track, (level) => input.onInputLevel?.(this.microphoneEnabled ? level : 0));
     this.meter.start();
     this.micContext = new AudioContext();
     if (this.micContext.state === "suspended") {
@@ -188,7 +217,7 @@ export class GeminiLiveClient {
     this.micSource = this.micContext.createMediaStreamSource(stream);
     this.micProcessor = this.micContext.createScriptProcessor(4096, 1, 1);
     this.micProcessor.onaudioprocess = (event) => {
-      if (!this.isConnected()) return;
+      if (!this.isConnected() || !this.microphoneEnabled) return;
       const channel = event.inputBuffer.getChannelData(0);
       const pcm = encodePcm16(downsample(channel, this.micContext?.sampleRate ?? INPUT_AUDIO_RATE, INPUT_AUDIO_RATE));
       if (pcm.byteLength === 0) return;
@@ -466,8 +495,10 @@ export class GeminiLiveClient {
 
 function buildSystemInstruction(context: SDKRuntimeContext): string {
   return [
-    "You are Mia, an in-product onboarding and support guide embedded in a customer's web app.",
-    "Use the live screen frames and page context to answer questions about the current product screen.",
+    "You are Mia, an in-product onboarding and support guide embedded in a customer's web app. Mia is a she/her assistant with a clear, warm female voice.",
+    "For any request about the current product UI, including where something is, pointing, highlighting, explaining a visible element, clicking, filling, selecting, navigating, or running a task, call resolve_mia_request instead of answering from memory.",
+    "Only answer directly when the user is making small talk or asking a question that is clearly unrelated to the host app UI.",
+    "Use live screen frames and page context when available, but never pretend you can see the screen if screen frames and page context are unavailable.",
     "When the user wants to perform a saved in-app task, navigate through a saved workflow, fill a form through a saved workflow, or cancel/pause/resume workflow execution, call resolve_mia_request.",
     "Do not say an action is complete until the tool response confirms it.",
     "Keep spoken responses short and clear.",
@@ -491,9 +522,29 @@ function toolResponseForResult(result: ResolveResponse): Record<string, unknown>
       message: result.message
     };
   }
+  if (result.type === "element_action") {
+    return {
+      resultType: result.type,
+      action: result.action,
+      message: result.message,
+      executionPolicy: result.executionPolicy,
+      target: {
+        label: result.target.label,
+        text: result.target.text,
+        elementId: result.target.elementId,
+        selector: result.target.selector
+      }
+    };
+  }
   return {
     resultType: result.type,
-    message: result.message
+    message: result.message,
+    target: "target" in result && result.target ? {
+      label: result.target.label,
+      text: result.target.text,
+      elementId: result.target.elementId,
+      selector: result.target.selector
+    } : undefined
   };
 }
 

@@ -1,7 +1,7 @@
-import { Check, Plus, Play, RefreshCw, Save, Upload, X } from "lucide-react";
+import { Check, FileVideo, Plus, Play, RefreshCw, Save, Upload, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { AppRecord, BackendApi, ExecutionPolicy, Workflow, WorkflowJob, WorkflowReviewReport, WorkflowStep, WorkflowSummary } from "../api";
-import { EmptyTableRow, InlineAlert, Panel, StatusBadge, StatusPill, SummaryItem } from "../components/console";
+import { ActionEmptyState, InlineAlert, PageIntro, Panel, StatusBadge, StatusPill, SummaryItem } from "../components/console";
 import { describeStep, formatDate } from "../utils/format";
 
 type Notice = { tone: "red" | "green" | "yellow" | "gray"; title: string; message: string };
@@ -48,30 +48,58 @@ export function UploadWorkflowPage({
   };
 
   return (
-    <div className="page-grid narrow">
+    <div className="page-grid">
       {notice && <InlineAlert tone={notice.tone} title={notice.title} message={notice.message} />}
-      <Panel title="Upload workflow video" action={<StatusBadge status="uploaded" />}>
-        <div className="form-grid single">
-          <label>
-            Video file
-            <input type="file" accept="video/*" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
-          </label>
-          <label>
-            Workflow name
-            <input value={workflowName} onChange={(event) => setWorkflowName(event.target.value)} />
-          </label>
-          <label>
-            Description
-            <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={4} />
-          </label>
-        </div>
-        <div className="panel-actions">
-          <button className="button primary" type="button" onClick={() => void upload()}>
-            <Upload size={16} />
-            Upload and process
-          </button>
-        </div>
-      </Panel>
+      <PageIntro
+        title="Turn a product walkthrough into a guided workflow"
+        description="Upload one focused recording at a time. Mia will compile it into editable steps, then an admin reviews targets and safety before publishing."
+        action={<StatusBadge status={file ? "uploaded" : "draft"} />}
+      />
+      <section className="workbench-grid">
+        <Panel title="Recording details" action={file ? <StatusPill tone="green" label={file.name} /> : <StatusPill tone="gray" label="No file" />}>
+          <div className="form-grid single">
+            <div>
+              <div className="field-label">Video file</div>
+              <label className={`file-dropzone ${file ? "has-file" : ""}`} htmlFor="workflow-video-file">
+                <FileVideo size={18} />
+                <span>
+                  <strong>{file ? file.name : "Choose a walkthrough recording"}</strong>
+                  <small>{file ? `${formatBytes(file.size)} selected` : "MP4, MOV, or WebM. Keep it to one clear user task."}</small>
+                </span>
+                <input
+                  id="workflow-video-file"
+                  className="visually-hidden"
+                  type="file"
+                  accept="video/*"
+                  onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+                />
+              </label>
+            </div>
+            <label>
+              Workflow name
+              <input value={workflowName} onChange={(event) => setWorkflowName(event.target.value)} />
+            </label>
+            <label>
+              Description
+              <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={4} />
+            </label>
+          </div>
+          <div className="panel-actions">
+            <button className="button primary" type="button" onClick={() => void upload()}>
+              <Upload size={16} />
+              Upload and process
+            </button>
+          </div>
+        </Panel>
+
+        <Panel title="Before upload">
+          <div className="operator-step-list">
+            <ReviewCheck title="One workflow per recording" done detail="Keep the video focused on a single user task." />
+            <ReviewCheck title="Use realistic test data" done detail="Do not record secrets, customer data, or production-only actions." />
+            <ReviewCheck title="Review before publish" done={false} detail="Generated steps are drafts until an admin confirms targets and policies." />
+          </div>
+        </Panel>
+      </section>
     </div>
   );
 
@@ -88,6 +116,7 @@ export function WorkflowJobsPage({
   api,
   refresh,
   onOpenWorkflow,
+  onUpload,
   showToast
 }: {
   jobs: WorkflowJob[];
@@ -95,6 +124,7 @@ export function WorkflowJobsPage({
   api: BackendApi;
   refresh: (preferredAppId?: string) => Promise<void>;
   onOpenWorkflow: (workflowId: string) => void;
+  onUpload: () => void;
   showToast: (message: string) => void;
 }) {
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -115,45 +145,45 @@ export function WorkflowJobsPage({
   return (
     <div className="page-grid">
       {notice && <InlineAlert tone={notice.tone} title={notice.title} message={notice.message} />}
-      <Panel title="Workflow processing jobs">
-        <table>
-        <thead>
-          <tr>
-            <th>Job ID</th>
-            <th>Video filename</th>
-            <th>Status</th>
-            <th>Created</th>
-            <th>Error</th>
-            <th>Generated workflow</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {jobs.length === 0 && <EmptyTableRow colSpan={7} message="No workflow jobs yet." />}
-          {jobs.map((job) => (
-            <tr key={job.id}>
-              <td><code>{job.id}</code></td>
-              <td>{job.filename}</td>
-              <td><StatusBadge status={job.status} /></td>
-              <td>{formatDate(job.createdAt)}</td>
-              <td>{job.error || <span className="muted">None</span>}</td>
-              <td>{job.workflowId ? workflows.find((workflow) => workflow.workflowId === job.workflowId)?.name ?? job.workflowId : <span className="muted">Not ready</span>}</td>
-              <td className="table-actions">
+      <PageIntro
+        title="Processing queue"
+        description="Track uploaded recordings as they become reviewable workflow drafts. Failed jobs stay here with enough detail for an admin to retry or fix the source recording."
+        action={<StatusPill tone={jobs.length ? "yellow" : "gray"} label={`${jobs.length} jobs`} />}
+      />
+      <div className="job-card-list">
+        {jobs.length === 0 && (
+          <ActionEmptyState
+            title="No recordings are processing"
+            message="Upload a focused walkthrough recording and it will appear here while Mia turns it into a reviewable workflow draft."
+            action={<button className="button primary" type="button" onClick={onUpload}><Upload size={16} />Upload recording</button>}
+          />
+        )}
+        {jobs.map((job) => (
+          <article className="job-card" key={job.id}>
+            <div className="job-card-main">
+              <StatusBadge status={job.status} />
+              <h3>{job.filename}</h3>
+              <p>{job.workflowId ? workflows.find((workflow) => workflow.workflowId === job.workflowId)?.name ?? job.workflowId : "Workflow draft is not ready yet."}</p>
+              {job.error && <InlineAlert tone="red" title="Job error" message={job.error} />}
+            </div>
+            <div className="job-card-meta">
+              <SummaryItem label="Created" value={formatDate(job.createdAt)} />
+              <SummaryItem label="Job ID" value={<code>{job.id}</code>} />
+              <div className="panel-actions">
                 <button className="button secondary small" type="button" onClick={() => void process(job)}>
                   <RefreshCw size={14} />
                   Process
                 </button>
                 {job.workflowId && (
-                  <button className="button secondary small" type="button" onClick={() => onOpenWorkflow(job.workflowId!)}>
+                  <button className="button primary small" type="button" onClick={() => onOpenWorkflow(job.workflowId!)}>
                     Open workflow
                   </button>
                 )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-        </table>
-      </Panel>
+              </div>
+            </div>
+          </article>
+        ))}
+      </div>
     </div>
   );
 }
@@ -164,6 +194,7 @@ export function WorkflowReviewPage({
   api,
   refresh,
   selectWorkflow,
+  onUpload,
   showToast
 }: {
   workflow: Workflow | null;
@@ -171,6 +202,7 @@ export function WorkflowReviewPage({
   api: BackendApi;
   refresh: (preferredAppId?: string) => Promise<void>;
   selectWorkflow: (workflowId: string) => Promise<void>;
+  onUpload: () => void;
   showToast: (message: string) => void;
 }) {
   const [name, setName] = useState("");
@@ -201,9 +233,18 @@ export function WorkflowReviewPage({
 
   if (!workflow) {
     return (
-      <Panel title="Workflow review">
-        <div className="empty-state">No workflow selected. Upload and process a video first.</div>
-      </Panel>
+      <div className="page-grid">
+        <PageIntro
+          title="Review the workflow before users can run it"
+          description="Generated workflows stay in draft form until an admin confirms the trigger phrases, target elements, execution policy, and safety report."
+          action={<StatusPill tone="gray" label="No draft selected" />}
+        />
+        <ActionEmptyState
+          title="No workflow draft is ready for review"
+          message="Upload a walkthrough recording first. Once processing creates a draft, this page becomes the approval workspace."
+          action={<button className="button primary" type="button" onClick={onUpload}><Upload size={16} />Upload recording</button>}
+        />
+      </div>
     );
   }
 
@@ -339,6 +380,11 @@ export function WorkflowReviewPage({
   return (
     <div className="page-grid">
       {notice && <InlineAlert tone={notice.tone} title={notice.title} message={notice.message} />}
+      <PageIntro
+        title="Review the workflow before users can run it"
+        description="Confirm the trigger phrases, every target element, and each execution policy. Publishing is disabled until the safety report clears."
+        action={<StatusBadge status={workflow.status} />}
+      />
       <Panel
         title="Workflow review"
         action={
@@ -377,12 +423,21 @@ export function WorkflowReviewPage({
         </div>
       </Panel>
 
+      <Panel title="Publish readiness" action={<StatusPill tone={reviewReport?.publishable ? "green" : "red"} label={reviewReport?.publishable ? "ready to approve" : "blocked"} />}>
+        <div className="map-guide-grid">
+          <ReviewCheck title="Name and description" done={Boolean(name.trim() && description.trim())} detail={name.trim() && description.trim() ? "Workflow metadata is readable." : "Add a clear name and description before publishing."} />
+          <ReviewCheck title="Trigger phrases" done={triggerPhrases.split("\n").some((phrase) => phrase.trim())} detail="Users need natural phrases that map to this workflow." />
+          <ReviewCheck title="Executable steps" done={workflow.steps.length > 0} detail={`${workflow.steps.length} step(s) generated.`} />
+          <ReviewCheck title="Safety report" done={Boolean(reviewReport?.publishable)} detail={reviewReport?.publishable ? "No blockers found." : `${reviewReport?.blockerCount ?? 0} blocker(s), ${reviewReport?.warningCount ?? 0} warning(s).`} />
+        </div>
+      </Panel>
+
       <section className="review-layout">
         <div className="step-stack">
           <div className="inline-header compact">
             <div>
-              <h2>Workflow DSL steps</h2>
-              <p>Edits are saved through backend step endpoints and revalidated before the workflow can be published.</p>
+              <h2>Workflow steps</h2>
+              <p>Review each user-facing action, target, and safety policy before publishing.</p>
             </div>
             <button
               className="button secondary small"
@@ -498,7 +553,7 @@ export function WorkflowStepCard({
     <article className="step-card">
       <div className="step-card-header">
         <div>
-          <h3>Step {order}: {step.type}</h3>
+          <h3>Step {order}: {humanStepTitle(step)}</h3>
           <p>{describeStep(step)}</p>
         </div>
         <div className="step-actions">
@@ -546,6 +601,7 @@ export function WorkflowStepCard({
             <p>Element ID: {step.target.elementId}</p>
             <p>Label: {step.target.label ?? "None"}</p>
             <p>Selector: <code>{step.target.selector}</code></p>
+            <p>Review task: confirm this target is the exact UI element the user expects Mia to use.</p>
           </div>
         )}
         {"source" in step && step.source && (
@@ -560,35 +616,72 @@ export function WorkflowStepCard({
   );
 }
 
-export function WorkflowsPage({ workflows, onReview }: { workflows: WorkflowSummary[]; onReview: (workflowId: string) => void }) {
+function ReviewCheck({ title, done, detail }: { title: string; done: boolean; detail: string }) {
   return (
-    <Panel title="Workflows">
-      <table>
-        <thead>
-          <tr>
-            <th>Workflow name</th>
-            <th>Status</th>
-            <th>Version</th>
-            <th>Description</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {workflows.length === 0 && <EmptyTableRow colSpan={5} message="No workflows generated yet." />}
-          {workflows.map((workflow) => (
-            <tr key={workflow.workflowId}>
-              <td>{workflow.name}</td>
-              <td><StatusBadge status={workflow.status} /></td>
-              <td>v{workflow.version}</td>
-              <td>{workflow.description}</td>
-              <td className="table-actions">
-                <button className="button secondary small" type="button" onClick={() => onReview(workflow.workflowId)}>Review</button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </Panel>
+    <article className={`guide-step ${done ? "is-done" : ""}`}>
+      <span>{done ? "OK" : "!"}</span>
+      <div>
+        <strong>{title}</strong>
+        <p>{detail}</p>
+      </div>
+    </article>
+  );
+}
+
+function humanStepTitle(step: WorkflowStep): string {
+  if (step.type === "navigate") return `Open ${step.route}`;
+  if (step.type === "ask_user") return step.label || step.prompt;
+  if (step.type === "confirm" || step.type === "complete") return step.label || step.message;
+  if ("target" in step) {
+    const target = step.target.label ?? step.target.elementId;
+    if (step.type === "click") return `Click ${target}`;
+    if (step.type === "focus") return `Focus ${target}`;
+    if (step.type === "fill") return `Fill ${target}`;
+    if (step.type === "select") return `Select ${target}`;
+    if (step.type === "wait_for_element") return `Wait for ${target}`;
+  }
+  return step.type;
+}
+
+export function WorkflowsPage({
+  workflows,
+  onReview,
+  onUpload
+}: {
+  workflows: WorkflowSummary[];
+  onReview: (workflowId: string) => void;
+  onUpload: () => void;
+}) {
+  return (
+    <div className="page-grid">
+      <PageIntro
+        title="Published flows and drafts"
+        description="This is the admin inventory of workflows Mia may use. Review drafts, publish approved flows, and archive flows that should no longer run."
+        action={<StatusPill tone={workflows.some((workflow) => workflow.status === "published") ? "green" : "yellow"} label={`${workflows.length} flows`} />}
+      />
+      <div className="workflow-card-grid">
+        {workflows.length === 0 && (
+          <ActionEmptyState
+            title="No workflows exist yet"
+            message="Published flows appear here after an admin uploads a recording, reviews the generated draft, and publishes it for users."
+            action={<button className="button primary" type="button" onClick={onUpload}><Upload size={16} />Upload recording</button>}
+          />
+        )}
+        {workflows.map((workflow) => (
+          <article className="workflow-card" key={workflow.workflowId}>
+            <div>
+              <StatusBadge status={workflow.status} />
+              <h3>{workflow.name}</h3>
+              <p>{workflow.description}</p>
+            </div>
+            <div className="workflow-card-footer">
+              <span>v{workflow.version}</span>
+              <button className="button secondary small" type="button" onClick={() => onReview(workflow.workflowId)}>Review</button>
+            </div>
+          </article>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -596,4 +689,10 @@ function stepText(step: WorkflowStep): string {
   if (step.type === "ask_user") return step.prompt;
   if (step.type === "confirm" || step.type === "complete") return step.message;
   return step.description ?? "";
+}
+
+function formatBytes(value: number): string {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }

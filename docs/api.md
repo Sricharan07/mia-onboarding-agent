@@ -64,6 +64,7 @@ App records include base URL and optional UI scan profile settings. API key crea
 ## UI Map
 
 - `POST /api/v1/apps/:appId/ui-map/preflight`
+- `POST /api/v1/apps/:appId/ui-map/discover-routes`
 - `POST /api/v1/apps/:appId/ui-map/scan`
 - `GET /api/v1/apps/:appId/ui-map/versions`
 - `GET /api/v1/ui-map/:uiMapVersionId/pages`
@@ -77,7 +78,11 @@ App records include base URL and optional UI scan profile settings. API key crea
 - `POST /api/v1/ui-map/interactive-sessions/:sessionId/finish`
 - `POST /api/v1/ui-map/interactive-sessions/:sessionId/cancel`
 
-Automated scans accept explicit routes and optional auth mode. Route discovery is configured on the app scan profile and stays on the app origin.
+Automated scans accept explicit routes and optional auth mode. Preflight checks every selected route, login selectors, privacy selectors, and target reachability before scan start.
+
+`discover-routes` opens the selected seed routes in the scanner browser, follows safe same-origin links, filters obvious destructive/logout/binary routes, and returns the merged route list plus per-seed crawl results. Manual auth is intentionally handled by interactive mapping instead.
+
+UI map version records include scan progress fields for console polling and external operators: `routes`, `routeCount`, `pageCount`, `failedPageCount`, `elementCount`, `strongSelectorCount`, `mediumSelectorCount`, and `weakSelectorCount`.
 
 ## Workflows
 

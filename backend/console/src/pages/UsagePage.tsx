@@ -1,7 +1,7 @@
 import { Activity, Code2, Gauge, RefreshCw, Workflow as WorkflowIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { AppRecord, BackendApi, UsageSummary, UsageTimeseriesPoint } from "../api";
-import { EmptyTableRow, MetricCard, Panel } from "../components/console";
+import { EmptyTableRow, MetricCard, PageIntro, Panel, StatusPill } from "../components/console";
 
 const emptyUsage: UsageSummary = {
   totals: { sdkEvents: 0, workflowRuns: 0, aiRequests: 0, errors: 0, averageAiLatencyMs: null },
@@ -34,6 +34,13 @@ export function UsagePage({ app, api, showToast }: { app: AppRecord | null; api:
 
   return (
     <div className="page-grid">
+      <PageIntro
+        title="Usage and operational signal"
+        description="Track whether Mia is being used, whether workflows run, and whether provider calls are healthy for the selected app."
+        action={<button className="button secondary small" type="button" onClick={() => void load()}><RefreshCw size={14} />Refresh</button>}
+      >
+        <StatusPill tone={summary.totals.errors > 0 ? "red" : "green"} label={`${summary.totals.errors} errors`} />
+      </PageIntro>
       <section className="metric-grid">
         <MetricCard label="SDK events" value={String(summary.totals.sdkEvents)} detail="Execution log events" icon={Activity} />
         <MetricCard label="Workflow runs" value={String(summary.totals.workflowRuns)} detail="Workflow-prefixed events" icon={WorkflowIcon} />
@@ -42,44 +49,22 @@ export function UsagePage({ app, api, showToast }: { app: AppRecord | null; api:
       </section>
 
       <section className="two-column">
-        <Panel title="Event counts" action={<button className="button secondary small" type="button" onClick={() => void load()}><RefreshCw size={14} />Refresh</button>}>
-          <table>
-            <thead>
-              <tr>
-                <th>Event type</th>
-                <th>Count</th>
-              </tr>
-            </thead>
-            <tbody>
-              {summary.eventCounts.length === 0 && <EmptyTableRow colSpan={2} message="No execution events yet." />}
-              {summary.eventCounts.map((item) => (
-                <tr key={item.eventType}>
-                  <td>{item.eventType}</td>
-                  <td>{item.count}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <Panel title="Event mix">
+          <div className="usage-bar-list">
+            {summary.eventCounts.length === 0 && <div className="empty-state">No execution events yet.</div>}
+            {summary.eventCounts.map((item) => (
+              <UsageBar key={item.eventType} label={item.eventType} value={item.count} max={Math.max(...summary.eventCounts.map((event) => event.count), 1)} />
+            ))}
+          </div>
         </Panel>
 
-        <Panel title="Provider counts">
-          <table>
-            <thead>
-              <tr>
-                <th>Provider</th>
-                <th>Count</th>
-              </tr>
-            </thead>
-            <tbody>
-              {summary.providerCounts.length === 0 && <EmptyTableRow colSpan={2} message="No AI provider logs yet." />}
-              {summary.providerCounts.map((item) => (
-                <tr key={item.provider}>
-                  <td>{item.provider}</td>
-                  <td>{item.count}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <Panel title="Provider calls">
+          <div className="usage-bar-list">
+            {summary.providerCounts.length === 0 && <div className="empty-state">No AI provider logs yet.</div>}
+            {summary.providerCounts.map((item) => (
+              <UsageBar key={item.provider} label={item.provider} value={item.count} max={Math.max(...summary.providerCounts.map((provider) => provider.count), 1)} />
+            ))}
+          </div>
         </Panel>
       </section>
 
@@ -108,6 +93,20 @@ export function UsagePage({ app, api, showToast }: { app: AppRecord | null; api:
           </tbody>
         </table>
       </Panel>
+    </div>
+  );
+}
+
+function UsageBar({ label, value, max }: { label: string; value: number; max: number }) {
+  return (
+    <div className="usage-bar-row">
+      <div>
+        <span>{label}</span>
+        <strong>{value}</strong>
+      </div>
+      <div className="usage-bar-track" aria-hidden="true">
+        <span style={{ width: `${Math.max(4, Math.round((value / max) * 100))}%` }} />
+      </div>
     </div>
   );
 }

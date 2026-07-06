@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { createServer, type Server } from "node:http";
 import { mkdtempSync, rmSync } from "node:fs";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -11,6 +13,7 @@ import type { UIElementRecord, Workflow } from "../src/schemas/domain.js";
 import { RuntimeService } from "../src/services/runtime/runtimeService.js";
 import { SemanticIndexService } from "../src/services/semantic/semanticIndexService.js";
 import { InteractiveUiMapScanService } from "../src/services/ui-map/interactiveScanService.js";
+import { UiMapService } from "../src/services/ui-map/uiMapService.js";
 import { ReadinessService } from "../src/services/system/readinessService.js";
 import { WorkflowCompiler } from "../src/services/workflows/compiler.js";
 import { VideoProcessingService } from "../src/services/workflows/videoProcessingService.js";
@@ -119,6 +122,122 @@ test("repository exposes UI elements from the latest completed UI map only", asy
     assert.equal(repositories.getElementByElementId(appId, "old-button"), undefined);
     assert.equal(repositories.getElementByElementId(appId, "new-button")?.route, "/dashboard");
   } finally {
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("repository summarizes UI map scan progress and selector quality", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mia-ui-summary-"));
+  const db = createDatabase(testConfig(dir));
+  const repositories = new Repositories(db);
+
+  try {
+    const app = repositories.upsertApp({ name: "Mapped app", slug: "mapped-app", baseUrl: "http://localhost:3000" });
+    const version = repositories.createUiMapVersion(app.id, "runtime_browser_scan", {
+      baseUrl: app.baseUrl,
+      routes: ["/", "/dashboard/crm"],
+      ignoredSelectors: [],
+      redactedSelectors: [],
+      routeDiscovery: { enabled: false, maxRoutes: 25 }
+    });
+    const homePageId = repositories.createPage({
+      appId: app.id,
+      uiMapVersionId: version.id,
+      name: "Home",
+      route: "/",
+      url: "http://localhost:3000/",
+      status: "mapped"
+    });
+    repositories.saveUiElement(uiElement({ appId: app.id, uiMapVersionId: version.id, pageId: homePageId, elementId: "strong-button", label: "Strong button", selectorQuality: "strong" }));
+    repositories.saveUiElement(uiElement({ appId: app.id, uiMapVersionId: version.id, pageId: homePageId, elementId: "weak-button", label: "Weak button", selectorQuality: "weak", selectorWarnings: ["Ambiguous text selector"] }));
+    repositories.createPage({
+      appId: app.id,
+      uiMapVersionId: version.id,
+      name: "CRM",
+      route: "/dashboard/crm",
+      url: "http://localhost:3000/dashboard/crm",
+      status: "failed",
+      error: "HTTP 500"
+    });
+
+    const summary = repositories.listUiMapVersions(app.id)[0]!;
+    assert.equal(summary.routeCount, 2);
+    assert.deepEqual(summary.routes, ["/", "/dashboard/crm"]);
+    assert.equal(summary.pageCount, 2);
+    assert.equal(summary.failedPageCount, 1);
+    assert.equal(summary.elementCount, 2);
+    assert.equal(summary.strongSelectorCount, 1);
+    assert.equal(summary.mediumSelectorCount, 0);
+    assert.equal(summary.weakSelectorCount, 1);
+  } finally {
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("UI map preflight checks every selected route", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mia-ui-preflight-"));
+  const db = createDatabase(testConfig(dir));
+  const repositories = new Repositories(db);
+  const server = createServer((request, response) => {
+    if (request.url === "/missing") {
+      response.writeHead(503, { "content-type": "text/plain" });
+      response.end("unavailable");
+      return;
+    }
+    response.writeHead(200, { "content-type": "text/html" });
+    response.end("<main>ok</main>");
+  });
+
+  try {
+    const baseUrl = await listen(server);
+    const appId = repositories.upsertApp({ name: "Preflight app", slug: "preflight-app", baseUrl }).id;
+    const service = new UiMapService(testConfig(dir), repositories, emptySearch);
+    const report = await service.preflightApp({ appId, routes: ["/", "/dashboard", "/missing"], auth: { mode: "none" } });
+    const routeChecks = report.checks.filter((check) => check.id.startsWith("route:"));
+
+    assert.equal(routeChecks.length, 3);
+    assert.equal(routeChecks.find((check) => check.id === "route:/missing")?.status, "failed");
+    assert.equal(report.checks.some((check) => check.id === "routes-sampled"), false);
+    assert.equal(report.ok, false);
+  } finally {
+    await close(server);
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("UI map route discovery crawls safe same-origin links", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mia-ui-discovery-"));
+  const db = createDatabase(testConfig(dir));
+  const repositories = new Repositories(db);
+  const server = createServer((request, response) => {
+    response.writeHead(200, { "content-type": "text/html" });
+    if (request.url === "/dashboard") {
+      response.end('<a href="/settings">Settings</a><a href="/logout">Sign out</a>');
+      return;
+    }
+    response.end(`
+      <a href="/dashboard">Dashboard</a>
+      <a href="/dashboard/crm">CRM</a>
+      <a href="/file.pdf">PDF</a>
+      <a href="https://example.com/offsite">External</a>
+    `);
+  });
+
+  try {
+    const baseUrl = await listen(server);
+    const appId = repositories.upsertApp({ name: "Discovery app", slug: "discovery-app", baseUrl }).id;
+    const service = new UiMapService(testConfig(dir), repositories, emptySearch);
+    const report = await service.discoverRoutes({ appId, routes: ["/"], auth: { mode: "none" }, maxRoutes: 10 });
+
+    assert.deepEqual(report.routes.sort(), ["/", "/dashboard", "/dashboard/crm", "/settings"].sort());
+    assert.equal(report.routes.includes("/logout"), false);
+    assert.equal(report.routes.includes("/file.pdf"), false);
+    assert.equal(report.checkedRoutes.some((route) => route.route === "/" && route.status === "passed"), true);
+  } finally {
+    await close(server);
     db.close();
     rmSync(dir, { recursive: true, force: true });
   }
@@ -296,6 +415,51 @@ test("runtime resolve returns control actions and includes screen context in ans
   assert.equal(answer.type, "answer");
   assert.match(prompts[0] ?? "", /Invite teammate/);
   assert.match(prompts[0] ?? "", /role=button/);
+});
+
+test("runtime resolve returns a visible target for pointing requests", async () => {
+  const gateway: ModelGatewayAdapter = {
+    generateJson: async <T>() => ({ data: {} as T, raw: {} }),
+    generateText: async () => {
+      throw new Error("Pointing requests should resolve without text generation.");
+    },
+    analyzeImagesOrVideo: async <T>() => ({ data: {} as T, raw: {} })
+  };
+  const runtime = new RuntimeService({} as unknown as Repositories, gateway, emptySearch);
+
+  const result = await runtime.resolve({
+    appId: "app_one",
+    sessionId: "session_one",
+    utterance: "Where is the invite button?",
+    context: runtimeContext()
+  });
+
+  assert.equal(result.type, "answer");
+  assert.equal(result.message, "Pointing to Invite teammate.");
+  assert.deepEqual(result.target?.boundingBox, { x: 24, y: 32, width: 140, height: 36 });
+});
+
+test("runtime resolve returns visible element actions for direct click requests", async () => {
+  const gateway: ModelGatewayAdapter = {
+    generateJson: async <T>() => ({ data: {} as T, raw: {} }),
+    generateText: async () => {
+      throw new Error("Direct element actions should resolve without text generation.");
+    },
+    analyzeImagesOrVideo: async <T>() => ({ data: {} as T, raw: {} })
+  };
+  const runtime = new RuntimeService({} as unknown as Repositories, gateway, emptySearch);
+
+  const result = await runtime.resolve({
+    appId: "app_one",
+    sessionId: "session_one",
+    utterance: "Click the invite button",
+    context: runtimeContext()
+  });
+
+  assert.equal(result.type, "element_action");
+  assert.equal(result.action, "click");
+  assert.equal(result.executionPolicy, "auto");
+  assert.equal(result.target?.label, "Invite teammate");
 });
 
 test("video processing service starts and resumes unfinished jobs", async () => {
@@ -554,10 +718,10 @@ function runtimeContext() {
     currentUrl: "http://localhost:3000/team",
     currentRoute: "/team",
     pageTitle: "Team settings",
-    focusedElement: { tagName: "button", role: "button", label: "Invite teammate", text: "Invite" },
+    focusedElement: { tagName: "button", role: "button", label: "Invite teammate", text: "Invite", boundingBox: { x: 24, y: 32, width: 140, height: 36 } },
     hoveredElement: null,
     visibleElements: [
-      { tagName: "button", role: "button", label: "Invite teammate", text: "Invite" }
+      { tagName: "button", role: "button", label: "Invite teammate", text: "Invite", boundingBox: { x: 24, y: 32, width: 140, height: 36 } }
     ],
     userMetadata: {}
   };
@@ -575,6 +739,22 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function listen(server: Server): Promise<string> {
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address() as AddressInfo;
+      resolve(`http://127.0.0.1:${address.port}`);
+    });
+  });
+}
+
+function close(server: Server): Promise<void> {
+  if (!server.listening) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  });
+}
+
 function uiElement(input: {
   id?: string;
   appId: string;
@@ -583,6 +763,8 @@ function uiElement(input: {
   elementId: string;
   label: string;
   route?: string;
+  selectorQuality?: UIElementRecord["selectorQuality"];
+  selectorWarnings?: string[];
 }): UIElementRecord {
   const now = "2026-01-01T00:00:00.000Z";
   return {
@@ -604,8 +786,8 @@ function uiElement(input: {
     fallbackSelectors: [],
     nearbyText: [],
     tags: [],
-    selectorQuality: "strong",
-    selectorWarnings: [],
+    selectorQuality: input.selectorQuality ?? "strong",
+    selectorWarnings: input.selectorWarnings ?? [],
     stateName: "default",
     discoveredBy: "route_scan",
     fingerprint: input.elementId,

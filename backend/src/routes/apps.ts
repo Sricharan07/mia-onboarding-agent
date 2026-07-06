@@ -8,6 +8,7 @@ const appInputSchema = z.object({
   slug: z.string().trim().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Use lowercase letters, numbers, and single hyphens between words."),
   baseUrl: z.string().url(),
   uiScanConfig: z.object({
+    runtimeMode: z.enum(["qa_only", "workflow"]).optional(),
     routes: z.array(z.string().trim().min(1)).optional(),
     authMode: z.enum(["none", "login_form", "manual"]).optional(),
     loginUrl: z.string().trim().optional(),

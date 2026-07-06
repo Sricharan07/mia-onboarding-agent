@@ -54,6 +54,49 @@ export function Panel({ title, action, children }: { title: string; action?: Rea
   );
 }
 
+export function PageIntro({
+  title,
+  description,
+  action,
+  children
+}: {
+  title: string;
+  description: string;
+  action?: ReactNode;
+  children?: ReactNode;
+}) {
+  return (
+    <section className="page-intro">
+      <div>
+        <h2>{title}</h2>
+        <p>{description}</p>
+      </div>
+      {action && <div className="page-intro-action">{action}</div>}
+      {children && <div className="page-intro-extra">{children}</div>}
+    </section>
+  );
+}
+
+export function ActionEmptyState({
+  title,
+  message,
+  action
+}: {
+  title: string;
+  message: string;
+  action?: ReactNode;
+}) {
+  return (
+    <div className="action-empty-state">
+      <div>
+        <strong>{title}</strong>
+        <p>{message}</p>
+      </div>
+      {action && <div className="action-empty-state-control">{action}</div>}
+    </div>
+  );
+}
+
 export function SummaryItem({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="summary-item">

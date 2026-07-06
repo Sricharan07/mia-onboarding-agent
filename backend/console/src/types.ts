@@ -7,6 +7,7 @@ export type RouteId =
   | "workflow-jobs"
   | "workflow-review"
   | "workflows"
+  | "test-mia"
   | "logs"
   | "usage"
   | "api-keys";

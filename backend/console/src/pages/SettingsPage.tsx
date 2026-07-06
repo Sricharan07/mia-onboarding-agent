@@ -1,7 +1,7 @@
 import { AlertTriangle, Archive, Database, KeyRound, RefreshCw, Save, ShieldCheck, Users } from "lucide-react";
 import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
-import type { AppRecord, BackendApi, ConsoleAuthUser, ConsoleSession, SystemReadiness, UiScanAuthMode } from "../api";
-import { InlineAlert, Panel, ServiceRow, StatusPill } from "../components/console";
+import type { AppRecord, AppUiScanConfig, BackendApi, ConsoleAuthUser, ConsoleSession, SystemReadiness, UiScanAuthMode } from "../api";
+import { InlineAlert, PageIntro, Panel, ServiceRow, StatusPill } from "../components/console";
 import { formatDate } from "../utils/format";
 
 type SettingsTab = "backend" | "app" | "scan" | "privacy" | "admins" | "danger";
@@ -45,6 +45,7 @@ export function SettingsPage({
   const [name, setName] = useState(selectedApp?.name ?? "MIA onboarding app");
   const [slug, setSlug] = useState(selectedApp?.slug ?? "mia-onboarding");
   const [baseUrl, setBaseUrl] = useState(selectedApp?.baseUrl ?? "http://localhost:3000");
+  const [runtimeMode, setRuntimeMode] = useState<AppUiScanConfig["runtimeMode"]>(selectedApp?.uiScanConfig.runtimeMode ?? "workflow");
   const [routes, setRoutes] = useState(selectedApp?.uiScanConfig.routes.join("\n") ?? "/");
   const [authMode, setAuthMode] = useState<UiScanAuthMode>(selectedApp?.uiScanConfig.authMode ?? "none");
   const [loginUrl, setLoginUrl] = useState(selectedApp?.uiScanConfig.loginUrl ?? "");
@@ -82,6 +83,7 @@ export function SettingsPage({
     setName(selectedApp.name);
     setSlug(selectedApp.slug);
     setBaseUrl(selectedApp.baseUrl);
+    setRuntimeMode(selectedApp.uiScanConfig.runtimeMode ?? "workflow");
     setRoutes(selectedApp.uiScanConfig.routes.join("\n"));
     setAuthMode(selectedApp.uiScanConfig.authMode);
     setLoginUrl(selectedApp.uiScanConfig.loginUrl ?? "");
@@ -154,6 +156,7 @@ export function SettingsPage({
         slug: slug.trim(),
         baseUrl: baseUrl.trim(),
         uiScanConfig: {
+          runtimeMode,
           routes: splitLines(routes),
           authMode,
           loginUrl: loginUrl.trim() || undefined,
@@ -273,7 +276,12 @@ export function SettingsPage({
   };
 
   return (
-    <div className="page-grid narrow">
+    <div className="page-grid">
+      <PageIntro
+        title={settingsIntro(tab).title}
+        description={settingsIntro(tab).description}
+        action={<StatusPill tone={tab === "danger" ? "yellow" : "green"} label={selectedApp?.name ?? "No app"} />}
+      />
       <div className="segmented-tabs" role="tablist" aria-label="Settings sections">
         {tabs.map((item, index) => (
           <button
@@ -346,6 +354,13 @@ export function SettingsPage({
               <label>
                 Target app base URL
                 <input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} />
+              </label>
+              <label>
+                Runtime mode
+                <select value={runtimeMode} onChange={(event) => setRuntimeMode(event.target.value as AppUiScanConfig["runtimeMode"])}>
+                  <option value="workflow">Q&A, pointing, and guided workflows</option>
+                  <option value="qa_only">Q&A and pointing only</option>
+                </select>
               </label>
             </div>
             <div className="panel-actions">
@@ -495,56 +510,63 @@ export function SettingsPage({
 
       {tab === "admins" && (
         <section id={settingsPanelId("admins")} role="tabpanel" aria-labelledby={settingsTabId("admins")}>
-          <Panel title="Console admins" action={<button className="button secondary small" type="button" onClick={() => void loadAdmins()}><RefreshCw size={14} />Refresh</button>}>
-            <div className="form-grid">
-              <label>
-                Name
-                <input value={newAdminName} onChange={(event) => setNewAdminName(event.target.value)} />
-              </label>
-              <label>
-                Email
-                <input value={newAdminEmail} onChange={(event) => setNewAdminEmail(event.target.value)} type="email" />
-              </label>
-              <label>
-                Temporary password
-                <input value={newAdminPassword} onChange={(event) => setNewAdminPassword(event.target.value)} type="password" autoComplete="new-password" />
-              </label>
-            </div>
-            <div className="panel-actions">
-              <button className="button primary" type="button" disabled={pending === "create-admin"} onClick={() => void createAdmin()}>
-                <Users size={16} />
-                {pending === "create-admin" ? "Creating" : "Create admin"}
-              </button>
-            </div>
-            <table>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Email</th>
-                  <th>Last login</th>
-                  <th>Status</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {users.map((user) => (
-                  <tr key={user.id}>
-                    <td>{user.name}</td>
-                    <td>{user.email}</td>
-                    <td>{user.lastLoginAt ? formatDate(user.lastLoginAt) : <span className="muted">Never</span>}</td>
-                    <td><StatusPill tone={user.disabledAt ? "red" : "green"} label={user.disabledAt ? "disabled" : "active"} /></td>
-                    <td>
-                      {!user.disabledAt && user.id !== consoleUser?.id && (
-                        <button className="button secondary small" type="button" disabled={pending === `disable:${user.id}`} onClick={() => void disableUser(user.id)}>
-                          Disable
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Panel>
+          <section className="admin-management-grid">
+            <Panel title="Create admin">
+              <div className="form-grid single">
+                <label>
+                  Name
+                  <input value={newAdminName} onChange={(event) => setNewAdminName(event.target.value)} />
+                </label>
+                <label>
+                  Email
+                  <input value={newAdminEmail} onChange={(event) => setNewAdminEmail(event.target.value)} type="email" />
+                </label>
+                <label>
+                  Temporary password
+                  <input value={newAdminPassword} onChange={(event) => setNewAdminPassword(event.target.value)} type="password" autoComplete="new-password" />
+                </label>
+              </div>
+              <div className="panel-actions">
+                <button className="button primary" type="button" disabled={pending === "create-admin"} onClick={() => void createAdmin()}>
+                  <Users size={16} />
+                  {pending === "create-admin" ? "Creating" : "Create admin"}
+                </button>
+              </div>
+            </Panel>
+
+            <Panel title="Current admins" action={<button className="button secondary small" type="button" onClick={() => void loadAdmins()}><RefreshCw size={14} />Refresh</button>}>
+              <div className="table-frame">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Email</th>
+                      <th>Last login</th>
+                      <th>Status</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {users.map((user) => (
+                      <tr key={user.id}>
+                        <td>{user.name}</td>
+                        <td>{user.email}</td>
+                        <td>{user.lastLoginAt ? formatDate(user.lastLoginAt) : <span className="muted">Never</span>}</td>
+                        <td><StatusPill tone={user.disabledAt ? "red" : "green"} label={user.disabledAt ? "disabled" : "active"} /></td>
+                        <td>
+                          {!user.disabledAt && user.id !== consoleUser?.id && (
+                            <button className="button secondary small" type="button" disabled={pending === `disable:${user.id}`} onClick={() => void disableUser(user.id)}>
+                              Disable
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Panel>
+          </section>
 
           <Panel title="Change my password">
             <div className="form-grid">
@@ -565,37 +587,39 @@ export function SettingsPage({
             </div>
           </Panel>
 
-          <Panel title="Console sessions">
-            <table>
-              <thead>
-                <tr>
-                  <th>User</th>
-                  <th>Created</th>
-                  <th>Last used</th>
-                  <th>Expires</th>
-                  <th>Status</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {sessions.map((session) => (
-                  <tr key={session.id}>
-                    <td>{session.user.email}</td>
-                    <td>{formatDate(session.createdAt)}</td>
-                    <td>{session.lastUsedAt ? formatDate(session.lastUsedAt) : <span className="muted">Never</span>}</td>
-                    <td>{formatDate(session.expiresAt)}</td>
-                    <td><StatusPill tone={session.revokedAt ? "red" : "green"} label={session.revokedAt ? "revoked" : "active"} /></td>
-                    <td>
-                      {!session.revokedAt && (
-                        <button className="button secondary small" type="button" disabled={pending === `session:${session.id}`} onClick={() => void revokeSession(session.id)}>
-                          Revoke
-                        </button>
-                      )}
-                    </td>
+          <Panel title="Console sessions" action={<StatusPill tone={sessions.length ? "green" : "gray"} label={`${sessions.length} sessions`} />}>
+            <div className="table-frame bounded-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>User</th>
+                    <th>Created</th>
+                    <th>Last used</th>
+                    <th>Expires</th>
+                    <th>Status</th>
+                    <th></th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {sessions.map((session) => (
+                    <tr key={session.id}>
+                      <td>{session.user.email}</td>
+                      <td>{formatDate(session.createdAt)}</td>
+                      <td>{session.lastUsedAt ? formatDate(session.lastUsedAt) : <span className="muted">Never</span>}</td>
+                      <td>{formatDate(session.expiresAt)}</td>
+                      <td><StatusPill tone={session.revokedAt ? "red" : "green"} label={session.revokedAt ? "revoked" : "active"} /></td>
+                      <td>
+                        {!session.revokedAt && (
+                          <button className="button secondary small" type="button" disabled={pending === `session:${session.id}`} onClick={() => void revokeSession(session.id)}>
+                            Revoke
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </Panel>
         </section>
       )}
@@ -638,6 +662,43 @@ function settingsTabId(tab: SettingsTab): string {
 
 function settingsPanelId(tab: SettingsTab): string {
   return `settings-panel-${tab}`;
+}
+
+function settingsIntro(tab: SettingsTab): { title: string; description: string } {
+  if (tab === "backend") {
+    return {
+      title: "Backend and provider setup",
+      description: "Confirm the self-hosted backend URL and provider readiness before admins trust scan, workflow, or runtime behavior."
+    };
+  }
+  if (tab === "app") {
+    return {
+      title: "Customer app record",
+      description: "Define the app Mia is being installed into, including the base URL and whether users should get workflows or Q&A-only assistance."
+    };
+  }
+  if (tab === "scan") {
+    return {
+      title: "UI scan profile",
+      description: "Tell Mia which routes to scan and how to authenticate safely before generating UI maps or workflow targets."
+    };
+  }
+  if (tab === "privacy") {
+    return {
+      title: "Privacy and capture boundaries",
+      description: "Exclude private UI regions and redact sensitive text before scanning production-like data."
+    };
+  }
+  if (tab === "admins") {
+    return {
+      title: "Console admins and sessions",
+      description: "Manage who can operate this backend, rotate access, and revoke stale console sessions."
+    };
+  }
+  return {
+    title: "Danger zone",
+    description: "Archive the selected app only when it should stop being active for setup and runtime operations."
+  };
 }
 
 function readinessLabel(status?: string): string {
