@@ -33,7 +33,7 @@ Non-admin keys must be bound to one app and at least one allowed browser origin.
 ## System
 
 - `GET /api/v1/health`: lightweight process health.
-- `GET /api/v1/system/readiness`: database, config, provider, secret-storage, and local storage readiness.
+- `GET /api/v1/system/readiness`: admin-only database, config, provider, secret-storage, and local storage readiness.
 
 ## Console Auth
 

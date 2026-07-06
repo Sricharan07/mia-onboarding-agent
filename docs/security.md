@@ -46,16 +46,21 @@ The first admin is created with `BOOTSTRAP_ADMIN_TOKEN`. After setup:
 
 - remove or rotate the bootstrap token;
 - use long unique passwords;
+- keep auth-specific throttling enabled with `CONSOLE_AUTH_RATE_LIMIT_MAX`;
 - revoke stale sessions from Settings;
 - disable departed admins immediately.
 
 Console sessions are bearer credentials. Treat them like passwords.
 
+The readiness endpoint exposes deployment checks and is admin-only. Use a console admin session token or an admin API key for operational probes.
+
+The supported deployment is one backend service. Built-in throttles are process-local; multi-replica deployments must enforce shared rate limits at the proxy or edge.
+
 ## UI Scanning
 
 UI scanning can visit pages and submit configured login forms. Use a dedicated scan account with the smallest practical permissions.
 
-In production, scan targets that resolve to private or reserved network addresses are blocked unless `UI_SCAN_ALLOW_PRIVATE_NETWORKS=true`. Enable private network scans only for trusted internal deployments.
+In production, scan targets that resolve to private or reserved network addresses are blocked unless `UI_SCAN_ALLOW_PRIVATE_NETWORKS=true`. The same policy is enforced on Playwright page requests, including redirects and page subresources. Enable private network scans only for trusted internal deployments.
 
 Automated route discovery stays on the configured app origin and filters obvious destructive, logout, and binary routes, but operators should still start with explicit routes and review scan results before publishing workflows.
 
@@ -69,6 +74,7 @@ Use both backend scan profile redaction and SDK runtime redaction:
 
 - `redactedSelectors` in app scan profiles for UI map ingestion;
 - `privacy.redactedSelectors` in the SDK for runtime DOM context;
+- `privacy.redactText`, which defaults to redacting visible DOM text;
 - `privacy.redactScreenFrame` for screen regions used by voice/screen streaming.
 
 Avoid collecting secrets, payment details, health data, or other regulated data unless your deployment and policies explicitly cover that data.

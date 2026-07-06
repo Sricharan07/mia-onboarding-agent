@@ -68,6 +68,8 @@ test("repository rejects workflow id reuse across apps", () => {
   const repositories = new Repositories(db);
 
   try {
+    repositories.upsertApp({ name: "App one", slug: "one", baseUrl: "http://localhost:3000" });
+    repositories.upsertApp({ name: "App two", slug: "two", baseUrl: "http://localhost:4000" });
     repositories.saveWorkflow(workflow({ appId: "app_one", workflowId: "workflow_shared" }));
     assert.throws(
       () => repositories.saveWorkflow(workflow({ appId: "app_two", workflowId: "workflow_shared" })),
@@ -219,6 +221,8 @@ test("runtime session updates preserve omitted current step and values", () => {
   const repositories = new Repositories(db);
 
   try {
+    repositories.upsertApp({ name: "Runtime app", slug: "one", baseUrl: "http://localhost:3000" });
+    repositories.saveWorkflow(workflow({ appId: "app_one", workflowId: "workflow_one" }));
     const session = repositories.createRuntimeSession({ appId: "app_one", workflowId: "workflow_one" });
     repositories.updateRuntimeSession(session.runtimeSessionId, {
       status: "running",
@@ -243,6 +247,8 @@ test("terminal runtime session updates clear current step", () => {
   const repositories = new Repositories(db);
 
   try {
+    repositories.upsertApp({ name: "Runtime app", slug: "one", baseUrl: "http://localhost:3000" });
+    repositories.saveWorkflow(workflow({ appId: "app_one", workflowId: "workflow_one" }));
     const session = repositories.createRuntimeSession({ appId: "app_one", workflowId: "workflow_one" });
     repositories.updateRuntimeSession(session.runtimeSessionId, {
       status: "running",
@@ -619,8 +625,11 @@ function testConfig(dir: string): AppConfig {
     LOCAL_UPLOAD_DIR: join(dir, "uploads"),
     CONSOLE_DIST_DIR: join(dir, "console-dist"),
     BOOTSTRAP_ADMIN_TOKEN: "bootstrap-secret",
+    CONSOLE_SESSION_TTL_SECONDS: 28800,
+    CONSOLE_AUTH_RATE_LIMIT_MAX: 8,
     RATE_LIMIT_WINDOW_MS: 60_000,
     RATE_LIMIT_MAX: 300,
+    WORKFLOW_VIDEO_MAX_BYTES: 50 * 1024 * 1024,
     GEMINI_LIVE_TOKEN_RATE_LIMIT_MAX: 30,
     GEMINI_BASE_URL: "https://generativelanguage.googleapis.com",
     GEMINI_TEXT_MODEL: "gemini-2.5-flash",

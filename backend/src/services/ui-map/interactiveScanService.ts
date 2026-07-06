@@ -9,6 +9,7 @@ import { gotoAndSettle } from "./navigation.js";
 import { UiMapPageCaptureService, type CapturePageResult } from "./pageCaptureService.js";
 import { syncLatestUiElementSemanticIndex } from "../semantic/syncUiElementSemanticIndex.js";
 import { assertSafeTargetUrl, resolveSameOriginRouteUrl } from "../security/targetUrlPolicy.js";
+import { installUiScanRequestGuard } from "./requestGuard.js";
 
 type InteractiveSession = {
   sessionId: string;
@@ -58,6 +59,7 @@ export class InteractiveUiMapScanService {
     const version = this.repositories.createUiMapVersion(input.appId, "interactive_browser_scan");
     const browser = await chromium.launch({ headless: this.config.UI_SCAN_HEADLESS });
     const context = await browser.newContext();
+    await installUiScanRequestGuard(context, this.config);
     const page = await context.newPage();
     const sessionId = createId("ui_scan_session");
     const firstRoute = routes[0]!;

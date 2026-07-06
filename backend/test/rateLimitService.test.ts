@@ -8,6 +8,8 @@ import { AppError } from "../src/utils/errors.js";
 const config = {
   RATE_LIMIT_WINDOW_MS: 60_000,
   RATE_LIMIT_MAX: 2,
+  CONSOLE_AUTH_RATE_LIMIT_MAX: 2,
+  WORKFLOW_VIDEO_MAX_BYTES: 50 * 1024 * 1024,
   GEMINI_LIVE_TOKEN_RATE_LIMIT_MAX: 1
 } as AppConfig;
 
@@ -32,11 +34,21 @@ test("rate limiter separates API key buckets", () => {
   assertRateLimited(() => limiter.consume(request("/api/v1/runtime/resolve", "key_a")));
 });
 
-function request(url: string, prefix?: string): FastifyRequest {
+test("rate limiter applies strict console auth buckets per IP and subject", () => {
+  const limiter = new RateLimitService(config);
+
+  limiter.consumeConsoleAuth(request("/api/v1/console/auth/login"), "login", "admin@example.com");
+  limiter.consumeConsoleAuth(request("/api/v1/console/auth/login"), "login", "admin@example.com");
+
+  assertRateLimited(() => limiter.consumeConsoleAuth(request("/api/v1/console/auth/login"), "login", "admin@example.com"));
+  assertRateLimited(() => limiter.consumeConsoleAuth(request("/api/v1/console/auth/login", undefined, "192.0.2.10"), "login", "admin@example.com"));
+});
+
+function request(url: string, prefix?: string, ip = "127.0.0.1"): FastifyRequest {
   return {
     method: "POST",
     url,
-    ip: "127.0.0.1",
+    ip,
     apiKey: prefix ? { prefix } : undefined
   } as FastifyRequest;
 }

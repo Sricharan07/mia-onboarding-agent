@@ -1,5 +1,6 @@
 import { MIA_SHADOW_CURSOR_STYLES } from "./miaShadowCursorStyles.js";
 import type { MiaCursorState, MiaTheme } from "../types/index.js";
+import { prefersReducedMotion } from "../accessibility/motion.js";
 
 type CursorNavMode = "followingCursor" | "navigatingToTarget" | "pointingAtTarget" | "returningToCursor";
 type CursorOffset = { x: number; y: number };
@@ -40,6 +41,7 @@ export class MiaShadowCursor {
   private bubbleLingerMs = 3000;
   private fadeDurationMs = 3000;
   private theme: MiaTheme = "auto";
+  private reducedMotion = false;
 
   private bubbleQueue = "";
   private typeTimer: number | null = null;
@@ -99,6 +101,8 @@ export class MiaShadowCursor {
     this.navBubbleText = this.shadow.querySelector(".mia-nav-bubble-text") as HTMLDivElement;
     this.bars = Array.from(this.shadow.querySelectorAll(".mia-listening-bar")) as HTMLDivElement[];
 
+    this.reducedMotion = prefersReducedMotion();
+    this.root.toggleAttribute("data-reduced-motion", this.reducedMotion);
     this.applyTheme();
     this.setBubbleMaxWidth(this.bubbleMaxWidth);
     this.setState(this.state);
@@ -180,12 +184,21 @@ export class MiaShadowCursor {
     this.showBubble();
     this.bubbleQueue = text || "";
     this.bubbleText.textContent = "";
+    if (this.reducedMotion) {
+      this.bubbleText.textContent = this.bubbleQueue;
+      this.bubbleQueue = "";
+      return;
+    }
     this.startTypewriter();
   }
 
   appendBubbleText(delta: string): void {
     if (!delta || !this.bubbleText) return;
     this.showBubble();
+    if (this.reducedMotion) {
+      this.bubbleText.textContent = (this.bubbleText.textContent || "") + delta;
+      return;
+    }
     this.bubbleQueue += delta;
     this.startTypewriter();
   }

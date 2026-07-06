@@ -359,7 +359,7 @@ function App() {
           </div>
           <div className="topbar-actions">
             {selectedApp && (
-              <select value={selectedApp.id} onChange={(event) => void selectApp(event.target.value)}>
+              <select aria-label="Active application" value={selectedApp.id} onChange={(event) => void selectApp(event.target.value)}>
                 {apps.map((app) => (
                   <option value={app.id} key={app.id}>{app.name}</option>
                 ))}

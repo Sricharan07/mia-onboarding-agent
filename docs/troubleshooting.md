@@ -12,7 +12,7 @@ Run:
 ```bash
 npm run dev:backend
 curl http://localhost:4000/api/v1/health
-curl http://localhost:4000/api/v1/system/readiness
+curl -H "authorization: Bearer $ADMIN_API_KEY" http://localhost:4000/api/v1/system/readiness
 ```
 
 ## Console Cannot Reach Backend
@@ -43,7 +43,7 @@ curl http://localhost:4000/api/v1/system/readiness
 - Confirm the app base URL is reachable from the backend host or container.
 - Confirm routes stay on the configured app origin.
 - For authenticated scans, verify login selectors and use a dedicated test account.
-- In production, private and reserved target networks are blocked unless `UI_SCAN_ALLOW_PRIVATE_NETWORKS=true`.
+- In production, private and reserved target networks are blocked before navigation and on Playwright page requests unless `UI_SCAN_ALLOW_PRIVATE_NETWORKS=true`.
 
 ## Interactive Scan Browser Does Not Appear
 
@@ -57,12 +57,12 @@ Docker compose sets `UI_SCAN_HEADLESS=true`, which is better for server deployme
 
 ## Workflow Video Upload Fails
 
-Supported uploads are MP4, MOV, WebM, MKV, and MPEG. The backend validates MIME type, filename extension, and container signature. Re-export the recording if the file extension or content does not match the claimed video type.
+Supported uploads are MP4, MOV, WebM, MKV, and MPEG. The backend validates MIME type, filename extension, container signature, and `WORKFLOW_VIDEO_MAX_BYTES`. Re-export or compress the recording if the file is too large or if the content does not match the claimed video type.
 
 ## Workflow Processing Fails
 
 - Confirm `GEMINI_API_KEY` is set.
-- Check `/api/v1/system/readiness`.
+- Check `/api/v1/system/readiness` with a console admin session token or admin API key.
 - Confirm the uploaded file exists in persistent storage.
 - Review the workflow job error in the console.
 

@@ -32,7 +32,7 @@ function inspectElement(node: Element | null, config: SDKConfig): RuntimeElement
   if (isSdkOwnedElement(node)) return undefined;
   if (isRedactedElement(node, config)) return undefined;
   const rect = node.getBoundingClientRect();
-  const redactText = Boolean(config.privacy?.redactText) || isSensitiveInput(node);
+  const redactText = config.privacy?.redactText !== false || isSensitiveInput(node);
   return {
     tagName: node.tagName,
     role: node.getAttribute("role") ?? undefined,
@@ -56,7 +56,15 @@ function isRedactedElement(node: HTMLElement, config: SDKConfig): boolean {
 
 function isSensitiveInput(node: HTMLElement): boolean {
   if (!(node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement)) return false;
-  return ["password", "hidden"].includes(node.type);
+  const type = node instanceof HTMLInputElement ? node.type : "textarea";
+  if (["password", "hidden", "email", "tel", "url"].includes(type)) return true;
+  return /\b(token|secret|password|passcode|api[-_ ]?key|credit|card|ssn|social|email|phone)\b/i.test([
+    node.name,
+    node.id,
+    node.getAttribute("autocomplete"),
+    node.getAttribute("aria-label"),
+    node.placeholder
+  ].filter(Boolean).join(" "));
 }
 
 function isSdkOwnedElement(node: HTMLElement): boolean {

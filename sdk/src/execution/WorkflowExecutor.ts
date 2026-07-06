@@ -2,6 +2,7 @@ import type { BackendClient } from "../client/backendClient.js";
 import type { MiaShadowCursor } from "../cursor/MiaShadowCursor.js";
 import type { MiaPromptUI } from "../ui/MiaPromptUI.js";
 import type { Workflow, WorkflowStep } from "../types/index.js";
+import { prefersReducedMotion } from "../accessibility/motion.js";
 import { findElement } from "./elementResolution.js";
 
 export class WorkflowExecutor {
@@ -167,11 +168,12 @@ export class WorkflowExecutor {
       ? await waitForElement(step.target.selector, step.target.fallbackSelectors, step.timeoutMs, this.abortController.signal)
       : findElement(step.target.selector, step.target.fallbackSelectors);
     if (!element) throw new Error(`Target element not found: ${step.target.elementId}`);
-    element.scrollIntoView({ behavior: "smooth", block: "center" });
-    await wait(260, this.abortController.signal);
+    const reduceMotion = prefersReducedMotion();
+    element.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
+    await wait(reduceMotion ? 0 : 260, this.abortController.signal);
     const center = getElementCenter(element);
     this.options.cursor.navigateTo(center.x, center.y, step.label ?? step.target.label ?? step.target.elementId);
-    await wait(560, this.abortController.signal);
+    await wait(reduceMotion ? 0 : 560, this.abortController.signal);
     const cleanup = highlight(element);
 
     try {

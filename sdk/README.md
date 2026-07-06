@@ -6,9 +6,18 @@ Full integration guidance lives in the repository's [SDK guide](https://github.c
 
 ## Install
 
+Until the first npm release is published, install from a package tarball built from the repository root:
+
 ```bash
-npm install @mia/onboarding-agent
+# Build the SDK tarball from the MIA repository.
+npm install
+npm pack -w sdk
+
+# Then run this in the host web app that loads Mia.
+npm install /absolute/path/to/mia-onboarding-agent/mia-onboarding-agent-0.1.0.tgz
 ```
+
+After publication, install with `npm install @mia/onboarding-agent`.
 
 ## Usage
 
@@ -18,7 +27,7 @@ import { AIOnboardingAgent } from "@mia/onboarding-agent";
 AIOnboardingAgent.init({
   appId: "app_example",
   backendUrl: "https://mia.example.com",
-  apiKey: "mia_live_...",
+  apiKey: "mia_<prefix>_<secret>",
   enableVoice: true,
   user: {
     id: "user_123",
@@ -61,7 +70,7 @@ The SDK accepts visual options under `ui`, user identity under `user`, and priva
 AIOnboardingAgent.init({
   appId: "app_example",
   backendUrl: "https://mia.example.com",
-  apiKey: "mia_live_...",
+  apiKey: "mia_<prefix>_<secret>",
   ui: {
     theme: "auto",
     cursorOffset: { x: 20, y: 20 },
@@ -69,7 +78,7 @@ AIOnboardingAgent.init({
   },
   privacy: {
     redactedSelectors: ["[data-private]", ".billing-card"],
-    redactText: false
+    redactText: true
   }
 });
 ```
@@ -83,7 +92,7 @@ await AIOnboardingAgent.startVoice();
 await AIOnboardingAgent.stopVoice();
 ```
 
-If voice fails, check the backend readiness endpoint and confirm the SDK key has `runtime:write`.
+If voice fails, check the backend readiness endpoint with an admin credential and confirm the SDK key has `runtime:write`.
 
 ## License
 

@@ -41,7 +41,7 @@ export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
     methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["authorization", "content-type", "x-api-key", "x-bootstrap-admin-token"]
   });
-  await app.register(multipart, { limits: { fileSize: 1024 * 1024 * 500 } });
+  await app.register(multipart, { limits: { fileSize: config.WORKFLOW_VIDEO_MAX_BYTES } });
 
   const dependencies = createDependencies(config);
   app.addHook("onClose", async () => {
@@ -108,15 +108,18 @@ function createDependencies(config: AppConfig) {
 
 function registerErrorHandler(app: FastifyInstance): void {
   app.setErrorHandler((error, request, reply) => {
-    request.log.error(error);
+    request.log.error(safeErrorLogPayload(error), safeErrorLogMessage(error));
 
     if (error instanceof AppError) {
+      const payload: { code: string; message: string; details?: unknown } = {
+        code: error.code,
+        message: clientErrorMessage(error)
+      };
+      if (error.statusCode < 500 && error.details !== undefined) {
+        payload.details = error.details;
+      }
       return reply.status(error.statusCode).send({
-        error: {
-          code: error.code,
-          message: error.message,
-          details: error.details
-        }
+        error: payload
       });
     }
 
@@ -137,7 +140,7 @@ function registerErrorHandler(app: FastifyInstance): void {
       return reply.status(statusCode).send({
         error: {
           code: code ?? "REQUEST_ERROR",
-          message: typeof httpError.message === "string" ? httpError.message : "Request failed."
+          message: statusCode >= 500 ? "Internal server error." : typeof httpError.message === "string" ? httpError.message : "Request failed."
         }
       });
     }
@@ -145,8 +148,78 @@ function registerErrorHandler(app: FastifyInstance): void {
     return reply.status(500).send({
       error: {
         code: "INTERNAL_SERVER_ERROR",
-        message: error instanceof Error ? error.message : "Internal server error."
+        message: "Internal server error."
       }
     });
   });
+}
+
+type SafeErrorLogPayload = {
+  err: {
+    type: string;
+    code?: string;
+    statusCode?: number;
+    message: string;
+    stack?: string;
+    issues?: Array<{ code: string; path: Array<string | number>; message: string }>;
+    issueCount?: number;
+  };
+};
+
+export function safeErrorLogPayload(error: unknown): SafeErrorLogPayload {
+  if (error instanceof AppError) {
+    return {
+      err: {
+        type: error.name || "AppError",
+        code: error.code,
+        statusCode: error.statusCode,
+        message: error.statusCode >= 500 ? clientErrorMessage(error) : error.message,
+        stack: error.stack
+      }
+    };
+  }
+
+  if (error instanceof ZodError) {
+    return {
+      err: {
+        type: "ZodError",
+        message: "Request validation failed.",
+        issueCount: error.issues.length,
+        issues: error.issues.map((issue) => ({
+          code: issue.code,
+          path: issue.path.map((part) => typeof part === "symbol" ? part.toString() : part),
+          message: issue.message
+        }))
+      }
+    };
+  }
+
+  if (error instanceof Error) {
+    return {
+      err: {
+        type: error.name || "Error",
+        message: error.message,
+        stack: error.stack
+      }
+    };
+  }
+
+  return {
+    err: {
+      type: "UnknownError",
+      message: "Non-error value thrown."
+    }
+  };
+}
+
+function safeErrorLogMessage(error: unknown): string {
+  if (error instanceof AppError) return `${error.code} request failed`;
+  if (error instanceof ZodError) return "Request validation failed";
+  return "Unhandled request error";
+}
+
+function clientErrorMessage(error: AppError): string {
+  if (error.statusCode < 500) return error.message;
+  if (error.statusCode === 502) return "Upstream provider request failed.";
+  return "Internal server error.";
 }

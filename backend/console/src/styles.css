@@ -253,7 +253,7 @@ code {
 .nav-item {
   display: flex;
   width: 100%;
-  min-height: 34px;
+  min-height: 44px;
   align-items: center;
   gap: 9px;
   border: 0;
@@ -374,7 +374,7 @@ code {
   top: 0;
   z-index: 10;
   display: flex;
-  height: 48px;
+  min-height: 56px;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
@@ -404,9 +404,9 @@ code {
 }
 
 .sidebar-trigger {
-  width: 32px;
-  height: 32px;
-  margin-left: -6px;
+  width: 44px;
+  height: 44px;
+  margin-left: -10px;
 }
 
 .sidebar-trigger:hover,
@@ -858,7 +858,7 @@ code {
 
 .button {
   display: inline-flex;
-  min-height: 36px;
+  min-height: 44px;
   align-items: center;
   justify-content: center;
   gap: 8px;
@@ -906,8 +906,8 @@ code {
 }
 
 .button.small {
-  min-height: 30px;
-  padding: 5px 9px;
+  min-height: 44px;
+  padding: 7px 10px;
   font-size: 12px;
 }
 
@@ -935,8 +935,8 @@ code {
 }
 
 .icon-button {
-  min-height: 32px;
-  padding: 5px 8px;
+  min-height: 44px;
+  padding: 8px 10px;
   font-size: 12px;
 }
 
@@ -1073,7 +1073,7 @@ input,
 select,
 textarea {
   width: 100%;
-  min-height: 36px;
+  min-height: 44px;
   border: 1px solid var(--border);
   border-radius: var(--radius-s);
   background: var(--input);
@@ -1098,7 +1098,7 @@ textarea:focus {
   grid-template-columns: 16px minmax(0, 1fr);
   align-items: center;
   gap: 8px;
-  min-height: 38px;
+  min-height: 44px;
   border: 1px solid var(--border);
   border-radius: var(--radius-s);
   background: var(--input);
@@ -1112,7 +1112,7 @@ textarea:focus {
 }
 
 .input-with-icon input {
-  min-height: 36px;
+  min-height: 42px;
   border: 0;
   background: transparent;
   padding: 8px 0;
@@ -1399,12 +1399,12 @@ textarea:focus {
 }
 
 .segmented-tabs button {
-  min-height: 32px;
+  min-height: 44px;
   border: 0;
   border-radius: var(--radius-s);
   background: transparent;
   color: var(--text-2);
-  padding: 0 10px;
+  padding: 0 12px;
   font-weight: 600;
 }
 
@@ -1493,12 +1493,13 @@ textarea:focus {
   border-radius: var(--radius-s);
   background: var(--card);
   color: var(--text-2);
-  padding: 9px 10px;
+  min-height: 44px;
+  padding: 10px 12px;
 }
 
 .check-row input {
-  width: auto;
-  min-height: auto;
+  width: 16px;
+  min-height: 16px;
 }
 
 .login-page {
@@ -1688,21 +1689,45 @@ textarea:focus {
     padding: 0 18px;
   }
 
-	  .topbar,
-	  .inline-header,
-	  .scan-form,
-	  .filter-row,
-	  .form-grid,
-	  .summary-grid,
-	  .scope-grid,
-	  .activation-row,
-	  .filter-row.compact {
-	    grid-template-columns: 1fr;
-	    align-items: stretch;
-	  }
+  .topbar,
+  .inline-header,
+  .scan-form,
+  .filter-row,
+  .form-grid,
+  .summary-grid,
+  .scope-grid,
+  .activation-row,
+  .filter-row.compact {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
 
   .topbar {
-    display: flex;
+    display: grid;
+    height: auto;
+    min-height: 0;
+    gap: 8px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+
+  .topbar-title,
+  .topbar-actions {
+    width: 100%;
+  }
+
+  .topbar-actions {
+    flex-wrap: wrap;
+  }
+
+  .topbar-actions select {
+    min-width: 0;
+    flex: 1 1 100%;
+  }
+
+  .topbar-actions .status-pill,
+  .topbar-actions .button {
+    flex: 1 1 auto;
   }
 
   .breadcrumb {

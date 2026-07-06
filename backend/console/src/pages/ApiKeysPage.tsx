@@ -287,7 +287,14 @@ function appName(apps: AppRecord[], appId: string): string {
 }
 
 function sdkSnippet(key: CreatedApiKey, app: AppRecord, backendUrl: string): string {
-  return `npm install @mia/onboarding-agent
+  return `# Build the SDK tarball from the MIA repository.
+git clone https://github.com/Sricharan07/mia-onboarding-agent.git
+cd mia-onboarding-agent
+npm install
+npm pack -w sdk
+
+# Then run this in the host web app that loads Mia.
+npm install /absolute/path/to/mia-onboarding-agent/mia-onboarding-agent-0.1.0.tgz
 
 import { AIOnboardingAgent } from "@mia/onboarding-agent";
 

@@ -120,7 +120,7 @@ function errorMessage(error: unknown): string {
 function extractText(response: GenerateContentResponse): string {
   const text = response.text;
   if (!text) {
-    throw new AppError("PROVIDER_ERROR", "Gemini response did not include text content.", 502, response);
+    throw new AppError("PROVIDER_ERROR", "Gemini response did not include text content.", 502);
   }
   return text;
 }
@@ -129,8 +129,8 @@ function parseProviderJson<T>(text: string): T {
   const trimmed = text.trim().replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/i, "");
   try {
     return JSON.parse(trimmed) as T;
-  } catch (error) {
-    throw new AppError("PROVIDER_JSON_ERROR", "Gemini returned invalid JSON.", 502, { text, error: error instanceof Error ? error.message : String(error) });
+  } catch {
+    throw new AppError("PROVIDER_JSON_ERROR", "Gemini returned invalid JSON.", 502);
   }
 }
 

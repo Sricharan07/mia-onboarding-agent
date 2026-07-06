@@ -327,4 +327,22 @@ export const MIA_SHADOW_CURSOR_STYLES = `
   50% { transform: scale(1.1); opacity: 0.76; }
   100% { transform: scale(0.82); opacity: 0.15; }
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .mia-root *,
+  .mia-root *::before,
+  .mia-root *::after {
+    animation: none !important;
+    transition-duration: 0.001ms !important;
+  }
+
+  .mia-spinner,
+  .mia-wave,
+  .mia-ring,
+  .mia-shimmer,
+  .mia-cursor::before,
+  .mia-cursor::after {
+    display: none !important;
+  }
+}
 `;

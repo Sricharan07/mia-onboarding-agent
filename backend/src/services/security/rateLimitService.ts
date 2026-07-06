@@ -15,11 +15,24 @@ export class RateLimitService {
   consume(request: FastifyRequest): void {
     if (request.method === "OPTIONS") return;
 
-    const now = Date.now();
     const limit = request.url.startsWith("/api/v1/gemini/live-token")
       ? this.config.GEMINI_LIVE_TOKEN_RATE_LIMIT_MAX
       : this.config.RATE_LIMIT_MAX;
     const key = `${request.apiKey?.prefix ?? request.ip}:${request.method}:${routeKey(request.url)}`;
+    this.consumeBucket(key, limit);
+  }
+
+  consumeConsoleAuth(request: FastifyRequest, action: "login" | "setup", subject?: string): void {
+    const ipKey = `console-auth:${action}:ip:${request.ip}`;
+    this.consumeBucket(ipKey, this.config.CONSOLE_AUTH_RATE_LIMIT_MAX);
+    const normalizedSubject = subject?.trim().toLowerCase();
+    if (normalizedSubject) {
+      this.consumeBucket(`console-auth:${action}:subject:${normalizedSubject}`, this.config.CONSOLE_AUTH_RATE_LIMIT_MAX);
+    }
+  }
+
+  private consumeBucket(key: string, limit: number): void {
+    const now = Date.now();
     const bucket = this.buckets.get(key);
 
     if (!bucket || bucket.resetAt <= now) {

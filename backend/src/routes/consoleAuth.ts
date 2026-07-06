@@ -28,15 +28,18 @@ export async function registerConsoleAuthRoutes(app: FastifyInstance, dependenci
 
   app.post("/api/v1/console/auth/setup", async (request) => {
     const body = setupSchema.parse(request.body);
+    dependencies.services.rateLimit.consumeConsoleAuth(request, "setup", body.email);
     const bootstrapToken = typeof request.headers["x-bootstrap-admin-token"] === "string"
       ? request.headers["x-bootstrap-admin-token"]
       : undefined;
     return dependencies.services.consoleAuth.setup({ ...body, bootstrapToken });
   });
 
-  app.post("/api/v1/console/auth/login", async (request) => (
-    dependencies.services.consoleAuth.login(loginSchema.parse(request.body))
-  ));
+  app.post("/api/v1/console/auth/login", async (request) => {
+    const body = loginSchema.parse(request.body);
+    dependencies.services.rateLimit.consumeConsoleAuth(request, "login", body.email);
+    return dependencies.services.consoleAuth.login(body);
+  });
 
   app.post("/api/v1/console/auth/logout", async (request) => {
     const token = extractConsoleSessionToken(request.headers);

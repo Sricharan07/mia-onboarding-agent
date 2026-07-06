@@ -2,6 +2,8 @@
 
 This guide covers the supported self-hosted deployment shape: one backend service that serves the console at `/`, API routes under `/api/v1`, SQLite state, local uploads, and a local LanceDB semantic index.
 
+The built-in rate limits are enforced inside that single backend process. For multiple replicas, put a shared rate limiter at the proxy or edge before exposing MIA.
+
 ## Deployment Checklist
 
 - Terminate TLS at a reverse proxy or load balancer.
@@ -13,6 +15,7 @@ This guide covers the supported self-hosted deployment shape: one backend servic
 - Create the first console admin, then rotate or remove the bootstrap token from the runtime environment.
 - Create app-bound SDK keys with allowed browser origins. Never ship an `admin` key to a browser.
 - Configure backups before onboarding real users.
+- Tune `CONSOLE_AUTH_RATE_LIMIT_MAX` and `WORKFLOW_VIDEO_MAX_BYTES` for the deployment size and reverse-proxy limits.
 
 ## Docker Compose
 
@@ -71,7 +74,7 @@ Database migrations run automatically on backend startup. Before upgrading:
 - back up the persistent data volume;
 - read `CHANGELOG.md`;
 - deploy the new image;
-- check `/api/v1/health` and `/api/v1/system/readiness`;
+- check `/api/v1/health` and the admin-only `/api/v1/system/readiness`;
 - open the console and confirm the activation checklist still passes.
 
 The migration ledger is stored in the `schema_migrations` table. See [Database operations](database.md) for details.
@@ -79,6 +82,8 @@ The migration ledger is stored in the `schema_migrations` table. See [Database o
 ## UI Scanning In Production
 
 Production scans reject private and reserved target networks by default. Keep `UI_SCAN_ALLOW_PRIVATE_NETWORKS=false` for public deployments. Set it to `true` only when MIA is intentionally deployed inside a trusted private network and is scanning owned private apps.
+
+Browser scans also enforce the target URL policy on Playwright requests, including redirects and page subresources. For high-risk public deployments, keep the scanner container on a network segment that cannot reach cloud metadata endpoints or unrelated private services.
 
 Use per-app scan profiles in the console instead of global `UI_SCAN_*` credentials. Saved per-app scan passwords require `MIA_SECRET_ENCRYPTION_KEY` and are encrypted at rest.
 
@@ -91,7 +96,7 @@ Use these checks after deploys and before releases:
 ```bash
 npm run verify
 curl https://mia.example.com/api/v1/health
-curl https://mia.example.com/api/v1/system/readiness
+curl -H "authorization: Bearer $ADMIN_API_KEY" https://mia.example.com/api/v1/system/readiness
 ```
 
-The readiness route reports database/config/provider status. Provider checks that require credentials fail explicitly when keys are missing.
+The readiness route reports database/config/provider status and requires a console admin session token or an admin API key. Provider checks that require credentials fail explicitly when keys are missing.

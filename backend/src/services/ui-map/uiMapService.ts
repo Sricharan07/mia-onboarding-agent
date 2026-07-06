@@ -11,6 +11,7 @@ import { UiMapPageCaptureService } from "./pageCaptureService.js";
 import { captureSafeExpansions } from "./safeExpansion.js";
 import { syncLatestUiElementSemanticIndex } from "../semantic/syncUiElementSemanticIndex.js";
 import { assertSafeTargetUrl, resolveSameOriginRouteUrl } from "../security/targetUrlPolicy.js";
+import { installUiScanRequestGuard } from "./requestGuard.js";
 
 const SCAN_LEASE_MS = 30 * 60 * 1000;
 
@@ -151,6 +152,7 @@ export class UiMapService {
     try {
       browser = await chromium.launch({ headless: this.config.UI_SCAN_HEADLESS });
       const context = await browser.newContext();
+      await installUiScanRequestGuard(context, this.config);
       const page = await context.newPage();
       await assertSafeTargetUrl(config.baseUrl, this.config);
       await applyUiScanAuth({
@@ -254,7 +256,9 @@ export class UiMapService {
     let browser: Browser | undefined;
     try {
       browser = await chromium.launch({ headless: true });
-      const page = await (await browser.newContext()).newPage();
+      const context = await browser.newContext();
+      await installUiScanRequestGuard(context, this.config);
+      const page = await context.newPage();
       const loginUrl = new URL(auth!.loginUrl!, baseUrl).toString();
       await assertSafeTargetUrl(loginUrl, this.config);
       await gotoAndSettle(page, loginUrl);

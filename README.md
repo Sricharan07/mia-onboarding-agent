@@ -117,7 +117,7 @@ To add a web app for UI mapping:
 
 Automated route discovery is opt-in and only follows same-origin links from scanned pages. It filters obvious destructive/logout/binary routes, but production scans should still start with explicit routes.
 
-The SDK can redact DOM context before it leaves the browser:
+The SDK redacts visible DOM text by default before context leaves the browser. Keep `redactText` enabled unless the host app has reviewed the data that may be sent to the backend/model provider:
 
 ```ts
 AIOnboardingAgent.init({
@@ -126,7 +126,7 @@ AIOnboardingAgent.init({
   apiKey: "...",
   enableVoice: true,
   privacy: {
-    redactText: false,
+    redactText: true,
     redactedSelectors: ["[data-private]", ".billing-card"],
     redactScreenFrame: (canvas, context) => {
       context.clearRect(0, 0, 220, 80);

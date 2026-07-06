@@ -31,6 +31,16 @@ test("admin routes require an admin API key after bootstrap", async () => {
     assert.equal(bootstrap.statusCode, 200);
     const adminKey = bootstrap.json<{ key: string }>().key;
 
+    const unauthenticatedReadiness = await app.inject({ method: "GET", url: "/api/v1/system/readiness" });
+    assert.equal(unauthenticatedReadiness.statusCode, 401);
+
+    const authenticatedReadiness = await app.inject({
+      method: "GET",
+      url: "/api/v1/system/readiness",
+      headers: { authorization: `Bearer ${adminKey}` }
+    });
+    assert.equal(authenticatedReadiness.statusCode, 200);
+
     const invalidSlug = await app.inject({
       method: "POST",
       url: "/api/v1/apps",
@@ -100,6 +110,13 @@ test("console users sign in with email and password and authorize admin routes",
     assert.equal(status.json<{ setupRequired: boolean; authenticated: boolean }>().setupRequired, false);
     assert.equal(status.json<{ setupRequired: boolean; authenticated: boolean }>().authenticated, true);
 
+    const consoleReadiness = await app.inject({
+      method: "GET",
+      url: "/api/v1/system/readiness",
+      headers: { authorization: `Bearer ${setupBody.token}` }
+    });
+    assert.equal(consoleReadiness.statusCode, 200);
+
     const createdApp = await app.inject({
       method: "POST",
       url: "/api/v1/apps",
@@ -167,6 +184,41 @@ test("console users sign in with email and password and authorize admin routes",
       headers: { authorization: `Bearer ${loginToken}` }
     });
     assert.equal(archivedWorkflows.statusCode, 404);
+  } finally {
+    await app.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("console auth routes throttle repeated credential attempts", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mia-console-auth-rate-"));
+  const app = await buildApp(testConfig(dir, { CONSOLE_AUTH_RATE_LIMIT_MAX: 2 }));
+
+  try {
+    const setup = await app.inject({
+      method: "POST",
+      url: "/api/v1/console/auth/setup",
+      headers: { "x-bootstrap-admin-token": "bootstrap-secret" },
+      payload: { name: "Local Admin", email: "admin@example.com", password: "very-secure-password" }
+    });
+    assert.equal(setup.statusCode, 200);
+
+    for (let i = 0; i < 2; i += 1) {
+      const rejected = await app.inject({
+        method: "POST",
+        url: "/api/v1/console/auth/login",
+        payload: { email: "admin@example.com", password: "wrong-password" }
+      });
+      assert.equal(rejected.statusCode, 401);
+    }
+
+    const limited = await app.inject({
+      method: "POST",
+      url: "/api/v1/console/auth/login",
+      payload: { email: "admin@example.com", password: "wrong-password" }
+    });
+    assert.equal(limited.statusCode, 429);
+    assert.equal(limited.json<{ error: { code: string } }>().error.code, "RATE_LIMITED");
   } finally {
     await app.close();
     rmSync(dir, { recursive: true, force: true });
@@ -581,7 +633,7 @@ function workflow(input: Partial<Workflow> = {}): Workflow {
   };
 }
 
-function testConfig(dir: string): AppConfig {
+function testConfig(dir: string, overrides: Partial<AppConfig> = {}): AppConfig {
   return {
     NODE_ENV: "test",
     BACKEND_HOST: "127.0.0.1",
@@ -594,8 +646,10 @@ function testConfig(dir: string): AppConfig {
     MIA_SECRET_ENCRYPTION_KEY: "test-secret-encryption-key",
     BOOTSTRAP_ADMIN_TOKEN: "bootstrap-secret",
     CONSOLE_SESSION_TTL_SECONDS: 28800,
+    CONSOLE_AUTH_RATE_LIMIT_MAX: 8,
     RATE_LIMIT_WINDOW_MS: 60_000,
     RATE_LIMIT_MAX: 300,
+    WORKFLOW_VIDEO_MAX_BYTES: 50 * 1024 * 1024,
     GEMINI_LIVE_TOKEN_RATE_LIMIT_MAX: 30,
     GEMINI_BASE_URL: "https://generativelanguage.googleapis.com",
     GEMINI_TEXT_MODEL: "gemini-2.5-flash",
@@ -610,6 +664,7 @@ function testConfig(dir: string): AppConfig {
     UI_SCAN_AUTH_MODE: "none",
     UI_SCAN_POST_LOGIN_WAIT_MS: 1000,
     UI_SCAN_HEADLESS: true,
-    UI_SCAN_ALLOW_PRIVATE_NETWORKS: false
+    UI_SCAN_ALLOW_PRIVATE_NETWORKS: false,
+    ...overrides
   };
 }
