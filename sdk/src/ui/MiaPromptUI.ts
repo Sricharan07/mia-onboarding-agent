@@ -2,6 +2,12 @@ export class MiaPromptUI {
   private readonly root = document.createElement("div");
   private readonly card = document.createElement("div");
   private readonly body = document.createElement("div");
+  private readonly themeQuery = window.matchMedia?.("(prefers-color-scheme: light)");
+  private lightTheme = this.themeQuery?.matches ?? false;
+  private readonly handleThemeChange = (event: MediaQueryListEvent) => {
+    this.lightTheme = event.matches;
+    this.applyCardTheme();
+  };
   private readonly titleId = "mia-prompt-title";
   private readonly messageId = "mia-prompt-message";
   private previousFocus?: HTMLElement;
@@ -138,7 +144,7 @@ export class MiaPromptUI {
     this.open(message, "Mia is listening");
     const hint = document.createElement("div");
     hint.textContent = "Speak your answer now.";
-    hint.style.cssText = "margin-top:10px;color:#93c5fd;font:700 13px/1.35 system-ui,sans-serif";
+    hint.style.cssText = `margin-top:10px;color:${this.lightTheme ? "#1d4ed8" : "#93c5fd"};font:700 13px/1.35 system-ui,sans-serif`;
     this.body.append(hint);
   }
 
@@ -154,7 +160,21 @@ export class MiaPromptUI {
 
   destroy(): void {
     this.clear();
+    this.themeQuery?.removeEventListener?.("change", this.handleThemeChange);
     this.root.remove();
+  }
+
+  private applyCardTheme(): void {
+    this.card.style.cssText = [
+      "width:min(440px,100%)",
+      "border-radius:10px",
+      "padding:18px",
+      this.lightTheme ? "background:rgba(255,255,255,.98)" : "background:rgba(15,23,42,.94)",
+      this.lightTheme ? "color:#0f172a" : "color:#f8fafc",
+      "box-shadow:0 24px 70px rgba(2,6,23,.42)",
+      this.lightTheme ? "border:1px solid rgba(15,23,42,.14)" : "border:1px solid rgba(148,163,184,.26)",
+      "backdrop-filter:blur(14px)"
+    ].join(";");
   }
 
   private mount(): void {
@@ -175,16 +195,8 @@ export class MiaPromptUI {
       "background:rgba(2,6,23,.22)",
       "font-family:system-ui,sans-serif"
     ].join(";");
-    this.card.style.cssText = [
-      "width:min(440px,100%)",
-      "border-radius:8px",
-      "padding:18px",
-      "background:rgba(15,23,42,.94)",
-      "color:#f8fafc",
-      "box-shadow:0 24px 70px rgba(2,6,23,.42)",
-      "border:1px solid rgba(148,163,184,.26)",
-      "backdrop-filter:blur(14px)"
-    ].join(";");
+    this.applyCardTheme();
+    this.themeQuery?.addEventListener?.("change", this.handleThemeChange);
     this.body.style.cssText = "font:14px/1.45 system-ui,sans-serif";
     this.card.append(this.body);
     this.root.append(this.card);
@@ -203,7 +215,7 @@ export class MiaPromptUI {
     const text = document.createElement("div");
     text.id = this.messageId;
     text.textContent = message;
-    text.style.cssText = "color:#dbeafe";
+    text.style.cssText = this.lightTheme ? "color:#334155" : "color:#dbeafe";
     this.body.append(heading, text);
     this.root.style.display = "flex";
     document.addEventListener("keydown", this.handleKeyDown);

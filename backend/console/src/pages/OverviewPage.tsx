@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import type { ApiKeyRecord, AppRecord, BackendHealth, ExecutionLog, SystemReadiness, UiElement, UiMapVersion, UiPage, WorkflowJob, WorkflowSummary } from "../api";
 import { Panel, ServiceRow, StatusBadge, StatusPill } from "../components/console";
 import type { RouteId, StatusTone } from "../types";
-import { formatDate } from "../utils/format";
+import { formatDate, humanizeEventType } from "../utils/format";
 
 export function OverviewPage({
   app,
@@ -76,7 +76,7 @@ export function OverviewPage({
         <div className="launch-primary">
           <section className={`fix-now-panel ${nextAction ? launchState.tone : "green"}`}>
             <div className="fix-now-copy">
-              <span>{nextAction ? "Fix this next" : "Launch desk"}</span>
+              <span>{nextAction ? "Fix this next" : "All clear"}</span>
               <h3>{nextAction?.title ?? "Mia is ready for monitored use"}</h3>
               <p>{nextAction?.detail ?? "The remaining work is operational monitoring, not launch blocking setup."}</p>
             </div>
@@ -374,15 +374,7 @@ function isRuntimeEvent(eventType: string): boolean {
     || eventType.startsWith("workflow_");
 }
 
-function runtimeEventLabel(eventType: string): string {
-  if (eventType === "session_started") return "SDK session started";
-  if (eventType === "runtime_resolution") return "Text prompt resolved";
-  if (eventType === "voice_resolution") return "Voice prompt resolved";
-  if (eventType === "element_action_completed") return "Element action completed";
-  if (eventType.startsWith("voice_")) return eventType.replace("voice_", "Voice ").replaceAll("_", " ");
-  if (eventType.startsWith("workflow_")) return eventType.replace("workflow_", "Workflow ").replaceAll("_", " ");
-  return eventType.replaceAll("_", " ");
-}
+const runtimeEventLabel = humanizeEventType;
 
 function EmptySetup({ onOpenSettings }: { onOpenSettings: () => void }) {
   return (

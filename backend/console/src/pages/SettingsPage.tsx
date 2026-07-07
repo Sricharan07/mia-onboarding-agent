@@ -2,7 +2,8 @@ import { AlertTriangle, Archive, Database, KeyRound, RefreshCw, Save, ShieldChec
 import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import type { AppRecord, AppUiScanConfig, BackendApi, ConsoleAuthUser, ConsoleSession, SystemReadiness, UiScanAuthMode } from "../api";
 import { InlineAlert, PageIntro, Panel, ServiceRow, StatusPill } from "../components/console";
-import { formatDate } from "../utils/format";
+import type { RouteId } from "../types";
+import { errorMessage, formatDate } from "../utils/format";
 
 type SettingsTab = "backend" | "app" | "scan" | "privacy" | "admins" | "danger";
 type Notice = { tone: "red" | "green" | "yellow" | "gray"; title: string; message: string };
@@ -26,6 +27,7 @@ export function SettingsPage({
   readiness,
   refresh,
   selectApp,
+  onOpenRoute,
   showToast
 }: {
   backendUrl: string;
@@ -37,6 +39,7 @@ export function SettingsPage({
   readiness: SystemReadiness | null;
   refresh: (preferredAppId?: string) => Promise<void>;
   selectApp: (appId: string) => Promise<void>;
+  onOpenRoute: (route: RouteId) => void;
   showToast: (message: string) => void;
 }) {
   const [tab, setTab] = useState<SettingsTab>("backend");
@@ -46,7 +49,6 @@ export function SettingsPage({
   const [slug, setSlug] = useState(selectedApp?.slug ?? "mia-onboarding");
   const [baseUrl, setBaseUrl] = useState(selectedApp?.baseUrl ?? "http://localhost:3000");
   const [runtimeMode, setRuntimeMode] = useState<AppUiScanConfig["runtimeMode"]>(selectedApp?.uiScanConfig.runtimeMode ?? "workflow");
-  const [routes, setRoutes] = useState(selectedApp?.uiScanConfig.routes.join("\n") ?? "/");
   const [authMode, setAuthMode] = useState<UiScanAuthMode>(selectedApp?.uiScanConfig.authMode ?? "none");
   const [loginUrl, setLoginUrl] = useState(selectedApp?.uiScanConfig.loginUrl ?? "");
   const [username, setUsername] = useState(selectedApp?.uiScanConfig.username ?? "");
@@ -84,7 +86,6 @@ export function SettingsPage({
     setSlug(selectedApp.slug);
     setBaseUrl(selectedApp.baseUrl);
     setRuntimeMode(selectedApp.uiScanConfig.runtimeMode ?? "workflow");
-    setRoutes(selectedApp.uiScanConfig.routes.join("\n"));
     setAuthMode(selectedApp.uiScanConfig.authMode);
     setLoginUrl(selectedApp.uiScanConfig.loginUrl ?? "");
     setUsername(selectedApp.uiScanConfig.username ?? "");
@@ -138,7 +139,7 @@ export function SettingsPage({
   };
 
   const reportNotice = (cause: unknown, fallback: string) => {
-    const message = cause instanceof Error ? cause.message : fallback;
+    const message = errorMessage(cause, fallback);
     setNotice({ tone: "red", title: "Action failed", message });
     showToast(message);
   };
@@ -157,7 +158,7 @@ export function SettingsPage({
         baseUrl: baseUrl.trim(),
         uiScanConfig: {
           runtimeMode,
-          routes: splitLines(routes),
+          routes: selectedApp?.uiScanConfig.routes.length ? selectedApp.uiScanConfig.routes : ["/"],
           authMode,
           loginUrl: loginUrl.trim() || undefined,
           username: username.trim() || undefined,
@@ -405,11 +406,18 @@ export function SettingsPage({
       {tab === "scan" && (
         <section id={settingsPanelId("scan")} role="tabpanel" aria-labelledby={settingsTabId("scan")}>
           <Panel title="UI scan profile" action={<StatusPill tone={authMode === "manual" ? "yellow" : "green"} label={authSummary} />}>
+          <div className="service-grid compact">
+            <div className="service-row">
+              <span>Scan routes</span>
+              <span>
+                <StatusPill tone={selectedApp?.uiScanConfig.routes.length ? "green" : "yellow"} label={`${selectedApp?.uiScanConfig.routes.length ?? 0} saved`} />
+                <button className="button secondary small" type="button" onClick={() => onOpenRoute("ui-map")} style={{ marginLeft: 8 }}>
+                  Edit routes in UI map
+                </button>
+              </span>
+            </div>
+          </div>
           <div className="form-grid">
-            <label>
-              Default routes
-              <textarea value={routes} onChange={(event) => setRoutes(event.target.value)} rows={5} placeholder={"/\n/settings\n/billing"} />
-            </label>
             <label>
               Auth mode
               <select value={authMode} onChange={(event) => setAuthMode(event.target.value as UiScanAuthMode)}>
@@ -680,7 +688,7 @@ function settingsIntro(tab: SettingsTab): { title: string; description: string }
   if (tab === "scan") {
     return {
       title: "UI scan profile",
-      description: "Tell Mia which routes to scan and how to authenticate safely before generating UI maps or workflow targets."
+      description: "Configure how the scanner signs in to your app. The routes to scan are managed on the UI map page, so there is one source of truth."
     };
   }
   if (tab === "privacy") {

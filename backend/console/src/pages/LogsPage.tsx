@@ -2,7 +2,7 @@ import { Activity, AlertTriangle, CheckCircle2, Mic, MousePointer2 } from "lucid
 import { useMemo, useState } from "react";
 import type { ExecutionLog } from "../api";
 import { LogTable, PageIntro, Panel, StatusPill } from "../components/console";
-import { formatDate, summarizePayload } from "../utils/format";
+import { formatDate, humanizeEventType, summarizePayload } from "../utils/format";
 
 type RuntimeSessionGroup = {
   id: string;
@@ -58,7 +58,7 @@ export function LogsPage({ logs }: { logs: ExecutionLog[] }) {
                 <article className="timeline-item" key={log.id}>
                   <span>{timelineIcon(log)}</span>
                   <div>
-                    <strong>{humanEvent(log.eventType)}</strong>
+                    <strong>{humanizeEventType(log.eventType)}</strong>
                     <p>{timelineSummary(log)}</p>
                     <small>{formatDate(log.createdAt)}</small>
                   </div>
@@ -149,10 +149,6 @@ function timelineIcon(log: ExecutionLog) {
   if (log.eventType.includes("completed")) return <CheckCircle2 size={14} />;
   if (log.eventType.startsWith("voice_")) return <Mic size={14} />;
   return <Activity size={14} />;
-}
-
-function humanEvent(eventType: string): string {
-  return eventType.split("_").map((part) => part[0]?.toUpperCase() + part.slice(1)).join(" ");
 }
 
 function timelineSummary(log: ExecutionLog): string {

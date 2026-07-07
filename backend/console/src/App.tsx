@@ -16,7 +16,7 @@ import {
   type WorkflowSummary
 } from "./api";
 import { InlineAlert, StatusPill } from "./components/console";
-import { navGroups, routeTitle } from "./navigation";
+import { navGroups, navRouteFor, routeTitle } from "./navigation";
 import { LoginPage } from "./pages/LoginPage";
 import { LogsPage } from "./pages/LogsPage";
 import { OverviewPage } from "./pages/OverviewPage";
@@ -25,8 +25,9 @@ import { TestMiaPage } from "./pages/TestMiaPage";
 import { UiMapDetailPage, UiMapPage } from "./pages/UiMapPages";
 import { ApiKeysPage } from "./pages/ApiKeysPage";
 import { UsagePage } from "./pages/UsagePage";
-import { UploadWorkflowPage, WorkflowJobsPage, WorkflowReviewPage, WorkflowsPage } from "./pages/WorkflowPages";
+import { UploadWorkflowPage, WorkflowReviewPage, WorkflowsPage } from "./pages/WorkflowPages";
 import type { LoadState, RouteId } from "./types";
+import { errorMessage } from "./utils/format";
 
 const configuredBackendUrl = (import.meta.env.VITE_MIA_BACKEND_URL as string | undefined)?.trim() || undefined;
 const storedBackendUrl = window.localStorage.getItem("mia-console-backend-url")?.trim() || undefined;
@@ -73,7 +74,7 @@ function App() {
   };
 
   const reportError = (cause: unknown, fallback = "Request failed") => {
-    const message = cause instanceof Error ? cause.message : fallback;
+    const message = errorMessage(cause, fallback);
     setError(message);
     showToast(message);
   };
@@ -316,7 +317,7 @@ function App() {
               <div className="nav-title">{group.title}</div>
               {group.items.map((item) => (
                 <button
-                  className={`nav-item ${activeRoute === item.id ? "is-active" : ""}`}
+                  className={`nav-item ${navRouteFor(activeRoute) === item.id ? "is-active" : ""}`}
                   key={item.id}
                   type="button"
                   onClick={() => {
@@ -335,7 +336,7 @@ function App() {
         <div className="sidebar-footer">
           <div className="support-card">
             <div>Operator console</div>
-            <p>Follow the launch desk first. It shows the blocker, evidence, and next action for the selected app.</p>
+            <p>Start from Overview. It shows the current blocker, evidence, and next action for the selected app.</p>
           </div>
           <button className="user-card" type="button" onClick={() => {
             setActiveRoute("settings");
@@ -357,7 +358,6 @@ function App() {
             <button className="sidebar-trigger" type="button" aria-label={sidebarOpen ? "Close sidebar" : "Open sidebar"} aria-expanded={sidebarOpen} onClick={() => setSidebarOpen((open) => !open)}>
               {sidebarOpen ? <X size={16} /> : <PanelLeft size={16} />}
             </button>
-            <div className="breadcrumb">Console / {routeTitle(activeRoute)}</div>
             <h1>{routeTitle(activeRoute)}</h1>
           </div>
           <div className="topbar-actions">
@@ -416,6 +416,7 @@ function App() {
             readiness={readiness}
             refresh={refresh}
             selectApp={selectApp}
+            onOpenRoute={(route) => setActiveRoute(route)}
             showToast={showToast}
           />
         )}
@@ -447,21 +448,7 @@ function App() {
           />
         )}
         {activeRoute === "upload" && (
-          <UploadWorkflowPage app={selectedApp} api={api} refresh={refresh} showToast={showToast} onJobs={() => setActiveRoute("workflow-jobs")} />
-        )}
-        {activeRoute === "workflow-jobs" && (
-          <WorkflowJobsPage
-            jobs={jobs}
-            workflows={workflowSummaries}
-            api={api}
-            refresh={refresh}
-            showToast={showToast}
-            onUpload={() => setActiveRoute("upload")}
-            onOpenWorkflow={(workflowId) => {
-              void selectWorkflow(workflowId);
-              setActiveRoute("workflow-review");
-            }}
-          />
+          <UploadWorkflowPage app={selectedApp} api={api} refresh={refresh} showToast={showToast} onJobs={() => setActiveRoute("workflows")} />
         )}
         {activeRoute === "workflow-review" && (
           <WorkflowReviewPage
@@ -471,12 +458,18 @@ function App() {
             refresh={refresh}
             selectWorkflow={selectWorkflow}
             onUpload={() => setActiveRoute("upload")}
+            onBack={() => setActiveRoute("workflows")}
+            reviewerEmail={consoleUser?.email}
             showToast={showToast}
           />
         )}
         {activeRoute === "workflows" && (
           <WorkflowsPage
+            jobs={jobs}
             workflows={workflowSummaries}
+            api={api}
+            refresh={refresh}
+            showToast={showToast}
             onUpload={() => setActiveRoute("upload")}
             onReview={(workflowId) => {
               void selectWorkflow(workflowId);

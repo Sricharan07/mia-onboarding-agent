@@ -1,5 +1,6 @@
 import { Command, Lock, Mail, Server, UserPlus } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
+import { errorMessage } from "../utils/format";
 
 type LoginInput = {
   backendUrl: string;
@@ -86,7 +87,7 @@ export function LoginPage({
         await onLogin({ backendUrl: nextBackendUrl, email: nextEmail, password: nextPassword });
       }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to sign in.");
+      setError(errorMessage(cause, "Unable to sign in."));
     } finally {
       setPending(false);
     }
@@ -135,7 +136,7 @@ export function LoginPage({
                 value={urlDraft}
                 onBlur={() => {
                   const nextBackendUrl = urlDraft.trim();
-                  if (nextBackendUrl) void checkSetupRequired(nextBackendUrl).catch((cause) => setError(cause instanceof Error ? cause.message : "Unable to check backend auth status."));
+                  if (nextBackendUrl) void checkSetupRequired(nextBackendUrl).catch((cause) => setError(errorMessage(cause, "Unable to check backend auth status.")));
                 }}
                 onChange={(event) => setUrlDraft(event.target.value)}
                 autoComplete="url"

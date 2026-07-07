@@ -30,7 +30,7 @@ import type {
   UiScanAuthMode
 } from "../api";
 import { EmptyTableRow, InlineAlert, PageIntro, Panel, RawJsonViewer, SelectorQualityBadge, StatusPill } from "../components/console";
-import { formatDate } from "../utils/format";
+import { errorMessage, formatDate } from "../utils/format";
 
 type Notice = { tone: "red" | "green" | "yellow" | "gray"; title: string; message: string };
 type SelectorFixGroup = { key: string; title: string; detail: string; count: number; examples: UiElement[] };
@@ -312,7 +312,7 @@ export function UiMapPage({
   };
 
   function reportNotice(cause: unknown, fallback: string) {
-    const message = cause instanceof Error ? cause.message : fallback;
+    const message = errorMessage(cause, fallback);
     setNotice({ tone: "red", title: "UI mapping failed", message });
     showToast(message);
   }
@@ -559,6 +559,7 @@ export function UiMapDetailPage({
   const [savingElementId, setSavingElementId] = useState<string | null>(null);
   const [qualityFilter, setQualityFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
+  const [groupFilter, setGroupFilter] = useState("");
   const [search, setSearch] = useState("");
   const [notice, setNotice] = useState<Notice | null>(null);
 
@@ -579,7 +580,9 @@ export function UiMapDetailPage({
       element.selectorWarnings.join(" "),
       element.stateName ?? "default"
     ].join(" ").toLowerCase().includes(query);
-    return matchesQuery && (qualityFilter === "all" || element.selectorQuality === qualityFilter) && (typeFilter === "all" || element.elementType === typeFilter);
+    const matchesGroup = !groupFilter
+      || ((element.selectorQuality === "weak" || element.selectorWarnings.length > 0) && selectorFixForElement(element).key === groupFilter);
+    return matchesQuery && matchesGroup && (qualityFilter === "all" || element.selectorQuality === qualityFilter) && (typeFilter === "all" || element.elementType === typeFilter);
   });
   const dirtyElements = filteredElements.filter((element) => drafts[element.id] !== undefined && drafts[element.id] !== element.description);
 
@@ -643,14 +646,20 @@ export function UiMapDetailPage({
         {sourceFixGroups.length > 0 ? (
           <div className="selector-fix-grid">
             {sourceFixGroups.map((group) => (
-              <article className="selector-fix-card" key={group.key}>
+              <button
+                className={`selector-fix-card ${groupFilter === group.key ? "is-selected" : ""}`}
+                key={group.key}
+                type="button"
+                aria-pressed={groupFilter === group.key}
+                onClick={() => setGroupFilter((current) => current === group.key ? "" : group.key)}
+              >
                 <div>
                   <StatusPill tone="red" label={`${group.count}`} />
                   <strong>{group.title}</strong>
                 </div>
                 <p>{group.detail}</p>
-                <span>{group.examples.slice(0, 3).map((element) => element.label || element.elementId).join(", ")}</span>
-              </article>
+                <span>{groupFilter === group.key ? "Showing these elements below. Click to show all." : "Click to review just these elements below."}</span>
+              </button>
             ))}
           </div>
         ) : (
@@ -765,7 +774,7 @@ export function UiMapDetailPage({
   );
 
   function reportNotice(cause: unknown, fallback: string) {
-    const message = cause instanceof Error ? cause.message : fallback;
+    const message = errorMessage(cause, fallback);
     setNotice({ tone: "red", title: "Save failed", message });
     showToast(message);
   }

@@ -2,7 +2,7 @@ import { AlertTriangle, Copy, KeyRound, Plus, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ApiKeyRecord, ApiKeyScope, AppRecord, BackendApi, CreatedApiKey } from "../api";
 import { EmptyTableRow, InlineAlert, PageIntro, Panel, StatusPill } from "../components/console";
-import { formatDate } from "../utils/format";
+import { errorMessage, formatDate } from "../utils/format";
 
 type Notice = { tone: "red" | "green" | "yellow" | "gray"; title: string; message: string };
 type KeyMode = "browser" | "admin";
@@ -103,10 +103,9 @@ export function ApiKeysPage({
     showToast("API key copied");
   };
 
-  const copySnippet = async () => {
-    if (!createdKey || !selectedAppForKey(apps, createdKey.appId)) return;
-    await navigator.clipboard?.writeText(sdkSnippet(createdKey, selectedAppForKey(apps, createdKey.appId)!, backendUrl));
-    showToast("SDK snippet copied");
+  const copyText = async (text: string, confirmation: string) => {
+    await navigator.clipboard?.writeText(text);
+    showToast(confirmation);
   };
 
   return (
@@ -237,15 +236,26 @@ export function ApiKeysPage({
             <div className="sdk-handoff">
               <div className="inline-header compact">
                 <div>
-                  <h2>SDK install snippet</h2>
-                  <p>Use this in the customer web app that matches the allowed origin.</p>
+                  <h2>1. Install the SDK</h2>
+                  <p>Run this once wherever the customer web app is built. The package installs from this repository until it ships on npm.</p>
                 </div>
-                <button className="button secondary" type="button" onClick={() => void copySnippet()}>
+                <button className="button secondary" type="button" onClick={() => void copyText(installSnippet(), "Install commands copied")}>
                   <Copy size={16} />
-                  Copy snippet
+                  Copy commands
                 </button>
               </div>
-              <pre className="json-viewer">{sdkSnippet(createdKey, selectedAppForKey(apps, createdKey.appId)!, backendUrl)}</pre>
+              <pre className="json-viewer">{installSnippet()}</pre>
+              <div className="inline-header compact">
+                <div>
+                  <h2>2. Initialize Mia in the app</h2>
+                  <p>Add this to the app that matches the allowed origin, then open Test Mia and Runtime logs to confirm events arrive.</p>
+                </div>
+                <button className="button secondary" type="button" onClick={() => void copyText(initSnippet(createdKey, selectedAppForKey(apps, createdKey.appId)!, backendUrl), "Init code copied")}>
+                  <Copy size={16} />
+                  Copy code
+                </button>
+              </div>
+              <pre className="json-viewer">{initSnippet(createdKey, selectedAppForKey(apps, createdKey.appId)!, backendUrl)}</pre>
             </div>
           )}
         </Panel>
@@ -305,7 +315,7 @@ export function ApiKeysPage({
   );
 
   function reportNotice(cause: unknown, fallback: string) {
-    const message = cause instanceof Error ? cause.message : fallback;
+    const message = errorMessage(cause, fallback);
     setNotice({ tone: "red", title: "API key action failed", message });
     showToast(message);
   }
@@ -332,17 +342,18 @@ function appName(apps: AppRecord[], appId: string): string {
   return apps.find((app) => app.id === appId)?.name ?? appId;
 }
 
-function sdkSnippet(key: CreatedApiKey, app: AppRecord, backendUrl: string): string {
-  return `# Build the SDK tarball from the MIA repository.
-git clone https://github.com/Sricharan07/mia-onboarding-agent.git
+function installSnippet(): string {
+  return `git clone https://github.com/Sricharan07/mia-onboarding-agent.git
 cd mia-onboarding-agent
 npm install
 npm pack -w sdk
 
-# Then run this in the host web app that loads Mia.
-npm install /absolute/path/to/mia-onboarding-agent/mia-onboarding-agent-0.1.0.tgz
+# In the host web app:
+npm install /absolute/path/to/mia-onboarding-agent/mia-onboarding-agent-0.1.0.tgz`;
+}
 
-import { AIOnboardingAgent } from "@mia/onboarding-agent";
+function initSnippet(key: CreatedApiKey, app: AppRecord, backendUrl: string): string {
+  return `import { AIOnboardingAgent } from "@mia/onboarding-agent";
 
 AIOnboardingAgent.init({
   appId: "${app.id}",
@@ -352,7 +363,5 @@ AIOnboardingAgent.init({
   ui: {
     assistantPanel: true
   }
-});
-
-// Then open Console -> Test Mia and Console -> Logs to verify live runtime targets.`;
+});`;
 }

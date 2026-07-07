@@ -1,7 +1,7 @@
 import { AlertTriangle, FileJson, type LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import type { ExecutionLog } from "../api";
-import { summarizePayload } from "../utils/format";
+import { humanizeStatus, summarizePayload } from "../utils/format";
 import type { StatusTone } from "../types";
 import { Badge, Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "./ui";
 
@@ -125,7 +125,7 @@ export function StatusBadge({ status }: { status: string }) {
         : ["failed", "blocked", "archived"].includes(status)
           ? "red"
           : "gray";
-  return <StatusPill tone={tone} label={status} />;
+  return <StatusPill tone={tone} label={humanizeStatus(status)} />;
 }
 
 export function SelectorQualityBadge({ quality }: { quality: "strong" | "medium" | "weak" }) {

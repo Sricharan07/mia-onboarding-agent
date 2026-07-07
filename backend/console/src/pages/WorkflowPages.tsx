@@ -2,7 +2,7 @@ import { Check, FileVideo, Plus, Play, RefreshCw, Save, Upload, X } from "lucide
 import { useEffect, useState } from "react";
 import type { AppRecord, BackendApi, ExecutionPolicy, Workflow, WorkflowJob, WorkflowReviewReport, WorkflowStep, WorkflowSummary } from "../api";
 import { ActionEmptyState, InlineAlert, PageIntro, Panel, StatusBadge, StatusPill, SummaryItem } from "../components/console";
-import { describeStep, formatDate } from "../utils/format";
+import { describeStep, errorMessage, formatDate } from "../utils/format";
 
 type Notice = { tone: "red" | "green" | "yellow" | "gray"; title: string; message: string };
 
@@ -50,6 +50,9 @@ export function UploadWorkflowPage({
   return (
     <div className="page-grid">
       {notice && <InlineAlert tone={notice.tone} title={notice.title} message={notice.message} />}
+      <div className="inline-header compact">
+        <button className="button secondary" type="button" onClick={onJobs}>Back to workflows</button>
+      </div>
       <PageIntro
         title="Turn a product walkthrough into a guided workflow"
         description="Upload one focused recording at a time. Mia will compile it into editable steps, then an admin reviews targets and safety before publishing."
@@ -104,88 +107,10 @@ export function UploadWorkflowPage({
   );
 
   function reportNotice(cause: unknown, fallback: string) {
-    const message = cause instanceof Error ? cause.message : fallback;
+    const message = errorMessage(cause, fallback);
     setNotice({ tone: "red", title: "Upload failed", message });
     showToast(message);
   }
-}
-
-export function WorkflowJobsPage({
-  jobs,
-  workflows,
-  api,
-  refresh,
-  onOpenWorkflow,
-  onUpload,
-  showToast
-}: {
-  jobs: WorkflowJob[];
-  workflows: WorkflowSummary[];
-  api: BackendApi;
-  refresh: (preferredAppId?: string) => Promise<void>;
-  onOpenWorkflow: (workflowId: string) => void;
-  onUpload: () => void;
-  showToast: (message: string) => void;
-}) {
-  const [notice, setNotice] = useState<Notice | null>(null);
-
-  const process = async (job: WorkflowJob) => {
-    try {
-      await api.processWorkflowJob(job.id);
-      await refresh(job.appId);
-      setNotice(null);
-      showToast("Workflow processing started");
-    } catch (cause) {
-      const message = cause instanceof Error ? cause.message : "Unable to process job";
-      setNotice({ tone: "red", title: "Processing failed", message });
-      showToast(message);
-    }
-  };
-
-  return (
-    <div className="page-grid">
-      {notice && <InlineAlert tone={notice.tone} title={notice.title} message={notice.message} />}
-      <PageIntro
-        title="Processing queue"
-        description="Track uploaded recordings as they become reviewable workflow drafts. Failed jobs stay here with enough detail for an admin to retry or fix the source recording."
-        action={<StatusPill tone={jobs.length ? "yellow" : "gray"} label={`${jobs.length} jobs`} />}
-      />
-      <div className="job-card-list">
-        {jobs.length === 0 && (
-          <ActionEmptyState
-            title="No recordings are processing"
-            message="Upload a focused walkthrough recording and it will appear here while Mia turns it into a reviewable workflow draft."
-            action={<button className="button primary" type="button" onClick={onUpload}><Upload size={16} />Upload recording</button>}
-          />
-        )}
-        {jobs.map((job) => (
-          <article className="job-card" key={job.id}>
-            <div className="job-card-main">
-              <StatusBadge status={job.status} />
-              <h3>{job.filename}</h3>
-              <p>{job.workflowId ? workflows.find((workflow) => workflow.workflowId === job.workflowId)?.name ?? job.workflowId : "Workflow draft is not ready yet."}</p>
-              {job.error && <InlineAlert tone="red" title="Job error" message={job.error} />}
-            </div>
-            <div className="job-card-meta">
-              <SummaryItem label="Created" value={formatDate(job.createdAt)} />
-              <SummaryItem label="Job ID" value={<code>{job.id}</code>} />
-              <div className="panel-actions">
-                <button className="button secondary small" type="button" onClick={() => void process(job)}>
-                  <RefreshCw size={14} />
-                  Process
-                </button>
-                {job.workflowId && (
-                  <button className="button primary small" type="button" onClick={() => onOpenWorkflow(job.workflowId!)}>
-                    Open workflow
-                  </button>
-                )}
-              </div>
-            </div>
-          </article>
-        ))}
-      </div>
-    </div>
-  );
 }
 
 export function WorkflowReviewPage({
@@ -195,6 +120,8 @@ export function WorkflowReviewPage({
   refresh,
   selectWorkflow,
   onUpload,
+  onBack,
+  reviewerEmail,
   showToast
 }: {
   workflow: Workflow | null;
@@ -203,6 +130,8 @@ export function WorkflowReviewPage({
   refresh: (preferredAppId?: string) => Promise<void>;
   selectWorkflow: (workflowId: string) => Promise<void>;
   onUpload: () => void;
+  onBack: () => void;
+  reviewerEmail?: string;
   showToast: (message: string) => void;
 }) {
   const [name, setName] = useState("");
@@ -234,6 +163,9 @@ export function WorkflowReviewPage({
   if (!workflow) {
     return (
       <div className="page-grid">
+        <div className="inline-header compact">
+          <button className="button secondary" type="button" onClick={onBack}>Back to workflows</button>
+        </div>
         <PageIntro
           title="Review the workflow before users can run it"
           description="Generated workflows stay in draft form until an admin confirms the trigger phrases, target elements, execution policy, and safety report."
@@ -269,7 +201,7 @@ export function WorkflowReviewPage({
   const approve = async () => {
     setPendingAction("approve");
     try {
-      await api.approveWorkflow(workflow.workflowId, { reviewedBy: "local-console", notes });
+      await api.approveWorkflow(workflow.workflowId, { reviewedBy: reviewerEmail ?? "console admin", notes });
       await refresh(workflow.appId);
       await selectWorkflow(workflow.workflowId);
       setNotice(null);
@@ -380,6 +312,9 @@ export function WorkflowReviewPage({
   return (
     <div className="page-grid">
       {notice && <InlineAlert tone={notice.tone} title={notice.title} message={notice.message} />}
+      <div className="inline-header compact">
+        <button className="button secondary" type="button" onClick={onBack}>Back to workflows</button>
+      </div>
       <PageIntro
         title="Review the workflow before users can run it"
         description="Confirm the trigger phrases, every target element, and each execution policy. Publishing is disabled until the safety report clears."
@@ -514,7 +449,7 @@ export function WorkflowReviewPage({
   );
 
   function reportNotice(cause: unknown, fallback: string) {
-    const message = cause instanceof Error ? cause.message : fallback;
+    const message = errorMessage(cause, fallback);
     setNotice({ tone: "red", title: "Workflow action failed", message });
     showToast(message);
   }
@@ -578,10 +513,10 @@ export function WorkflowStepCard({
             <label>
               Execution policy
               <select value={step.executionPolicy} onChange={(event) => onUpdate({ executionPolicy: event.target.value as ExecutionPolicy } as Partial<WorkflowStep>)}>
-                <option value="auto">auto</option>
-                <option value="requires_confirmation">requires_confirmation</option>
-                <option value="manual_only">manual_only</option>
-                <option value="blocked">blocked</option>
+                <option value="auto">Runs automatically</option>
+                <option value="requires_confirmation">Asks the user first</option>
+                <option value="manual_only">User does it manually</option>
+                <option value="blocked">Blocked, Mia never does this</option>
               </select>
             </label>
           )}
@@ -644,26 +579,77 @@ function humanStepTitle(step: WorkflowStep): string {
 }
 
 export function WorkflowsPage({
+  jobs,
   workflows,
+  api,
+  refresh,
   onReview,
-  onUpload
+  onUpload,
+  showToast
 }: {
+  jobs: WorkflowJob[];
   workflows: WorkflowSummary[];
+  api: BackendApi;
+  refresh: (preferredAppId?: string) => Promise<void>;
   onReview: (workflowId: string) => void;
   onUpload: () => void;
+  showToast: (message: string) => void;
 }) {
+  const [notice, setNotice] = useState<Notice | null>(null);
+  // Jobs whose draft exists already show up as workflow cards below; only surface in-flight or failed ones here.
+  const pendingJobs = jobs.filter((job) => !job.workflowId || job.error);
+
+  const process = async (job: WorkflowJob) => {
+    try {
+      await api.processWorkflowJob(job.id);
+      await refresh(job.appId);
+      setNotice(null);
+      showToast("Workflow processing started");
+    } catch (cause) {
+      const message = errorMessage(cause, "Unable to process job");
+      setNotice({ tone: "red", title: "Processing failed", message });
+      showToast(message);
+    }
+  };
+
   return (
     <div className="page-grid">
+      {notice && <InlineAlert tone={notice.tone} title={notice.title} message={notice.message} />}
       <PageIntro
-        title="Published flows and drafts"
-        description="This is the admin inventory of workflows Mia may use. Review drafts, publish approved flows, and archive flows that should no longer run."
-        action={<StatusPill tone={workflows.some((workflow) => workflow.status === "published") ? "green" : "yellow"} label={`${workflows.length} flows`} />}
+        title="Workflows"
+        description="Everything Mia can guide users through in this app. Upload a walkthrough recording, watch it become a draft, review it, and publish it."
+        action={<button className="button primary" type="button" onClick={onUpload}><Upload size={16} />Upload recording</button>}
       />
+
+      {pendingJobs.length > 0 && (
+        <div className="job-card-list">
+          {pendingJobs.map((job) => (
+            <article className="job-card" key={job.id}>
+              <div className="job-card-main">
+                <StatusBadge status={job.status} />
+                <h3>{job.filename}</h3>
+                <p>{job.error ? "Processing failed. Retry or upload a clearer recording." : "Mia is turning this recording into a reviewable draft."}</p>
+                {job.error && <InlineAlert tone="red" title="Job error" message={job.error} />}
+              </div>
+              <div className="job-card-meta">
+                <SummaryItem label="Uploaded" value={formatDate(job.createdAt)} />
+                <div className="panel-actions">
+                  <button className="button secondary small" type="button" onClick={() => void process(job)}>
+                    <RefreshCw size={14} />
+                    {job.error ? "Retry processing" : "Process now"}
+                  </button>
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+
       <div className="workflow-card-grid">
-        {workflows.length === 0 && (
+        {workflows.length === 0 && pendingJobs.length === 0 && (
           <ActionEmptyState
             title="No workflows exist yet"
-            message="Published flows appear here after an admin uploads a recording, reviews the generated draft, and publishes it for users."
+            message="Upload a focused walkthrough recording. Mia compiles it into editable steps, you review targets and safety, then publish it for users."
             action={<button className="button primary" type="button" onClick={onUpload}><Upload size={16} />Upload recording</button>}
           />
         )}
@@ -676,7 +662,9 @@ export function WorkflowsPage({
             </div>
             <div className="workflow-card-footer">
               <span>v{workflow.version}</span>
-              <button className="button secondary small" type="button" onClick={() => onReview(workflow.workflowId)}>Review</button>
+              <button className="button secondary small" type="button" onClick={() => onReview(workflow.workflowId)}>
+                {workflow.status === "needs_review" ? "Review and publish" : "Open"}
+              </button>
             </div>
           </article>
         ))}

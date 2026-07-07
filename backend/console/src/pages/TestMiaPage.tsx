@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import type { AppRecord, BackendApi, ExecutionLog, RuntimeResolveResponse, UiElement, UiPage, WorkflowSummary } from "../api";
 import { InlineAlert, PageIntro, Panel, StatusBadge, StatusPill, SummaryItem } from "../components/console";
 import type { RouteId } from "../types";
-import { formatDate, summarizePayload } from "../utils/format";
+import { errorMessage, formatDate, humanizeEventType, summarizePayload } from "../utils/format";
 
 type Notice = { tone: "red" | "green" | "yellow" | "gray"; title: string; message: string };
 
@@ -59,7 +59,7 @@ export function TestMiaPage({
       setNotice({ tone: response.type === "no_match" ? "yellow" : "green", title: "Test complete", message: resultSummary(response) });
       showToast("Mia test completed");
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : "Unable to test Mia.";
+      const message = errorMessage(cause, "Unable to test Mia.");
       setNotice({ tone: "red", title: "Test failed", message });
       showToast(message);
     } finally {
@@ -91,7 +91,7 @@ export function TestMiaPage({
         <ReadinessMode title="Q&A" ready={runtimeReady || elements.length > 0} icon={<MessageSquareText size={16} />} detail={runtimeReady ? "SDK runtime events have reached the backend." : "Available as a console dry-run from the UI map."} />
         <ReadinessMode title="Point and click" ready={pointReady} icon={<MousePointer2 size={16} />} detail={pointReady ? "Mapped elements include usable selectors." : "Review the UI map until selectors are strong or medium."} />
         <ReadinessMode title="Runtime mode" ready={workflowModeReady} icon={<WorkflowIcon size={16} />} detail={app.uiScanConfig.runtimeMode === "qa_only" ? "This app is intentionally Q&A and pointing only." : publishedWorkflows.length > 0 ? `${publishedWorkflows.length} workflow(s) published.` : "Publish a reviewed workflow or mark this app Q&A-only."} />
-        <ReadinessMode title="Runtime proof" ready={Boolean(latestRuntimeLog)} icon={<CheckCircle2 size={16} />} detail={latestRuntimeLog ? `Last event: ${latestRuntimeLog.eventType} at ${formatDate(latestRuntimeLog.createdAt)}` : "Open the host app with the SDK installed."} />
+        <ReadinessMode title="Runtime proof" ready={Boolean(latestRuntimeLog)} icon={<CheckCircle2 size={16} />} detail={latestRuntimeLog ? `Last event: ${humanizeEventType(latestRuntimeLog.eventType)} at ${formatDate(latestRuntimeLog.createdAt)}` : "Open the host app with the SDK installed."} />
       </section>
 
       <section className="two-column test-mia-layout">
@@ -158,7 +158,7 @@ export function TestMiaPage({
             <div className="service-row"><span>Visible elements in dry-run context</span><strong>{Math.min(elements.length, 40)}</strong></div>
             <div className="service-row"><span>Runtime mode</span><strong>{app.uiScanConfig.runtimeMode === "qa_only" ? "Q&A only" : "Workflows"}</strong></div>
             <div className="service-row"><span>Published workflows</span><strong>{publishedWorkflows.length}</strong></div>
-            <div className="service-row"><span>Latest runtime event</span><strong>{latestRuntimeLog ? latestRuntimeLog.eventType : "None"}</strong></div>
+            <div className="service-row"><span>Latest runtime event</span><strong>{latestRuntimeLog ? humanizeEventType(latestRuntimeLog.eventType) : "None"}</strong></div>
           </div>
           {!publishedWorkflows.length && app.uiScanConfig.runtimeMode !== "qa_only" && (
             <InlineAlert tone="yellow" title="Workflow mode" message="Mia can answer and point from current context, but guided workflow mode is not user-ready until at least one reviewed workflow is published or the app is intentionally marked Q&A-only." />
@@ -172,7 +172,7 @@ export function TestMiaPage({
               <article className="timeline-item" key={log.id}>
                 <span><CircleAlert size={14} /></span>
                 <div>
-                  <strong>{log.eventType}</strong>
+                  <strong>{humanizeEventType(log.eventType)}</strong>
                   <p>{summarizePayload(log.payload)}</p>
                   <small>{formatDate(log.createdAt)}</small>
                 </div>

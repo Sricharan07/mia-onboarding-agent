@@ -4,7 +4,6 @@ export type RouteId =
   | "ui-map"
   | "ui-map-detail"
   | "upload"
-  | "workflow-jobs"
   | "workflow-review"
   | "workflows"
   | "test-mia"

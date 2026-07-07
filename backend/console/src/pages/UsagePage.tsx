@@ -2,6 +2,7 @@ import { Activity, Code2, Gauge, RefreshCw, Workflow as WorkflowIcon } from "luc
 import { useEffect, useState } from "react";
 import type { AppRecord, BackendApi, UsageSummary, UsageTimeseriesPoint } from "../api";
 import { EmptyTableRow, MetricCard, PageIntro, Panel, StatusPill } from "../components/console";
+import { errorMessage } from "../utils/format";
 
 const emptyUsage: UsageSummary = {
   totals: { sdkEvents: 0, workflowRuns: 0, aiRequests: 0, errors: 0, averageAiLatencyMs: null },
@@ -23,7 +24,7 @@ export function UsagePage({ app, api, showToast }: { app: AppRecord | null; api:
       setSummary(nextSummary);
       setTimeseries(nextTimeseries.items);
     } catch (cause) {
-      showToast(cause instanceof Error ? cause.message : "Unable to load usage metrics");
+      showToast(errorMessage(cause, "Unable to load usage metrics"));
     }
   };
 

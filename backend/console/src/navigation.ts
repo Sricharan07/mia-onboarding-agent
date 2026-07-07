@@ -1,11 +1,8 @@
 import {
   BarChart3,
-  FileVideo,
   Home,
   KeyRound,
   Layers3,
-  ListChecks,
-  Loader2,
   MessageSquareText,
   Settings,
   TerminalSquare,
@@ -21,27 +18,19 @@ export const navGroups: Array<{
   {
     title: "Console",
     items: [
-      { id: "overview", label: "Launch desk", icon: Home },
-      { id: "settings", label: "App setup", icon: Settings }
+      { id: "overview", label: "Overview", icon: Home },
+      { id: "settings", label: "Settings", icon: Settings }
     ]
   },
   {
-    title: "UI Mapping",
+    title: "Build",
     items: [
-      { id: "ui-map", label: "Map UI", icon: Layers3 },
-      { id: "upload", label: "Upload recording", icon: FileVideo }
+      { id: "ui-map", label: "UI map", icon: Layers3 },
+      { id: "workflows", label: "Workflows", icon: WorkflowIcon }
     ]
   },
   {
-    title: "Workflows",
-    items: [
-      { id: "workflow-jobs", label: "Processing queue", icon: Loader2 },
-      { id: "workflow-review", label: "Review workflow", icon: ListChecks },
-      { id: "workflows", label: "Published flows", icon: WorkflowIcon }
-    ]
-  },
-  {
-    title: "Runtime",
+    title: "Operate",
     items: [
       { id: "test-mia", label: "Test Mia", icon: MessageSquareText },
       { id: "logs", label: "Runtime logs", icon: TerminalSquare },
@@ -53,18 +42,24 @@ export const navGroups: Array<{
 
 export function routeTitle(route: RouteId) {
   const titles: Record<RouteId, string> = {
-    overview: "Launch desk",
-    settings: "App setup",
-    "ui-map": "UI mapping",
+    overview: "Overview",
+    settings: "Settings",
+    "ui-map": "UI map",
     "ui-map-detail": "UI map page detail",
     upload: "Upload recording",
-    "workflow-jobs": "Processing queue",
     "workflow-review": "Workflow review",
-    workflows: "Published flows",
+    workflows: "Workflows",
     "test-mia": "Test Mia",
     logs: "Runtime logs",
     usage: "Usage",
     "api-keys": "API keys"
   };
   return titles[route];
+}
+
+/** Nav item to highlight for detail routes that are not in the sidebar. */
+export function navRouteFor(route: RouteId): RouteId {
+  if (route === "ui-map-detail") return "ui-map";
+  if (route === "upload" || route === "workflow-review") return "workflows";
+  return route;
 }

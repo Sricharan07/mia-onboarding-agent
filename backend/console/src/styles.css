@@ -23,34 +23,36 @@
 }
 
 :root {
-  --background: oklch(0.972 0.004 255);
-  --foreground: oklch(0.19 0.012 255);
+  --background: oklch(0.98 0 0);
+  --foreground: oklch(0.18 0.01 155);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.19 0.012 255);
-  --primary: oklch(0.25 0.018 255);
+  --card-foreground: oklch(0.18 0.01 155);
+  --primary: oklch(0.42 0.075 152);
+  --primary-hover: oklch(0.36 0.068 152);
   --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.932 0.006 255);
-  --secondary-foreground: oklch(0.19 0.012 255);
-  --muted: oklch(0.946 0.006 255);
-  --muted-foreground: oklch(0.46 0.014 255);
-  --accent: oklch(0.928 0.018 245);
-  --accent-foreground: oklch(0.22 0.028 245);
+  --secondary: oklch(0.94 0.003 155);
+  --secondary-foreground: oklch(0.18 0.01 155);
+  --muted: oklch(0.955 0.002 155);
+  --muted-foreground: oklch(0.45 0.012 155);
+  --accent: oklch(0.945 0.02 152);
+  --accent-foreground: oklch(0.3 0.05 152);
   --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(0.855 0.008 255);
-  --input: oklch(0.99 0.002 255);
-  --ring: oklch(0.55 0.085 245);
-  --sidebar: oklch(0.985 0.002 255);
-  --sidebar-foreground: oklch(0.32 0.014 255);
-  --sidebar-primary: oklch(0.25 0.018 255);
+  --border: oklch(0.885 0.004 155);
+  --input: oklch(0.995 0 0);
+  --ring: oklch(0.5 0.08 152);
+  --sidebar: oklch(0.225 0.018 160);
+  --sidebar-foreground: oklch(0.82 0.012 155);
+  --sidebar-muted: oklch(0.63 0.018 155);
+  --sidebar-primary: oklch(0.5 0.09 152);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.928 0.018 245);
-  --sidebar-accent-foreground: oklch(0.2 0.02 245);
-  --sidebar-border: oklch(0.86 0.008 255);
-  --chart-1: oklch(0.57 0.09 245);
+  --sidebar-accent: oklch(0.29 0.02 160);
+  --sidebar-accent-foreground: oklch(0.96 0.004 155);
+  --sidebar-border: oklch(0.31 0.018 160);
+  --chart-1: oklch(0.5 0.09 152);
   --chart-2: oklch(0.62 0.13 150);
   --chart-3: oklch(0.67 0.14 75);
   --chart-4: oklch(0.58 0.14 25);
-  --chart-5: oklch(0.45 0.025 255);
+  --chart-5: oklch(0.45 0.02 155);
   --green-weak: rgba(22, 163, 74, 0.1);
   --green-text: #166534;
   --orange-weak: rgba(217, 119, 6, 0.11);
@@ -62,11 +64,13 @@
   --surface-2: var(--muted);
   --text: var(--foreground);
   --text-2: var(--muted-foreground);
-  --text-3: oklch(0.53 0.012 255);
-  --border-strong: oklch(0.78 0.01 255);
-  --accent-strong: oklch(0.87 0.03 245);
-  --overlay-hover: rgba(15, 23, 42, 0.045);
-  --shadow: none;
+  --text-3: oklch(0.5 0.012 155);
+  --border-strong: oklch(0.8 0.006 155);
+  --accent-strong: oklch(0.88 0.035 152);
+  --overlay-hover: rgba(18, 28, 22, 0.04);
+  --focus-halo: 0 0 0 3px color-mix(in oklch, var(--ring), transparent 78%);
+  --shadow: 0 1px 2px rgba(16, 26, 20, 0.05);
+  --shadow-lg: 0 12px 32px rgba(16, 26, 20, 0.14);
   --radius-s: 6px;
   --radius-m: 8px;
   --radius-lg: 10px;
@@ -171,6 +175,50 @@ code {
   display: none;
 }
 
+/* The dark rail is the console's identity layer; everything inside it swaps to the sidebar palette. */
+.sidebar .brand-name {
+  color: var(--sidebar-accent-foreground);
+}
+
+.sidebar .brand-subtitle {
+  color: var(--sidebar-muted);
+}
+
+.sidebar .brand-tile {
+  border-color: transparent;
+}
+
+.sidebar .nav-title {
+  color: var(--sidebar-muted);
+}
+
+.sidebar .support-card {
+  border-color: var(--sidebar-border);
+  background: var(--sidebar-accent);
+  box-shadow: none;
+}
+
+.sidebar .support-card div {
+  color: var(--sidebar-accent-foreground);
+}
+
+.sidebar .support-card p {
+  color: var(--sidebar-muted);
+}
+
+.sidebar .user-copy span:first-child {
+  color: var(--sidebar-accent-foreground);
+}
+
+.sidebar .user-copy span:last-child {
+  color: var(--sidebar-muted);
+}
+
+.sidebar .avatar {
+  background: var(--sidebar-primary);
+  color: var(--sidebar-primary-foreground);
+}
+
 .brand-row,
 .login-brand-row {
   display: flex;
@@ -272,6 +320,7 @@ code {
   color: var(--sidebar-foreground);
   padding: 7px 8px;
   text-align: left;
+  transition: background-color 140ms ease, color 140ms ease;
 }
 
 .nav-item svg {
@@ -853,9 +902,10 @@ code {
   gap: 18px;
   align-items: center;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: 12px;
   background: var(--card);
   padding: 18px;
+  box-shadow: var(--shadow);
 }
 
 .fix-now-panel.red {
@@ -895,9 +945,10 @@ code {
   gap: 12px;
   min-width: 0;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: 12px;
   background: var(--card);
   padding: 14px 16px;
+  box-shadow: var(--shadow);
 }
 
 .launch-section-header {
@@ -1588,6 +1639,7 @@ code {
   padding: 7px 12px;
   font-weight: 600;
   line-height: 1;
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
 }
 
 .button:disabled,
@@ -1600,19 +1652,23 @@ code {
   border-color: var(--primary);
   background: var(--primary);
   color: var(--primary-foreground);
+  box-shadow: var(--shadow);
 }
 
 .button.primary:hover {
-  background: var(--accent-strong);
+  border-color: var(--primary-hover);
+  background: var(--primary-hover);
 }
 
 .button.secondary {
   border-color: var(--border);
   background: var(--card);
   color: var(--text-2);
+  box-shadow: var(--shadow);
 }
 
 .button.secondary:hover {
+  border-color: var(--border-strong);
   background: var(--muted);
   color: var(--text);
 }
@@ -1696,10 +1752,23 @@ td {
   vertical-align: top;
 }
 
+td {
+  font-variant-numeric: tabular-nums;
+}
+
 th {
   color: var(--text-3);
   font-size: 12px;
   font-weight: 600;
+}
+
+.table-frame thead th,
+.bounded-table thead th,
+.diagnostic-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--muted);
 }
 
 tr:last-child td {
@@ -1733,7 +1802,13 @@ tbody tr:hover {
   text-align: left;
 }
 
+.job-row,
+.session-row {
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+
 .job-row:hover {
+  border-color: var(--border-strong);
   background: var(--muted);
 }
 
@@ -1815,6 +1890,7 @@ textarea {
   color: var(--text);
   outline: none;
   padding: 8px 10px;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
 }
 
 textarea {
@@ -1825,7 +1901,7 @@ input:focus,
 select:focus,
 textarea:focus {
   border-color: var(--ring);
-  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.08);
+  box-shadow: var(--focus-halo);
 }
 
 .input-with-icon {
@@ -1843,7 +1919,7 @@ textarea:focus {
 
 .input-with-icon:focus-within {
   border-color: var(--ring);
-  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.08);
+  box-shadow: var(--focus-halo);
 }
 
 .input-with-icon input {
@@ -2175,7 +2251,7 @@ textarea:focus {
   gap: 4px;
   border: 1px solid var(--border);
   border-radius: var(--radius-m);
-  background: var(--card);
+  background: var(--muted);
   padding: 4px;
 }
 
@@ -2187,13 +2263,18 @@ textarea:focus {
   color: var(--text-2);
   padding: 0 12px;
   font-weight: 600;
+  transition: background-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
 }
 
-.segmented-tabs button:hover,
+.segmented-tabs button:hover {
+  color: var(--text);
+}
+
 .segmented-tabs button.is-active,
 .segmented-tabs button[aria-selected="true"] {
-  background: var(--muted);
+  background: var(--card);
   color: var(--text);
+  box-shadow: 0 1px 2px rgba(16, 26, 20, 0.1);
 }
 
 .activation-list,
@@ -2516,6 +2597,12 @@ textarea:focus {
   background: var(--input);
   color: var(--text-3);
   padding: 0 10px;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.search-field:focus-within {
+  border-color: var(--ring);
+  box-shadow: var(--focus-halo);
 }
 
 .search-field input {
@@ -2581,6 +2668,19 @@ textarea:focus {
   border-radius: var(--radius-s);
   background: var(--card);
   padding: 12px;
+  text-align: left;
+  transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+}
+
+button.selector-fix-card:hover {
+  border-color: var(--border-strong);
+  background: var(--muted);
+}
+
+button.selector-fix-card.is-selected {
+  border-color: var(--ring);
+  background: var(--accent);
+  box-shadow: var(--focus-halo);
 }
 
 .selector-fix-card > div {
@@ -2689,9 +2789,14 @@ textarea:focus {
   text-align: left;
 }
 
-.session-row:hover,
-.session-row.is-active {
+.session-row:hover {
+  border-color: var(--border-strong);
   background: var(--muted);
+}
+
+.session-row.is-active {
+  border-color: var(--ring);
+  background: var(--accent);
 }
 
 .session-main {
@@ -2819,9 +2924,25 @@ textarea:focus {
   min-height: 100vh;
   flex-direction: column;
   overflow: hidden;
-  border-right: 1px solid var(--border);
+  border-right: 1px solid var(--sidebar-border);
   background: var(--sidebar);
   padding: 40px;
+}
+
+.login-visual .login-visual-brand,
+.login-visual blockquote {
+  color: var(--sidebar-accent-foreground);
+}
+
+.login-visual footer {
+  color: var(--sidebar-muted);
+}
+
+.login-visual .login-grid-pattern {
+  opacity: 0.55;
+  background-image:
+    linear-gradient(var(--sidebar-border) 1px, transparent 1px),
+    linear-gradient(90deg, var(--sidebar-border) 1px, transparent 1px);
 }
 
 .login-visual-brand {
@@ -2911,12 +3032,21 @@ textarea:focus {
   right: 16px;
   z-index: 20;
   max-width: 340px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--sidebar-border);
   border-radius: var(--radius-m);
-  background: var(--card);
-  box-shadow: var(--shadow);
-  color: var(--text);
+  background: var(--sidebar);
+  box-shadow: var(--shadow-lg);
+  color: var(--sidebar-accent-foreground);
   padding: 12px 14px;
+  font-size: 13px;
+  animation: toast-in 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
 }
 
 @media (max-width: 1120px) {
@@ -3158,5 +3288,13 @@ textarea:focus {
 @media (prefers-reduced-motion: reduce) {
   .sidebar {
     transition: none;
+  }
+
+  .toast {
+    animation: none;
+  }
+
+  .scan-progress-copy svg {
+    animation: none;
   }
 }

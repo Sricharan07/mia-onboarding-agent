@@ -77,7 +77,7 @@ export class MiaAssistantPanel {
   }
 
   setError(message: string): void {
-    this.addTranscript({ role: "system", text: message });
+    this.addTranscript({ role: "system", text: friendlyErrorText(message) });
     this.setStatus("error");
     this.openPanel();
   }
@@ -99,21 +99,21 @@ export class MiaAssistantPanel {
           <header class="mia-panel-header">
             <div>
               <strong>Mia</strong>
-              <span>Page-aware assistant</span>
+              <span>Help for this app</span>
             </div>
             <button class="mia-icon-button" type="button" data-close aria-label="Close Mia">&times;</button>
           </header>
 
           <div class="mia-state-row">
             <span class="mia-status-pill ${STATUS_TONES[this.status]}" data-status-pill>${STATUS_LABELS[this.status]}</span>
-            <span class="mia-privacy-pill">${this.options.textRedacted ? "DOM text redacted" : "Visible text enabled"}</span>
-            ${this.options.enableScreenShare ? `<span class="mia-privacy-pill">Screen optional</span>` : ""}
+            <span class="mia-privacy-pill">${this.options.textRedacted ? "Page text hidden from Mia" : "Mia can see this page"}</span>
+            ${this.options.enableScreenShare ? `<span class="mia-privacy-pill">Screen share off by default</span>` : ""}
           </div>
 
           <form class="mia-ask-form">
             <label for="mia-ask-input">Ask Mia</label>
             <div class="mia-input-row">
-              <input id="mia-ask-input" name="ask" autocomplete="off" placeholder="Ask about this page or tell Mia what to point to" />
+              <input id="mia-ask-input" name="ask" autocomplete="off" placeholder="Ask about this page&hellip;" />
               <button class="mia-send" type="submit">Ask</button>
             </div>
           </form>
@@ -121,13 +121,13 @@ export class MiaAssistantPanel {
           <div class="mia-suggestions" aria-label="Suggested prompts"></div>
 
           <div class="mia-controls">
-            <button class="mia-control" type="button" data-voice ${this.options.enableVoice ? "" : "disabled"}>
-              ${this.isVoiceActive() ? "Stop voice" : "Start voice"}
-            </button>
+            ${this.options.enableVoice ? `<button class="mia-control" type="button" data-voice>${this.isVoiceActive() ? "Stop voice" : "Start voice"}</button>` : ""}
             <button class="mia-control" type="button" data-cancel>Stop Mia</button>
           </div>
 
-          <p class="mia-hotkey">Hold Control+Space to talk. Release either key to pause the mic.</p>
+          ${this.options.enableVoice ? `<p class="mia-hotkey">Hold Ctrl+Space anywhere to talk. Release to pause the mic.</p>` : ""}
+
+          <div class="mia-thinking" role="status" hidden>Mia is thinking&hellip;</div>
 
           <div class="mia-transcript" aria-live="polite"></div>
         </section>
@@ -147,8 +147,11 @@ export class MiaAssistantPanel {
     this.shadow.querySelector("[data-voice]")?.addEventListener("click", () => {
       void this.runTask(() => this.isVoiceActive() ? this.options.onStopVoice() : this.options.onStartVoice());
     });
+    // Stop must work while Mia is busy, so it bypasses the busy gate that guards other tasks.
     this.shadow.querySelector("[data-cancel]")?.addEventListener("click", () => {
-      void this.runTask(() => this.options.onCancel());
+      void this.options.onCancel().catch((error) => {
+        this.setError(error instanceof Error ? error.message : String(error));
+      });
     });
     this.renderSuggestions();
     this.renderTranscript();
@@ -214,7 +217,7 @@ export class MiaAssistantPanel {
     if (this.entries.length === 0) {
       const empty = document.createElement("div");
       empty.className = "mia-empty";
-      empty.textContent = "Ask Mia where something is, what a metric means, or to guide a safe workflow.";
+      empty.textContent = "Ask where something is, what a screen means, or say what you're trying to do.";
       container.append(empty);
       return;
     }
@@ -237,7 +240,7 @@ export class MiaAssistantPanel {
     const dot = this.shadow.querySelector<HTMLElement>(".mia-status-dot");
     const pill = this.shadow.querySelector<HTMLElement>("[data-status-pill]");
     label && (label.textContent = STATUS_LABELS[this.status]);
-    if (dot) dot.className = `mia-status-dot ${STATUS_TONES[this.status]}`;
+    if (dot) dot.className = `mia-status-dot ${STATUS_TONES[this.status]}${this.status === "listening" ? " is-listening" : ""}`;
     if (pill) {
       pill.className = `mia-status-pill ${STATUS_TONES[this.status]}`;
       pill.textContent = STATUS_LABELS[this.status];
@@ -246,14 +249,14 @@ export class MiaAssistantPanel {
 
   private updateControls(): void {
     const voice = this.shadow.querySelector<HTMLButtonElement>("[data-voice]");
-    const cancel = this.shadow.querySelector<HTMLButtonElement>("[data-cancel]");
     const send = this.shadow.querySelector<HTMLButtonElement>(".mia-send");
+    const thinking = this.shadow.querySelector<HTMLElement>(".mia-thinking");
     if (voice) {
       voice.textContent = this.isVoiceActive() ? "Stop voice" : "Start voice";
       voice.disabled = this.busy || !this.options.enableVoice;
     }
-    if (cancel) cancel.disabled = this.busy;
     if (send) send.disabled = this.busy;
+    if (thinking) thinking.hidden = !this.busy;
   }
 
   private isVoiceActive(): boolean {
@@ -261,11 +264,28 @@ export class MiaAssistantPanel {
   }
 }
 
+function friendlyErrorText(message: string): string {
+  const lower = message.toLowerCase();
+  if (lower.includes("failed to fetch") || lower.includes("networkerror") || lower.includes("load failed") || lower.includes("fetch failed")) {
+    return "Mia couldn't connect. Check your internet connection and try again.";
+  }
+  if (lower.includes("401") || lower.includes("403") || lower.includes("unauthorized") || lower.includes("forbidden")) {
+    return "Mia isn't available right now. Please let your team know if this keeps happening.";
+  }
+  if (lower.includes("microphone") || lower.includes("notallowederror") || lower.includes("permission denied")) {
+    return "Mia can't use your microphone. Allow microphone access in your browser to use voice.";
+  }
+  if (/\b50[0-9]\b/.test(lower) || lower.includes("internal")) {
+    return "Something went wrong on Mia's side. Try again in a moment.";
+  }
+  return `Something went wrong: ${message}`;
+}
+
 const styles = `
 :host {
   all: initial;
   color-scheme: light dark;
-  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
 }
 
 * {
@@ -273,17 +293,60 @@ const styles = `
 }
 
 .mia-panel-root {
+  /* Dark theme is the default; light hosts get the override below. */
+  --mia-surface: rgba(15, 23, 42, 0.94);
+  --mia-surface-2: rgba(30, 41, 59, 0.84);
+  --mia-inset: rgba(2, 6, 23, 0.32);
+  --mia-border: rgba(148, 163, 184, 0.28);
+  --mia-border-soft: rgba(148, 163, 184, 0.2);
+  --mia-text: #f8fafc;
+  --mia-text-2: #cbd5e1;
+  --mia-message-text: #dbeafe;
+  --mia-input-bg: rgba(15, 23, 42, 0.74);
+  --mia-placeholder: #94a3b8;
+  --mia-send-bg: #e2e8f0;
+  --mia-send-text: #0f172a;
+  --mia-message-bg: rgba(15, 23, 42, 0.58);
+  --mia-user-bg: rgba(78, 110, 242, 0.22);
+  --mia-system-bg: rgba(245, 158, 11, 0.14);
+  --mia-focus: #93c5fd;
+  --mia-accent: #4e6ef2;
+  --mia-accent-text: #ffffff;
   position: fixed;
   right: max(16px, env(safe-area-inset-right));
   bottom: max(16px, env(safe-area-inset-bottom));
   z-index: 2147483645;
-  color: #f8fafc;
+  color: var(--mia-text);
+}
+
+@media (prefers-color-scheme: light) {
+  .mia-panel-root {
+    --mia-surface: rgba(255, 255, 255, 0.98);
+    --mia-surface-2: #f1f5f9;
+    --mia-inset: #f8fafc;
+    --mia-border: rgba(15, 23, 42, 0.16);
+    --mia-border-soft: rgba(15, 23, 42, 0.1);
+    --mia-text: #0f172a;
+    --mia-text-2: #43536b;
+    --mia-message-text: #1e293b;
+    --mia-input-bg: #ffffff;
+    --mia-placeholder: #64748b;
+    --mia-send-bg: #0f172a;
+    --mia-send-text: #f8fafc;
+    --mia-message-bg: #f8fafc;
+    --mia-user-bg: rgba(58, 85, 224, 0.09);
+    --mia-system-bg: rgba(217, 119, 6, 0.1);
+    --mia-focus: #2563eb;
+    --mia-accent: #3a55e0;
+    --mia-accent-text: #ffffff;
+  }
 }
 
 .mia-launcher,
 .mia-panel {
-  border: 1px solid rgba(148, 163, 184, 0.28);
-  background: rgba(15, 23, 42, 0.94);
+  border: 1px solid var(--mia-border);
+  background: var(--mia-surface);
+  box-shadow: 0 18px 48px rgba(2, 6, 23, 0.22);
 }
 
 .mia-launcher {
@@ -296,12 +359,17 @@ const styles = `
   color: inherit;
   padding: 8px 11px;
   cursor: pointer;
+  transition: border-color 140ms ease, background-color 140ms ease;
+}
+
+.mia-launcher:hover {
+  border-color: var(--mia-accent);
 }
 
 .mia-launcher:focus-visible,
 button:focus-visible,
 input:focus-visible {
-  outline: 2px solid #93c5fd;
+  outline: 2px solid var(--mia-focus);
   outline-offset: 2px;
 }
 
@@ -312,8 +380,8 @@ input:focus-visible {
   flex: 0 0 auto;
   place-items: center;
   border-radius: 9px;
-  background: #e0f2fe;
-  color: #0f172a;
+  background: var(--mia-accent);
+  color: var(--mia-accent-text);
   font: 800 14px/1 system-ui, sans-serif;
 }
 
@@ -330,7 +398,7 @@ input:focus-visible {
 }
 
 .mia-launcher-copy span {
-  color: #cbd5e1;
+  color: var(--mia-text-2);
   font: 500 12px/1.1 system-ui, sans-serif;
 }
 
@@ -349,18 +417,53 @@ input:focus-visible {
   position: absolute;
   right: 0;
   bottom: 62px;
-  display: grid;
+  display: flex;
+  flex-direction: column;
   width: min(390px, calc(100vw - 32px));
   max-height: min(680px, calc(100vh - 100px));
-  grid-template-rows: auto auto auto auto auto auto minmax(120px, 1fr);
   gap: 12px;
   overflow: hidden;
-  border-radius: 14px;
+  border-radius: 12px;
   padding: 14px;
+  animation: mia-panel-in 170ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .mia-panel[hidden] {
   display: none;
+}
+
+@keyframes mia-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@keyframes mia-dot-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.mia-status-dot.is-listening {
+  animation: mia-dot-pulse 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mia-panel {
+    animation: none;
+  }
+
+  .mia-status-dot.is-listening {
+    animation: none;
+  }
+
+  .mia-launcher,
+  .mia-send,
+  .mia-control,
+  .mia-suggestions button {
+    transition: none;
+  }
 }
 
 .mia-panel-header,
@@ -387,18 +490,19 @@ input:focus-visible {
 
 .mia-panel-header span,
 .mia-hotkey,
+.mia-thinking,
 .mia-empty {
-  color: #cbd5e1;
+  color: var(--mia-text-2);
   font: 500 12px/1.4 system-ui, sans-serif;
 }
 
 .mia-icon-button {
   width: 32px;
   height: 32px;
-  border: 1px solid rgba(148, 163, 184, 0.24);
+  border: 1px solid var(--mia-border);
   border-radius: 8px;
-  background: rgba(30, 41, 59, 0.8);
-  color: #f8fafc;
+  background: var(--mia-surface-2);
+  color: var(--mia-text);
   cursor: pointer;
   font: 700 18px/1 system-ui, sans-serif;
 }
@@ -423,9 +527,16 @@ input:focus-visible {
 .mia-status-pill.red { border-color: rgba(251, 113, 133, 0.36); background: rgba(244, 63, 94, 0.16); color: #fecdd3; }
 .mia-status-pill.gray { background: rgba(51, 65, 85, 0.78); color: #cbd5e1; }
 
+@media (prefers-color-scheme: light) {
+  .mia-status-pill.green { border-color: rgba(22, 163, 74, 0.3); background: rgba(22, 163, 74, 0.1); color: #166534; }
+  .mia-status-pill.yellow { border-color: rgba(217, 119, 6, 0.3); background: rgba(217, 119, 6, 0.11); color: #92400e; }
+  .mia-status-pill.red { border-color: rgba(220, 38, 38, 0.3); background: rgba(220, 38, 38, 0.1); color: #991b1b; }
+  .mia-status-pill.gray { background: #e2e8f0; color: #334155; }
+}
+
 .mia-privacy-pill {
-  background: rgba(30, 41, 59, 0.72);
-  color: #cbd5e1;
+  background: var(--mia-surface-2);
+  color: var(--mia-text-2);
   font-weight: 600;
 }
 
@@ -435,7 +546,7 @@ input:focus-visible {
 }
 
 .mia-ask-form label {
-  color: #e2e8f0;
+  color: var(--mia-text);
   font: 700 12px/1.2 system-ui, sans-serif;
 }
 
@@ -447,35 +558,51 @@ input:focus-visible {
   min-width: 0;
   flex: 1;
   min-height: 42px;
-  border: 1px solid rgba(148, 163, 184, 0.28);
+  border: 1px solid var(--mia-border);
   border-radius: 9px;
-  background: rgba(15, 23, 42, 0.74);
-  color: #f8fafc;
+  background: var(--mia-input-bg);
+  color: var(--mia-text);
   padding: 0 10px;
   font: 500 13px/1.2 system-ui, sans-serif;
 }
 
 .mia-input-row input::placeholder {
-  color: #94a3b8;
+  color: var(--mia-placeholder);
 }
 
 .mia-send,
 .mia-control,
 .mia-suggestions button {
   min-height: 42px;
-  border: 1px solid rgba(148, 163, 184, 0.28);
+  border: 1px solid var(--mia-border);
   border-radius: 9px;
-  background: #e2e8f0;
-  color: #0f172a;
+  background: var(--mia-send-bg);
+  color: var(--mia-send-text);
   padding: 0 12px;
   cursor: pointer;
   font: 750 13px/1 system-ui, sans-serif;
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.mia-send {
+  border-color: var(--mia-accent);
+  background: var(--mia-accent);
+  color: var(--mia-accent-text);
 }
 
 .mia-control {
   flex: 1;
-  background: rgba(30, 41, 59, 0.84);
-  color: #f8fafc;
+  background: var(--mia-surface-2);
+  color: var(--mia-text);
+}
+
+.mia-send:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.mia-control:hover:not(:disabled),
+.mia-suggestions button:hover:not(:disabled) {
+  border-color: var(--mia-accent);
 }
 
 button:disabled {
@@ -493,8 +620,8 @@ button:disabled {
   min-height: 32px;
   max-width: 100%;
   overflow: hidden;
-  background: rgba(30, 41, 59, 0.84);
-  color: #e2e8f0;
+  background: var(--mia-surface-2);
+  color: var(--mia-text);
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12px;
@@ -508,40 +635,42 @@ button:disabled {
 .mia-transcript {
   display: grid;
   align-content: start;
+  flex: 1;
+  min-height: 120px;
   gap: 8px;
   overflow: auto;
-  border: 1px solid rgba(148, 163, 184, 0.2);
+  border: 1px solid var(--mia-border-soft);
   border-radius: 10px;
-  background: rgba(2, 6, 23, 0.32);
+  background: var(--mia-inset);
   padding: 10px;
 }
 
 .mia-message {
   display: grid;
   gap: 3px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
+  border: 1px solid var(--mia-border-soft);
   border-radius: 9px;
-  background: rgba(15, 23, 42, 0.58);
+  background: var(--mia-message-bg);
   padding: 8px 9px;
 }
 
 .mia-message strong {
-  color: #f8fafc;
+  color: var(--mia-text);
   font: 750 12px/1.2 system-ui, sans-serif;
 }
 
 .mia-message span {
-  color: #dbeafe;
+  color: var(--mia-message-text);
   font: 500 13px/1.4 system-ui, sans-serif;
   white-space: pre-wrap;
 }
 
 .mia-message.user {
-  background: rgba(37, 99, 235, 0.2);
+  background: var(--mia-user-bg);
 }
 
 .mia-message.system {
-  background: rgba(245, 158, 11, 0.14);
+  background: var(--mia-system-bg);
 }
 
 @media (max-width: 520px) {
