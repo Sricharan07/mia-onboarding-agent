@@ -50,16 +50,30 @@ export class MiaAssistantPanel {
   private open = false;
   private busy = false;
   private entries: MiaTranscriptEntry[] = [];
+  private readonly handleDocumentPointerDown = (event: PointerEvent): void => {
+    if (!this.open) return;
+    if (event.composedPath().includes(this.host)) return;
+    this.closePanel();
+  };
+  private readonly handleDocumentKeyDown = (event: KeyboardEvent): void => {
+    if (event.key === "Escape" && this.open) {
+      this.closePanel(true);
+    }
+  };
 
   constructor(private readonly options: MiaAssistantPanelOptions) {}
 
   mount(): void {
     this.host.dataset.miaAssistantPanel = "true";
     document.body.append(this.host);
+    document.addEventListener("pointerdown", this.handleDocumentPointerDown, { capture: true });
+    document.addEventListener("keydown", this.handleDocumentKeyDown);
     this.render();
   }
 
   destroy(): void {
+    document.removeEventListener("pointerdown", this.handleDocumentPointerDown, { capture: true });
+    document.removeEventListener("keydown", this.handleDocumentKeyDown);
     this.host.remove();
   }
 
@@ -86,7 +100,7 @@ export class MiaAssistantPanel {
     this.shadow.innerHTML = `
       <style>${styles}</style>
       <div class="mia-panel-root" data-open="${this.open}">
-        <button class="mia-launcher" type="button" aria-expanded="${this.open}" aria-controls="mia-assistant-panel">
+        <button class="mia-launcher" type="button" aria-expanded="${this.open}" aria-controls="mia-assistant-panel" aria-haspopup="dialog" aria-label="${this.open ? "Close Mia" : "Open Mia"}">
           <span class="mia-mark" aria-hidden="true">M</span>
           <span class="mia-launcher-copy">
             <strong>Mia</strong>
@@ -95,11 +109,14 @@ export class MiaAssistantPanel {
           <span class="mia-status-dot ${STATUS_TONES[this.status]}" aria-hidden="true"></span>
         </button>
 
-        <section id="mia-assistant-panel" class="mia-panel" aria-label="Mia assistant" ${this.open ? "" : "hidden"}>
+        <section id="mia-assistant-panel" class="mia-panel" role="dialog" aria-modal="false" aria-label="Mia assistant" ${this.open ? "" : "hidden"}>
           <header class="mia-panel-header">
-            <div>
-              <strong>Mia</strong>
-              <span>Help for this app</span>
+            <div class="mia-title-lockup">
+              <span class="mia-panel-mark" aria-hidden="true">M</span>
+              <div class="mia-title-copy">
+                <strong>Mia</strong>
+                <span>Help for this page</span>
+              </div>
             </div>
             <button class="mia-icon-button" type="button" data-close aria-label="Close Mia">&times;</button>
           </header>
@@ -135,7 +152,7 @@ export class MiaAssistantPanel {
     `;
 
     this.shadow.querySelector(".mia-launcher")?.addEventListener("click", () => this.togglePanel());
-    this.shadow.querySelector("[data-close]")?.addEventListener("click", () => this.closePanel());
+    this.shadow.querySelector("[data-close]")?.addEventListener("click", () => this.closePanel(true));
     this.shadow.querySelector(".mia-ask-form")?.addEventListener("submit", (event) => {
       event.preventDefault();
       const input = this.shadow.querySelector<HTMLInputElement>("#mia-ask-input");
@@ -183,17 +200,20 @@ export class MiaAssistantPanel {
     panel?.removeAttribute("hidden");
     this.shadow.querySelector(".mia-panel-root")?.setAttribute("data-open", "true");
     launcher?.setAttribute("aria-expanded", "true");
+    launcher?.setAttribute("aria-label", "Close Mia");
     this.renderSuggestions();
     window.setTimeout(() => this.shadow.querySelector<HTMLInputElement>("#mia-ask-input")?.focus({ preventScroll: true }), 0);
   }
 
-  private closePanel(): void {
+  private closePanel(restoreFocus = false): void {
     this.open = false;
     const panel = this.shadow.querySelector<HTMLElement>(".mia-panel");
     const launcher = this.shadow.querySelector<HTMLButtonElement>(".mia-launcher");
     panel?.setAttribute("hidden", "");
     this.shadow.querySelector(".mia-panel-root")?.setAttribute("data-open", "false");
     launcher?.setAttribute("aria-expanded", "false");
+    launcher?.setAttribute("aria-label", "Open Mia");
+    if (restoreFocus) launcher?.focus({ preventScroll: true });
   }
 
   private renderSuggestions(): void {
@@ -202,10 +222,12 @@ export class MiaAssistantPanel {
     if (!container) return;
     container.replaceChildren();
     for (const suggestion of suggestions) {
+      const label = suggestion.replace(/\s+/g, " ").trim();
+      if (!label) continue;
       const button = document.createElement("button");
       button.type = "button";
-      button.textContent = suggestion;
-      button.addEventListener("click", () => void this.runTask(() => this.options.onAsk(suggestion)));
+      button.textContent = label;
+      button.addEventListener("click", () => void this.runTask(() => this.options.onAsk(label)));
       container.append(button);
     }
   }
@@ -284,7 +306,7 @@ function friendlyErrorText(message: string): string {
 const styles = `
 :host {
   all: initial;
-  color-scheme: light dark;
+  color-scheme: dark;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
 }
 
@@ -292,97 +314,150 @@ const styles = `
   box-sizing: border-box;
 }
 
+button,
+input {
+  font-family: inherit;
+}
+
 .mia-panel-root {
-  /* Dark theme is the default; light hosts get the override below. */
-  --mia-surface: rgba(15, 23, 42, 0.94);
-  --mia-surface-2: rgba(30, 41, 59, 0.84);
-  --mia-inset: rgba(2, 6, 23, 0.32);
-  --mia-border: rgba(148, 163, 184, 0.28);
-  --mia-border-soft: rgba(148, 163, 184, 0.2);
-  --mia-text: #f8fafc;
-  --mia-text-2: #cbd5e1;
-  --mia-message-text: #dbeafe;
-  --mia-input-bg: rgba(15, 23, 42, 0.74);
-  --mia-placeholder: #94a3b8;
-  --mia-send-bg: #e2e8f0;
-  --mia-send-text: #0f172a;
-  --mia-message-bg: rgba(15, 23, 42, 0.58);
-  --mia-user-bg: rgba(78, 110, 242, 0.22);
-  --mia-system-bg: rgba(245, 158, 11, 0.14);
-  --mia-focus: #93c5fd;
-  --mia-accent: #4e6ef2;
+  --mia-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --mia-shell: rgba(14, 16, 24, 0.72);
+  --mia-shell-strong: rgba(11, 13, 20, 0.9);
+  --mia-glass: rgba(255, 255, 255, 0.1);
+  --mia-glass-strong: rgba(255, 255, 255, 0.16);
+  --mia-glass-soft: rgba(255, 255, 255, 0.065);
+  --mia-border: rgba(255, 255, 255, 0.2);
+  --mia-border-strong: rgba(174, 243, 226, 0.52);
+  --mia-text: #f9fbff;
+  --mia-text-2: #d9e0ed;
+  --mia-text-3: #aeb8c9;
+  --mia-message-text: #e6ecf7;
+  --mia-placeholder: #aeb8c9;
+  --mia-accent: #78f1d7;
+  --mia-accent-2: #6474ff;
+  --mia-accent-3: #c08cff;
   --mia-accent-text: #ffffff;
+  --mia-success: #70efbf;
+  --mia-warning: #ffd36a;
+  --mia-danger: #ff8aa5;
+  --mia-radius: 30px;
   position: fixed;
-  right: max(16px, env(safe-area-inset-right));
-  bottom: max(16px, env(safe-area-inset-bottom));
+  right: max(18px, env(safe-area-inset-right));
+  bottom: max(18px, env(safe-area-inset-bottom));
   z-index: 2147483645;
   color: var(--mia-text);
 }
 
-@media (prefers-color-scheme: light) {
-  .mia-panel-root {
-    --mia-surface: rgba(255, 255, 255, 0.98);
-    --mia-surface-2: #f1f5f9;
-    --mia-inset: #f8fafc;
-    --mia-border: rgba(15, 23, 42, 0.16);
-    --mia-border-soft: rgba(15, 23, 42, 0.1);
-    --mia-text: #0f172a;
-    --mia-text-2: #43536b;
-    --mia-message-text: #1e293b;
-    --mia-input-bg: #ffffff;
-    --mia-placeholder: #64748b;
-    --mia-send-bg: #0f172a;
-    --mia-send-text: #f8fafc;
-    --mia-message-bg: #f8fafc;
-    --mia-user-bg: rgba(58, 85, 224, 0.09);
-    --mia-system-bg: rgba(217, 119, 6, 0.1);
-    --mia-focus: #2563eb;
-    --mia-accent: #3a55e0;
-    --mia-accent-text: #ffffff;
-  }
-}
-
 .mia-launcher,
 .mia-panel {
+  position: relative;
   border: 1px solid var(--mia-border);
-  background: var(--mia-surface);
-  box-shadow: 0 18px 48px rgba(2, 6, 23, 0.22);
+  background:
+    linear-gradient(142deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.055) 38%, rgba(255, 255, 255, 0.12)),
+    linear-gradient(180deg, rgba(28, 30, 42, 0.8), rgba(10, 12, 19, 0.82));
+  backdrop-filter: blur(30px) saturate(1.65);
+  -webkit-backdrop-filter: blur(30px) saturate(1.65);
+  isolation: isolate;
+  box-shadow:
+    0 22px 70px rgba(0, 0, 0, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.mia-launcher::before,
+.mia-panel::before {
+  position: absolute;
+  inset: 1px;
+  border-radius: inherit;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.22), transparent 36%),
+    linear-gradient(315deg, rgba(120, 241, 215, 0.14), transparent 42%),
+    linear-gradient(35deg, transparent 46%, rgba(192, 140, 255, 0.1));
+  content: "";
+  pointer-events: none;
+  z-index: -1;
+}
+
+.mia-launcher::after,
+.mia-panel::after {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(112deg, transparent 0%, rgba(255, 255, 255, 0.2) 18%, transparent 38%);
+  content: "";
+  opacity: 0.4;
+  pointer-events: none;
+  transform: translateX(-42%);
+  transition: transform 360ms var(--mia-ease), opacity 180ms ease;
 }
 
 .mia-launcher {
   display: flex;
-  min-width: 172px;
-  min-height: 52px;
+  width: 170px;
+  min-height: 58px;
   align-items: center;
-  gap: 10px;
-  border-radius: 12px;
+  gap: 12px;
+  overflow: hidden;
+  border-radius: 22px;
   color: inherit;
-  padding: 8px 11px;
+  padding: 10px 12px;
   cursor: pointer;
-  transition: border-color 140ms ease, background-color 140ms ease;
+  transform-origin: 100% 100%;
+  transition:
+    width 520ms var(--mia-ease),
+    border-color 180ms ease,
+    border-radius 520ms var(--mia-ease),
+    transform 220ms var(--mia-ease),
+    box-shadow 220ms ease;
 }
 
 .mia-launcher:hover {
-  border-color: var(--mia-accent);
+  border-color: var(--mia-border-strong);
+  transform: translateY(-1px);
+  box-shadow:
+    0 24px 72px rgba(0, 0, 0, 0.34),
+    0 0 0 1px rgba(120, 241, 215, 0.11),
+    inset 0 1px 0 rgba(255, 255, 255, 0.24);
+}
+
+.mia-launcher:hover::after,
+.mia-panel-root[data-open="true"] .mia-launcher::after {
+  opacity: 0.68;
+  transform: translateX(28%);
+}
+
+.mia-panel-root[data-open="true"] .mia-launcher {
+  width: min(314px, calc(100vw - 36px));
+  border-color: rgba(255, 255, 255, 0.24);
+  border-radius: 24px;
+  background:
+    linear-gradient(142deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.07) 40%, rgba(255, 255, 255, 0.11)),
+    linear-gradient(180deg, rgba(29, 31, 43, 0.86), rgba(10, 12, 20, 0.88));
 }
 
 .mia-launcher:focus-visible,
 button:focus-visible,
 input:focus-visible {
-  outline: 2px solid var(--mia-focus);
+  outline: 2px solid rgba(147, 197, 253, 0.9);
   outline-offset: 2px;
 }
 
 .mia-mark {
   display: grid;
-  width: 32px;
-  height: 32px;
+  width: 38px;
+  height: 38px;
   flex: 0 0 auto;
   place-items: center;
-  border-radius: 9px;
-  background: var(--mia-accent);
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 14px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.44), transparent 30%),
+    linear-gradient(145deg, var(--mia-accent), var(--mia-accent-2) 62%, var(--mia-accent-3));
   color: var(--mia-accent-text);
-  font: 800 14px/1 system-ui, sans-serif;
+  font: 820 16px/1 system-ui, sans-serif;
+  box-shadow:
+    0 10px 24px rgba(100, 116, 255, 0.26),
+    inset 0 1px 0 rgba(255, 255, 255, 0.36);
 }
 
 .mia-launcher-copy {
@@ -394,48 +469,68 @@ input:focus-visible {
 }
 
 .mia-launcher-copy strong {
-  font: 700 13px/1.1 system-ui, sans-serif;
+  font: 770 15px/1.1 system-ui, sans-serif;
+  letter-spacing: 0;
 }
 
 .mia-launcher-copy span {
   color: var(--mia-text-2);
-  font: 500 12px/1.1 system-ui, sans-serif;
+  font: 650 12px/1.15 system-ui, sans-serif;
 }
 
 .mia-status-dot {
   width: 9px;
   height: 9px;
+  flex: 0 0 auto;
   border-radius: 999px;
   background: #94a3b8;
+  box-shadow:
+    0 0 0 5px rgba(255, 255, 255, 0.07),
+    0 0 18px currentColor;
 }
 
-.mia-status-dot.green { background: #34d399; }
-.mia-status-dot.yellow { background: #fbbf24; }
-.mia-status-dot.red { background: #fb7185; }
+.mia-status-dot.green { background: var(--mia-success); }
+.mia-status-dot.yellow { background: var(--mia-warning); }
+.mia-status-dot.red { background: var(--mia-danger); }
+.mia-status-dot.gray { background: #aeb8c9; }
 
 .mia-panel {
   position: absolute;
   right: 0;
-  bottom: 62px;
+  bottom: 76px;
   display: flex;
   flex-direction: column;
-  width: min(390px, calc(100vw - 32px));
-  max-height: min(680px, calc(100vh - 100px));
+  width: min(458px, calc(100vw - 36px));
+  max-height: min(680px, calc(100vh - 116px));
   gap: 12px;
-  overflow: hidden;
-  border-radius: 12px;
-  padding: 14px;
-  animation: mia-panel-in 170ms cubic-bezier(0.22, 1, 0.36, 1);
+  overflow: auto;
+  border-radius: var(--mia-radius);
+  padding: 18px;
+  transform-origin: calc(100% - 58px) calc(100% + 58px);
+  animation: mia-liquid-open 620ms var(--mia-ease);
+  scrollbar-color: rgba(217, 224, 237, 0.28) transparent;
+  scrollbar-width: thin;
 }
 
 .mia-panel[hidden] {
   display: none;
 }
 
-@keyframes mia-panel-in {
-  from {
+@keyframes mia-liquid-open {
+  0% {
     opacity: 0;
-    transform: translateY(6px);
+    transform: translateY(18px) scale(0.64, 0.28);
+    clip-path: inset(76% 4% 0 44% round 999px);
+  }
+  58% {
+    opacity: 1;
+    transform: translateY(-3px) scale(1.012, 1.012);
+    clip-path: inset(0 round 34px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    clip-path: inset(0 round var(--mia-radius));
   }
 }
 
@@ -464,6 +559,11 @@ input:focus-visible {
   .mia-suggestions button {
     transition: none;
   }
+
+  .mia-launcher::after,
+  .mia-panel::after {
+    transition: none;
+  }
 }
 
 .mia-panel-header,
@@ -472,20 +572,48 @@ input:focus-visible {
 .mia-input-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
 .mia-panel-header {
   justify-content: space-between;
+  min-height: 46px;
 }
 
-.mia-panel-header div {
+.mia-title-lockup {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+}
+
+.mia-panel-mark {
   display: grid;
-  gap: 2px;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 16px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.42), transparent 30%),
+    linear-gradient(145deg, var(--mia-accent), var(--mia-accent-2) 62%, var(--mia-accent-3));
+  box-shadow:
+    0 14px 34px rgba(100, 116, 255, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.36);
+  color: var(--mia-accent-text);
+  font: 840 17px/1 system-ui, sans-serif;
+}
+
+.mia-title-copy {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
 }
 
 .mia-panel-header strong {
-  font: 750 15px/1.2 system-ui, sans-serif;
+  font: 780 21px/1.08 system-ui, sans-serif;
+  letter-spacing: 0;
 }
 
 .mia-panel-header span,
@@ -493,77 +621,102 @@ input:focus-visible {
 .mia-thinking,
 .mia-empty {
   color: var(--mia-text-2);
-  font: 500 12px/1.4 system-ui, sans-serif;
+  font: 650 13px/1.42 system-ui, sans-serif;
 }
 
 .mia-icon-button {
-  width: 32px;
-  height: 32px;
-  border: 1px solid var(--mia-border);
-  border-radius: 8px;
-  background: var(--mia-surface-2);
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 16px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.055));
   color: var(--mia-text);
   cursor: pointer;
-  font: 700 18px/1 system-ui, sans-serif;
+  font: 780 25px/1 system-ui, sans-serif;
+  transition: background-color 180ms ease, border-color 180ms ease, transform 180ms var(--mia-ease);
+}
+
+.mia-icon-button:hover {
+  border-color: rgba(255, 255, 255, 0.32);
+  background: rgba(255, 255, 255, 0.16);
+  transform: translateY(-1px);
 }
 
 .mia-state-row {
   flex-wrap: wrap;
+  align-items: center;
 }
 
 .mia-status-pill,
 .mia-privacy-pill {
   display: inline-flex;
-  min-height: 24px;
+  min-height: 30px;
   align-items: center;
-  border: 1px solid rgba(148, 163, 184, 0.22);
-  border-radius: 7px;
-  padding: 3px 7px;
-  font: 700 12px/1.1 system-ui, sans-serif;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.075);
+  padding: 6px 10px;
+  font: 740 12px/1.1 system-ui, sans-serif;
 }
 
-.mia-status-pill.green { border-color: rgba(52, 211, 153, 0.35); background: rgba(16, 185, 129, 0.16); color: #86efac; }
-.mia-status-pill.yellow { border-color: rgba(251, 191, 36, 0.34); background: rgba(245, 158, 11, 0.16); color: #fde68a; }
-.mia-status-pill.red { border-color: rgba(251, 113, 133, 0.36); background: rgba(244, 63, 94, 0.16); color: #fecdd3; }
-.mia-status-pill.gray { background: rgba(51, 65, 85, 0.78); color: #cbd5e1; }
-
-@media (prefers-color-scheme: light) {
-  .mia-status-pill.green { border-color: rgba(22, 163, 74, 0.3); background: rgba(22, 163, 74, 0.1); color: #166534; }
-  .mia-status-pill.yellow { border-color: rgba(217, 119, 6, 0.3); background: rgba(217, 119, 6, 0.11); color: #92400e; }
-  .mia-status-pill.red { border-color: rgba(220, 38, 38, 0.3); background: rgba(220, 38, 38, 0.1); color: #991b1b; }
-  .mia-status-pill.gray { background: #e2e8f0; color: #334155; }
-}
+.mia-status-pill.green { border-color: rgba(112, 239, 191, 0.44); background: rgba(20, 184, 166, 0.18); color: #c7f9e5; }
+.mia-status-pill.yellow { border-color: rgba(255, 211, 106, 0.38); background: rgba(245, 158, 11, 0.16); color: #ffe8a6; }
+.mia-status-pill.red { border-color: rgba(255, 138, 165, 0.42); background: rgba(244, 63, 94, 0.17); color: #ffd1dc; }
+.mia-status-pill.gray { background: rgba(255, 255, 255, 0.08); color: var(--mia-text-2); }
 
 .mia-privacy-pill {
-  background: var(--mia-surface-2);
+  background: rgba(255, 255, 255, 0.07);
   color: var(--mia-text-2);
-  font-weight: 600;
+  font-weight: 650;
 }
 
 .mia-ask-form {
   display: grid;
-  gap: 7px;
+  gap: 10px;
+  margin-top: 2px;
 }
 
 .mia-ask-form label {
   color: var(--mia-text);
-  font: 700 12px/1.2 system-ui, sans-serif;
+  font: 760 15px/1.2 system-ui, sans-serif;
+  letter-spacing: 0;
 }
 
 .mia-input-row {
   align-items: stretch;
+  padding: 4px;
+  border: 1px solid rgba(174, 243, 226, 0.5);
+  border-radius: 22px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.02)),
+    rgba(8, 10, 16, 0.58);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    0 0 0 4px rgba(120, 241, 215, 0.07);
+  transition: border-color 180ms ease, background-color 180ms ease, box-shadow 180ms ease;
+}
+
+.mia-input-row:focus-within {
+  border-color: rgba(120, 241, 215, 0.82);
+  background: rgba(8, 10, 16, 0.68);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    0 0 0 5px rgba(120, 241, 215, 0.12);
 }
 
 .mia-input-row input {
   min-width: 0;
   flex: 1;
-  min-height: 42px;
-  border: 1px solid var(--mia-border);
-  border-radius: 9px;
-  background: var(--mia-input-bg);
+  min-height: 58px;
+  border: 0;
+  border-radius: 18px;
+  background: transparent;
   color: var(--mia-text);
-  padding: 0 10px;
-  font: 500 13px/1.2 system-ui, sans-serif;
+  padding: 0 14px;
+  font: 660 17px/1.2 system-ui, sans-serif;
+  outline: 0;
 }
 
 .mia-input-row input::placeholder {
@@ -573,36 +726,49 @@ input:focus-visible {
 .mia-send,
 .mia-control,
 .mia-suggestions button {
-  min-height: 42px;
-  border: 1px solid var(--mia-border);
-  border-radius: 9px;
-  background: var(--mia-send-bg);
-  color: var(--mia-send-text);
-  padding: 0 12px;
+  min-height: 46px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 16px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.105), rgba(255, 255, 255, 0.045));
+  color: var(--mia-text);
+  padding: 0 14px;
   cursor: pointer;
-  font: 750 13px/1 system-ui, sans-serif;
-  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+  font: 760 14px/1.12 system-ui, sans-serif;
+  transition: background-color 180ms ease, border-color 180ms ease, color 180ms ease, transform 180ms var(--mia-ease), box-shadow 180ms ease;
 }
 
 .mia-send {
-  border-color: var(--mia-accent);
-  background: var(--mia-accent);
+  min-width: 92px;
+  min-height: 58px;
+  border-color: rgba(255, 255, 255, 0.24);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.36), transparent 30%),
+    linear-gradient(145deg, var(--mia-accent), var(--mia-accent-2) 72%);
   color: var(--mia-accent-text);
+  padding: 0 20px;
+  box-shadow: 0 14px 30px rgba(100, 116, 255, 0.24);
 }
 
 .mia-control {
   flex: 1;
-  background: var(--mia-surface-2);
+  min-height: 54px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.05));
   color: var(--mia-text);
+  font-size: 15px;
 }
 
 .mia-send:hover:not(:disabled) {
-  filter: brightness(1.08);
+  transform: translateY(-1px);
+  box-shadow: 0 18px 38px rgba(100, 116, 255, 0.3);
 }
 
 .mia-control:hover:not(:disabled),
 .mia-suggestions button:hover:not(:disabled) {
-  border-color: var(--mia-accent);
+  border-color: rgba(174, 243, 226, 0.42);
+  background: rgba(255, 255, 255, 0.13);
+  transform: translateY(-1px);
 }
 
 button:disabled {
@@ -611,82 +777,148 @@ button:disabled {
 }
 
 .mia-suggestions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
 }
 
 .mia-suggestions button {
-  min-height: 32px;
+  display: flex;
+  min-height: 52px;
   max-width: 100%;
-  overflow: hidden;
-  background: var(--mia-surface-2);
+  align-items: center;
+  justify-content: center;
+  overflow-wrap: anywhere;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.095), rgba(255, 255, 255, 0.04));
   color: var(--mia-text);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  font-weight: 650;
+  line-height: 1.18;
+  text-align: center;
+  white-space: normal;
 }
 
 .mia-hotkey {
-  margin: -4px 0 0;
+  margin: -1px 0 0;
+  color: var(--mia-text-2);
+  text-align: center;
 }
 
 .mia-transcript {
   display: grid;
   align-content: start;
   flex: 1;
-  min-height: 120px;
-  gap: 8px;
+  min-height: 132px;
+  gap: 9px;
   overflow: auto;
-  border: 1px solid var(--mia-border-soft);
-  border-radius: 10px;
-  background: var(--mia-inset);
-  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 22px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.02)),
+    rgba(8, 10, 16, 0.44);
+  padding: 14px;
+  scrollbar-color: rgba(217, 224, 237, 0.28) transparent;
+  scrollbar-width: thin;
+}
+
+.mia-empty {
+  align-self: start;
+  color: var(--mia-text-2);
+  font: 760 16px/1.42 system-ui, sans-serif;
 }
 
 .mia-message {
   display: grid;
-  gap: 3px;
-  border: 1px solid var(--mia-border-soft);
-  border-radius: 9px;
-  background: var(--mia-message-bg);
-  padding: 8px 9px;
+  gap: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.07);
+  padding: 10px 12px;
 }
 
 .mia-message strong {
   color: var(--mia-text);
-  font: 750 12px/1.2 system-ui, sans-serif;
+  font: 770 12px/1.2 system-ui, sans-serif;
 }
 
 .mia-message span {
   color: var(--mia-message-text);
-  font: 500 13px/1.4 system-ui, sans-serif;
+  font: 570 13px/1.44 system-ui, sans-serif;
   white-space: pre-wrap;
 }
 
 .mia-message.user {
-  background: var(--mia-user-bg);
+  background: rgba(100, 116, 255, 0.14);
 }
 
 .mia-message.system {
-  background: var(--mia-system-bg);
+  background: rgba(255, 211, 106, 0.11);
+}
+
+.mia-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 @media (max-width: 520px) {
   .mia-panel-root {
     left: 12px;
     right: 12px;
+    bottom: max(12px, env(safe-area-inset-bottom));
   }
 
   .mia-launcher {
+    width: 170px;
     margin-left: auto;
+  }
+
+  .mia-panel-root[data-open="true"] .mia-launcher {
+    width: 100%;
   }
 
   .mia-panel {
     left: 0;
     right: 0;
     width: auto;
+    bottom: 76px;
+    max-height: min(666px, calc(100vh - 100px));
+    padding: 16px;
+    border-radius: 28px;
+  }
+}
+
+@media (max-width: 360px) {
+  .mia-input-row {
+    flex-wrap: wrap;
+  }
+
+  .mia-send {
+    flex: 1 1 100%;
+  }
+
+  .mia-suggestions,
+  .mia-controls {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-height: 720px) {
+  .mia-panel {
+    gap: 10px;
+    padding: 14px;
+  }
+
+  .mia-input-row input,
+  .mia-send {
+    min-height: 50px;
+  }
+
+  .mia-suggestions button,
+  .mia-control {
+    min-height: 46px;
+  }
+
+  .mia-transcript {
+    min-height: 96px;
   }
 }
 `;

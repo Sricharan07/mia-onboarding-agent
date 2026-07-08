@@ -67,7 +67,7 @@ export function MiaOnboardingAgent() {
   }, []);
 
   return (
-    <aside className="fixed right-4 bottom-24 z-40 hidden w-72 rounded-lg border bg-background/95 p-3 shadow-sm backdrop-blur md:block" data-mia-demo-proof>
+    <aside className="fixed right-4 bottom-24 z-40 hidden w-72 rounded-lg border bg-background/95 p-3 shadow-sm backdrop-blur md:block" data-mia-demo-proof data-mia-ignore>
       <div className="mb-2 flex items-center justify-between gap-2">
         <strong className="text-sm font-semibold">Try Mia</strong>
         <span className="rounded-md border px-2 py-1 text-xs text-muted-foreground">Live SDK</span>

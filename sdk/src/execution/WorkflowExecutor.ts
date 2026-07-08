@@ -3,6 +3,7 @@ import type { MiaShadowCursor } from "../cursor/MiaShadowCursor.js";
 import type { MiaPromptUI } from "../ui/MiaPromptUI.js";
 import type { Workflow, WorkflowStep } from "../types/index.js";
 import { prefersReducedMotion } from "../accessibility/motion.js";
+import { activateElement } from "./activateElement.js";
 import { findElement } from "./elementResolution.js";
 
 export class WorkflowExecutor {
@@ -195,7 +196,7 @@ export class WorkflowExecutor {
 
       if (step.type === "click") {
         this.options.cursor.setBubbleText(`Click ${step.target.label ?? step.target.elementId}`);
-        (element as HTMLElement).click();
+        activateElement(element as HTMLElement);
       }
       if (step.type === "focus") (element as HTMLElement).focus();
       if (step.type === "fill") {

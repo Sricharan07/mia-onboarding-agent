@@ -13,7 +13,9 @@ import { Repositories } from "./db/repositories.js";
 import { GeminiModelGatewayAdapter } from "./adapters/geminiModelGateway.js";
 import { GeminiVideoUnderstandingAdapter } from "./adapters/geminiVideoUnderstanding.js";
 import { LanceDbSemanticSearchAdapter } from "./adapters/lanceDbSemanticSearch.js";
+import { LiveKitVoiceTransportAdapter } from "./adapters/livekit.js";
 import { LocalFileStorageAdapter } from "./adapters/storage.js";
+import { QwenTextToSpeechAdapter } from "./adapters/tts.js";
 import { UiMapService } from "./services/ui-map/uiMapService.js";
 import { InteractiveUiMapScanService } from "./services/ui-map/interactiveScanService.js";
 import { WorkflowCompiler } from "./services/workflows/compiler.js";
@@ -82,13 +84,15 @@ function createDependencies(config: AppConfig) {
   const semanticSearch = new LanceDbSemanticSearchAdapter(config, logAiRequest);
   const videoUnderstanding = new GeminiVideoUnderstandingAdapter(config, gateway);
   const storage = new LocalFileStorageAdapter();
+  const tts = new QwenTextToSpeechAdapter(config);
+  const livekit = new LiveKitVoiceTransportAdapter(config);
   const compiler = new WorkflowCompiler(repositories, semanticSearch);
   const runtime = new RuntimeService(repositories, gateway, semanticSearch);
 
   return {
     config,
     repositories,
-    adapters: { gateway, semanticSearch, videoUnderstanding, storage },
+    adapters: { gateway, semanticSearch, videoUnderstanding, storage, tts, livekit },
     services: {
       uiMap: new UiMapService(config, repositories, semanticSearch),
       interactiveUiMap: new InteractiveUiMapScanService(config, repositories, semanticSearch),

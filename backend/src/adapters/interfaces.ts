@@ -73,3 +73,15 @@ export interface SemanticSearchAdapter {
 export interface FileStorageAdapter {
   saveBuffer(input: { buffer: Buffer; filename: string; directory: string }): Promise<{ path: string; sizeBytes: number }>;
 }
+
+export interface VoiceTransportAdapter {
+  createSession(input: { appId: string; sessionId: string; identity: string }): Promise<{ token: string; url: string }>;
+}
+
+export interface SpeechToTextAdapter {
+  transcribe(input: { audioPath?: string; audioBuffer?: Buffer; mimeType?: string }): Promise<{ text: string; confidence?: number }>;
+}
+
+export interface TextToSpeechAdapter {
+  synthesize(input: { text: string; voice?: string }): Promise<{ audioPath?: string; audioUrl?: string; mimeType: string }>;
+}

@@ -1,6 +1,7 @@
 import { BackendClient } from "./client/backendClient.js";
 import { collectRuntimeContext } from "./context/collectRuntimeContext.js";
 import { MiaShadowCursor } from "./cursor/MiaShadowCursor.js";
+import { activateElement } from "./execution/activateElement.js";
 import { findElement } from "./execution/elementResolution.js";
 import { WorkflowExecutor } from "./execution/WorkflowExecutor.js";
 import type { GeminiLiveEvent, MiaStatus, ResolveResponse, RuntimeElementContext, SDKConfig } from "./types/index.js";
@@ -336,7 +337,7 @@ class AIOnboardingAgentInstance {
     }
 
     if (result.action === "click") {
-      (element as HTMLElement).click();
+      activateElement(element as HTMLElement);
     } else {
       (element as HTMLElement).focus();
     }

@@ -46,6 +46,14 @@ export class BackendClient {
     });
   }
 
+  async getLiveKitToken(input: { sessionId: string; identity: string }): Promise<{ token: string; url: string }> {
+    return this.post("/api/v1/livekit/token", {
+      appId: this.config.appId,
+      sessionId: input.sessionId,
+      identity: input.identity
+    });
+  }
+
   private async post<T>(path: string, body: unknown): Promise<T> {
     return this.request<T>(path, { method: "POST", body });
   }

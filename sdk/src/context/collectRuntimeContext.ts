@@ -150,6 +150,7 @@ function isSdkOwnedElement(node: HTMLElement): boolean {
   return Boolean(node.closest([
     "[data-mia-prompt-ui='true']",
     "[data-mia-shadow-cursor='true']",
+    "[data-mia-ignore]",
     ".mia-root",
     ".mia-cursor",
     ".mia-bubble",

@@ -6,6 +6,7 @@ import { registerWorkflowRoutes } from "./workflows.js";
 import { registerRuntimeRoutes } from "./runtime.js";
 import { registerGeminiRoutes } from "./gemini.js";
 import { registerLogRoutes } from "./logs.js";
+import { registerVoiceRoutes } from "./voice.js";
 import { registerApiKeyHook } from "./auth.js";
 import { registerRateLimitHook } from "./rateLimit.js";
 import { registerApiKeyRoutes } from "./apiKeys.js";
@@ -35,5 +36,6 @@ export async function registerRoutes(app: FastifyInstance, dependencies: AppDepe
   await registerWorkflowRoutes(app, dependencies);
   await registerRuntimeRoutes(app, dependencies);
   await registerGeminiRoutes(app, dependencies);
+  await registerVoiceRoutes(app, dependencies);
   await registerLogRoutes(app, dependencies);
 }
