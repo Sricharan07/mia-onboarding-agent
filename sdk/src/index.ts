@@ -25,15 +25,15 @@ class AIOnboardingAgentInstance {
     settled: boolean;
   };
   private pendingWorkflowInputCleanup?: () => void;
-  private suppressNextAssistantResponse = false;
+  private capturedWorkflowInput?: { key: string; at: number };
   private removePushToTalkListeners?: () => void;
   private removeRuntimeContextTracking?: () => void;
   private pushToTalkHeld = false;
   private pushToTalkVoiceSession = false;
   private voiceStartPromise?: Promise<void>;
+  private voiceConnecting = false;
   private voiceStoppedLogged = false;
-  private manualAssistantResponseSuppressUntil = 0;
-  private recentRuntimeResolution?: { key: string; at: number };
+  private screenShareActive = false;
 
   init(config: SDKConfig): void {
     if (config.privacy?.telemetry?.mode === "full" && !config.privacy.telemetry.hasConsent) {
@@ -62,6 +62,8 @@ class AIOnboardingAgentInstance {
         onAsk: (text) => this.ask(text),
         onStartVoice: () => this.startVoice(),
         onStopVoice: () => this.stopVoice(),
+        onStartScreenShare: () => this.startScreenShare(),
+        onStopScreenShare: () => this.stopScreenShare(),
         onCancel: () => this.cancelCurrentActivity()
       });
       this.assistantPanel.mount();
@@ -87,9 +89,9 @@ class AIOnboardingAgentInstance {
     this.pushToTalkHeld = false;
     this.pushToTalkVoiceSession = false;
     this.voiceStartPromise = undefined;
+    this.voiceConnecting = false;
     this.voiceStoppedLogged = false;
-    this.manualAssistantResponseSuppressUntil = 0;
-    this.recentRuntimeResolution = undefined;
+    this.capturedWorkflowInput = undefined;
     this.pendingWorkflowInputCleanup?.();
     this.pendingWorkflowInputCleanup = undefined;
     if (this.pendingWorkflowInput && !this.pendingWorkflowInput.settled) {
@@ -97,7 +99,6 @@ class AIOnboardingAgentInstance {
       this.pendingWorkflowInput.reject(new Error("AIOnboardingAgent was destroyed."));
     }
     this.pendingWorkflowInput = undefined;
-    this.suppressNextAssistantResponse = false;
 
     const executor = this.activeExecutor;
     this.activeExecutor = undefined;
@@ -106,6 +107,7 @@ class AIOnboardingAgentInstance {
     const voice = this.voice;
     this.voice = undefined;
     void voice?.disconnect().catch((error) => activeConfig?.onError?.(toError(error)));
+    this.screenShareActive = false;
 
     this.promptUi?.destroy();
     this.promptUi = undefined;
@@ -125,7 +127,6 @@ class AIOnboardingAgentInstance {
     this.assistantPanel?.addTranscript({ role: "user", text });
     if (this.isVoiceConnected() && this.voice) {
       this.voice.sendText(text);
-      await this.resolveRuntimeUtterance(text, "voice_text");
       return;
     }
     this.setStatus("thinking");
@@ -143,26 +144,41 @@ class AIOnboardingAgentInstance {
     if (!this.config.enableVoice) {
       throw new Error("Voice is disabled. Set enableVoice=true to start a voice session.");
     }
+    if (this.voiceConnecting || this.voice.isConnected()) return;
+    this.voiceConnecting = true;
     const context = collectRuntimeContext(this.config, this.sessionId);
     this.pushToTalkVoiceSession = options.microphoneInitiallyEnabled === false;
     this.voiceStoppedLogged = false;
     this.setStatus("connecting");
     this.cursor.setState("connecting");
-    await this.voice.connect({
-      sessionId: this.sessionId,
-      context,
-      enableScreenShare: Boolean(this.config.enableScreenShare),
-      microphoneInitiallyEnabled: options.microphoneInitiallyEnabled,
-      voiceName: this.config.voice?.voiceName,
-      getContext: () => collectRuntimeContext(this.config!, this.sessionId),
-      redactScreenFrame: this.config.privacy?.redactScreenFrame,
-      onInputLevel: (level) => this.cursor?.setListeningLevel(level),
-      onStage: (stage) => this.cursor?.setBubbleText(stage),
-      onEvent: (event) => void this.handleVoiceEvent(event)
-    });
+    try {
+      await this.voice.connect({
+        sessionId: this.sessionId,
+        context,
+        microphoneInitiallyEnabled: options.microphoneInitiallyEnabled,
+        voiceName: this.config.voice?.voiceName,
+        getContext: () => collectRuntimeContext(this.config!, this.sessionId),
+        resolveRequest: (utterance) => this.resolveVoiceToolRequest(utterance),
+        redactScreenFrame: this.config.privacy?.redactScreenFrame,
+        onInputLevel: (level) => this.cursor?.setListeningLevel(level),
+        onStage: (stage) => this.cursor?.setBubbleText(stage),
+        onScreenShareChange: (active) => this.handleScreenShareChange(active),
+        onEvent: (event) => this.dispatchVoiceEvent(event)
+      });
+    } catch (error) {
+      this.pushToTalkHeld = false;
+      this.pushToTalkVoiceSession = false;
+      if (error instanceof Error && error.message === "Mia voice connection was stopped.") return;
+      this.setStatus("error");
+      this.cursor.setState("error");
+      throw error;
+    } finally {
+      this.voiceConnecting = false;
+    }
+    this.assistantPanel?.setVoiceActive(true);
     this.logExecutionEvent("voice_started", {
       mode: this.pushToTalkVoiceSession ? "push_to_talk" : "open_mic",
-      screenShareEnabled: Boolean(this.config.enableScreenShare)
+      screenShareEnabled: this.voice.isScreenSharing()
     });
     if (this.pushToTalkVoiceSession && !this.pushToTalkHeld) {
       this.showPushToTalkHint();
@@ -174,12 +190,27 @@ class AIOnboardingAgentInstance {
     this.pushToTalkVoiceSession = false;
     this.voiceStartPromise = undefined;
     await this.voice?.disconnect();
+    this.assistantPanel?.setVoiceActive(false);
+    this.assistantPanel?.setScreenShareActive(false);
     this.logVoiceStopped("requested");
     this.setStatus("ended");
     this.cursor?.setState("offline");
-    this.cursor?.setBubbleText("Voice stopped");
-    this.assistantPanel?.addTranscript({ role: "system", text: "Voice stopped. You can retry voice or keep using text." });
+    this.cursor?.setBubbleText("Voice off");
+    this.assistantPanel?.addTranscript({ role: "system", text: "Voice is off. Start it again anytime, or keep using text." });
     this.cursor?.startBubbleFade();
+  }
+
+  async startScreenShare(): Promise<void> {
+    if (!this.config?.enableScreenShare || !this.voice) {
+      throw new Error("Screen sharing is not enabled for this Mia installation.");
+    }
+    if (!this.voice.isConnected()) await this.startVoice();
+    await this.voice.startScreenShare();
+  }
+
+  stopScreenShare(): void {
+    if (!this.voice?.isScreenSharing()) return;
+    this.voice.stopScreenShare();
   }
 
   async connectVoice(): Promise<void> {
@@ -246,10 +277,14 @@ class AIOnboardingAgentInstance {
         this.resolvePendingWorkflowInput(event.text);
         return;
       }
+      const transcriptKey = normalizeRuntimeUtterance(event.text);
+      if (this.capturedWorkflowInput?.key === transcriptKey && Date.now() - this.capturedWorkflowInput.at < 5000) {
+        this.capturedWorkflowInput = undefined;
+        return;
+      }
       this.cursor.setBubbleText(`You: ${event.text}`);
       this.assistantPanel?.addTranscript({ role: "user", text: event.text });
       this.config?.onTranscript?.({ role: "user", text: event.text });
-      void this.resolveRuntimeUtterance(event.text, "voice_transcript");
       return;
     }
     if (event.type === "transcript_assistant") {
@@ -257,18 +292,20 @@ class AIOnboardingAgentInstance {
       this.cursor.setState("speaking");
       if (event.isFinal) this.logExecutionEvent("voice_transcript_assistant", { text: event.text });
       if (event.isFinal) this.assistantPanel?.addTranscript({ role: "assistant", text: event.text });
-      this.config?.onTranscript?.({ role: "assistant", text: event.text });
+      if (event.isFinal) this.config?.onTranscript?.({ role: "assistant", text: event.text });
       return;
     }
     if (event.type === "assistant_response") {
-      if (this.suppressNextAssistantResponse) {
-        this.suppressNextAssistantResponse = false;
-        return;
-      }
-      if (Date.now() < this.manualAssistantResponseSuppressUntil) return;
-      this.config?.onTranscript?.({ role: "assistant", text: event.message });
       this.logExecutionEvent("voice_resolution", resolveLogPayload(event.result));
       await this.handleResolveResult(event.result);
+      return;
+    }
+    if (event.type === "tool_cancelled") {
+      if (this.activeExecutor) await this.activeExecutor.cancel();
+      else this.promptUi?.cancel();
+      this.cursor.cancelNavigation();
+      this.cursor.setBubbleText("Stopped");
+      this.setStatus(this.isVoiceConnected() ? "listening" : "idle");
       return;
     }
     if (event.type === "error") {
@@ -287,12 +324,35 @@ class AIOnboardingAgentInstance {
       this.pushToTalkVoiceSession = false;
       this.voiceStartPromise = undefined;
       this.logVoiceStopped("ended");
-      this.setStatus("ended");
+      this.assistantPanel?.setVoiceActive(false);
+      this.assistantPanel?.setScreenShareActive(false);
+      this.setStatus(event.reason === "connection_lost" ? "error" : "ended");
       this.cursor.setState("offline");
-      this.cursor.setBubbleText("Voice stopped");
-      this.assistantPanel?.addTranscript({ role: "system", text: "Voice stopped. You can retry voice or keep using text." });
+      this.cursor.setBubbleText(event.reason === "connection_lost" ? "Voice disconnected" : "Voice off");
+      this.assistantPanel?.addTranscript({
+        role: "system",
+        text: event.reason === "connection_lost"
+          ? "Voice disconnected after retrying. Text help is still available."
+          : "Voice is off. Start it again anytime, or keep using text."
+      });
       this.cursor.startBubbleFade();
     }
+  }
+
+  private dispatchVoiceEvent(event: GeminiLiveEvent): void {
+    void this.handleVoiceEvent(event).catch((error) => {
+      const handled = toError(error);
+      if (/cancelled|canceled|stopped/i.test(handled.message)) {
+        this.setStatus(this.isVoiceConnected() ? "listening" : "idle");
+        return;
+      }
+      this.logExecutionEvent("voice_error", { message: handled.message, source: "event_handler" });
+      this.cursor?.setState("error");
+      this.cursor?.setBubbleText(handled.message);
+      this.assistantPanel?.setError(handled.message);
+      this.config?.onError?.(handled);
+      this.setStatus("error");
+    });
   }
 
   private async handleControlResult(result: Extract<ResolveResponse, { type: "control" }>): Promise<void> {
@@ -392,39 +452,33 @@ class AIOnboardingAgentInstance {
     this.logExecutionEvent("voice_stopped", { reason });
   }
 
-  private async resolveRuntimeUtterance(text: string, source: "voice_transcript" | "voice_text"): Promise<void> {
-    if (!this.config || !this.backendClient || !this.cursor) return;
+  private handleScreenShareChange(active: boolean): void {
+    this.assistantPanel?.setScreenShareActive(active);
+    if (this.screenShareActive === active) return;
+    this.screenShareActive = active;
+    this.logExecutionEvent(active ? "screen_share_started" : "screen_share_stopped", {});
+  }
+
+  private async resolveVoiceToolRequest(text: string): Promise<ResolveResponse | undefined> {
+    if (!this.config || !this.backendClient) return undefined;
     const utterance = text.trim();
-    if (!utterance) return;
+    if (!utterance) return undefined;
 
     const key = normalizeRuntimeUtterance(utterance);
-    const now = Date.now();
-    if (this.recentRuntimeResolution?.key === key && now - this.recentRuntimeResolution.at < 4000) return;
-    this.recentRuntimeResolution = { key, at: now };
-    this.manualAssistantResponseSuppressUntil = now + 5000;
-
-    this.setStatus("thinking");
-    this.cursor.setState("thinking");
-    this.cursor.setBubbleText("Thinking...");
-
-    try {
-      const result = await this.backendClient.resolve({
-        sessionId: this.sessionId,
-        utterance,
-        context: collectRuntimeContext(this.config, this.sessionId)
-      });
-      this.logExecutionEvent("voice_resolution", { ...resolveLogPayload(result), source });
-      await this.handleResolveResult(result);
-    } catch (error) {
-      const handled = toError(error);
-      this.cursor.setState("error");
-      this.cursor.setBubbleText(handled.message);
-      this.assistantPanel?.setError(handled.message);
-      this.promptUi?.showError(handled.message);
-      this.config?.onError?.(handled);
-      this.setStatus("error");
-      this.logExecutionEvent("voice_error", { message: handled.message, source });
+    if (this.pendingWorkflowInput) {
+      this.resolvePendingWorkflowInput(utterance);
+      return undefined;
     }
+    if (this.capturedWorkflowInput?.key === key && Date.now() - this.capturedWorkflowInput.at < 5000) {
+      this.capturedWorkflowInput = undefined;
+      return undefined;
+    }
+    this.capturedWorkflowInput = undefined;
+    return this.backendClient.resolve({
+      sessionId: this.sessionId,
+      utterance,
+      context: collectRuntimeContext(this.config, this.sessionId)
+    });
   }
 
   private async requestWorkflowInput(input: { prompt: string; inputType?: string; choices?: string[]; signal?: AbortSignal }): Promise<string> {
@@ -442,7 +496,6 @@ class AIOnboardingAgentInstance {
 
     this.cursor.setState("listening");
     this.cursor.setBubbleText(input.prompt);
-    this.promptUi.showListening(input.prompt);
     const inputPromise = new Promise<string>((resolve, reject) => {
       const abort = () => {
         this.pendingWorkflowInput = undefined;
@@ -462,6 +515,7 @@ class AIOnboardingAgentInstance {
       };
       this.pendingWorkflowInputCleanup = () => input.signal?.removeEventListener("abort", abort);
     });
+    this.promptUi.showListening(input.prompt, () => this.cancelPendingWorkflowInput());
 
     try {
       return await inputPromise;
@@ -480,11 +534,19 @@ class AIOnboardingAgentInstance {
     if (!value) return;
     pending.settled = true;
     this.pendingWorkflowInput = undefined;
-    this.suppressNextAssistantResponse = true;
+    this.capturedWorkflowInput = { key: normalizeRuntimeUtterance(value), at: Date.now() };
     this.cursor?.setBubbleText(`Got it: ${value}`);
     this.assistantPanel?.addTranscript({ role: "user", text: value });
     this.config?.onTranscript?.({ role: "user", text: value });
     pending.resolve(value);
+  }
+
+  private cancelPendingWorkflowInput(): void {
+    const pending = this.pendingWorkflowInput;
+    if (!pending || pending.settled) return;
+    pending.settled = true;
+    this.pendingWorkflowInput = undefined;
+    pending.reject(new Error("User cancelled voice input."));
   }
 
   private installPushToTalk(): void {
@@ -492,11 +554,19 @@ class AIOnboardingAgentInstance {
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (!isPushToTalkKey(event)) return;
+      if (event.isComposing || event.defaultPrevented) return;
       event.preventDefault();
       if (event.repeat) return;
+      if (this.voiceConnecting) return;
       if (this.voice?.isConnected() && !this.pushToTalkVoiceSession) return;
       this.pushToTalkHeld = true;
-      void this.startPushToTalk().catch((error) => this.config?.onError?.(toError(error)));
+      void this.startPushToTalk().catch((error) => {
+        const handled = toError(error);
+        this.pushToTalkHeld = false;
+        this.voice?.setMicrophoneEnabled(false);
+        this.assistantPanel?.setError(handled.message);
+        this.config?.onError?.(handled);
+      });
     };
 
     const handleKeyUp = (event: KeyboardEvent) => {
@@ -505,11 +575,20 @@ class AIOnboardingAgentInstance {
       this.endPushToTalk();
     };
 
+    const handleWindowBlur = () => this.endPushToTalk();
+    const handleVisibilityChange = () => {
+      if (document.hidden) this.endPushToTalk();
+    };
+
     document.addEventListener("keydown", handleKeyDown);
     document.addEventListener("keyup", handleKeyUp);
+    window.addEventListener("blur", handleWindowBlur);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     this.removePushToTalkListeners = () => {
       document.removeEventListener("keydown", handleKeyDown);
       document.removeEventListener("keyup", handleKeyUp);
+      window.removeEventListener("blur", handleWindowBlur);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }
 
@@ -565,7 +644,7 @@ class AIOnboardingAgentInstance {
       this.setStatus(this.isVoiceConnected() ? "listening" : "idle");
       return;
     }
-    if (this.isVoiceConnected()) {
+    if (this.voiceConnecting || this.isVoiceConnected()) {
       await this.stopVoice();
       return;
     }
@@ -577,7 +656,7 @@ class AIOnboardingAgentInstance {
   }
 
   private recordAssistantResult(result: ResolveResponse): void {
-    if (this.isVoiceConnected() && result.type === "answer") return;
+    if (this.isVoiceConnected()) return;
     const target = "target" in result && result.target ? ` Target: ${targetLabel(result.target)}.` : "";
     const action = result.type === "element_action" ? ` Action: ${result.action}.` : "";
     this.assistantPanel?.addTranscript({ role: "assistant", text: `${result.message}${target}${action}` });

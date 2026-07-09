@@ -53,7 +53,7 @@ AIOnboardingAgent.init({
     assistantPanel: true
   },
   voice: {
-    voiceName: "Aoede"
+    voiceName: "Kore"
   },
   user: {
     id: "user_123",
@@ -133,17 +133,21 @@ Voice mode requires:
 ```ts
 await AIOnboardingAgent.startVoice();
 await AIOnboardingAgent.stopVoice();
+
+// Optional and always user-initiated. Requires enableScreenShare: true.
+await AIOnboardingAgent.startScreenShare();
+AIOnboardingAgent.stopScreenShare();
 ```
 
 The backend mints short-lived Gemini Live tokens. The SDK does not need direct provider credentials.
 
 Apps configured as Q&A-only are restricted by the backend to answers and pointing. They cannot return workflows or element actions even if a client asks for a click.
 
-When `enableVoice` is true, the SDK also registers push-to-talk: hold `Control+Space` to start a voice session and stream microphone audio, then release either key to pause microphone streaming. Calling `startVoice()` directly still starts a normal open-mic voice session.
+When `enableVoice` is true, the SDK also registers push-to-talk: hold `Control+Space` to start a voice session and stream microphone audio, then release either key to disable the microphone track and end the audio turn. The same release happens if the window loses focus or the page becomes hidden. Calling `startVoice()` directly still starts a normal open-mic voice session. Voice sessions use context compression and session resumption so provider connection refreshes do not appear as a terminal "voice ended" state.
 
-Mia uses Gemini Live voice `Aoede` by default. Override `voice.voiceName` only after testing the replacement voice in Google AI Studio.
+Mia uses Gemini Live voice `Kore` by default. Override `voice.voiceName` only after testing the replacement voice in Google AI Studio.
 
-Mia is DOM-first. Runtime pointing, click/focus actions, workflow execution, and screen-aware answers reconcile the reviewed UI map with the current DOM through structured CSS, role/name, label, and exact-text locators. Bounding boxes position the visible cursor but are never used to choose an element for execution. Direct element actions always ask for confirmation. Workflow and direct actions run uniqueness, visibility, enabled-state, route, and obstruction checks, then report completion only when the page exposes a verifiable result. Set `enableScreenShare: true` only when Mia must understand visual content the DOM cannot describe well, such as canvas charts, images, videos, PDFs, or custom-rendered surfaces. The browser asks the user before any screen frames are streamed.
+Mia is DOM-first. Runtime pointing, click/focus actions, workflow execution, and screen-aware answers reconcile the reviewed UI map with the current DOM through structured CSS, role/name, label, and exact-text locators. Bounding boxes position the visible cursor but are never used to choose an element for execution. Direct element actions always ask for confirmation. Workflow and direct actions run uniqueness, visibility, enabled-state, route, and obstruction checks, then report completion only when the page exposes a verifiable result. Set `enableScreenShare: true` only when Mia must understand visual content the DOM cannot describe well, such as canvas charts, images, videos, PDFs, or custom-rendered surfaces. The flag adds a **Share screen** control; it never requests screen access during voice startup. The browser picker opens only after that explicit user action or an explicit `startScreenShare()` call.
 
 Screen sharing also requires `privacy.redactScreenFrame` or an explicit `privacy.allowUnredactedScreenShare: true` decision. Enabling the feature flag alone is not consent to stream an unredacted screen.
 

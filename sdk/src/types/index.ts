@@ -144,9 +144,9 @@ export type GeminiLiveEvent =
   | { type: "transcript_user"; text: string; isFinal: true }
   | { type: "transcript_assistant"; text: string; isFinal: boolean }
   | { type: "assistant_response"; message: string; result: ResolveResponse }
-  | { type: "workflow_resolved"; result: Extract<ResolveResponse, { type: "workflow" }> }
+  | { type: "tool_cancelled" }
   | { type: "error"; message: string; code?: string }
-  | { type: "ended"; status: VoiceSessionStatus };
+  | { type: "ended"; status: VoiceSessionStatus; reason?: "connection_lost" };
 
 export type SDKEvent =
   | { type: "session_started"; sessionId: string }

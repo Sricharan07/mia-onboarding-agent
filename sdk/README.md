@@ -37,7 +37,7 @@ AIOnboardingAgent.init({
     assistantPanel: true
   },
   voice: {
-    voiceName: "Aoede"
+    voiceName: "Kore"
   },
   user: {
     id: "user_123",
@@ -102,11 +102,11 @@ await AIOnboardingAgent.startVoice();
 await AIOnboardingAgent.stopVoice();
 ```
 
-With `enableVoice: true`, users can also hold `Control+Space` for push-to-talk. Releasing either key pauses microphone streaming.
+With `enableVoice: true`, users can also hold `Control+Space` for push-to-talk. Releasing either key, switching tabs, or moving away from the window disables the microphone track and ends that audio turn. Gemini Live sessions use context compression and automatically resume across provider connection refreshes.
 
-Mia uses Gemini Live voice `Aoede` by default. Override `voice.voiceName` only after testing the replacement voice in Google AI Studio.
+Mia uses Gemini Live voice `Kore` by default. Override `voice.voiceName` only after testing the replacement voice in Google AI Studio.
 
-Mia is DOM-first. UI maps and live runtime context use structured CSS, role/name, label, and exact-text locators. Element bounding boxes are used only to position Mia's cursor, never as an action target. Direct click/focus requests always require confirmation, and the SDK reports completion only after it verifies a URL, control state, value, or relevant DOM change. Set `enableScreenShare: true` only for visual content the DOM cannot describe well, such as canvas charts, images, videos, PDFs, or custom-rendered surfaces.
+Mia is DOM-first. UI maps and live runtime context use structured CSS, role/name, label, and exact-text locators. Element bounding boxes are used only to position Mia's cursor, never as an action target. Direct click/focus requests always require confirmation, and the SDK reports completion only after it verifies a URL, control state, value, or relevant DOM change. Set `enableScreenShare: true` only for visual content the DOM cannot describe well, such as canvas charts, images, videos, PDFs, or custom-rendered surfaces. This enables a **Share screen** control but never opens the browser picker automatically. You can also call `startScreenShare()` and `stopScreenShare()` explicitly after voice starts.
 
 URL query strings, page titles, user metadata, and telemetry payloads are omitted by default. Workflow values remain in memory only, and Mia never collects secret or payment fields. Screen sharing requires a redaction callback or an explicit unredacted-screen decision.
 

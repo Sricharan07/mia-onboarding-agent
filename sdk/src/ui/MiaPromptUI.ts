@@ -138,14 +138,33 @@ export class MiaPromptUI {
 
   showError(message: string): void {
     this.open(message, "Mia needs attention");
+    const dismiss = document.createElement("button");
+    dismiss.type = "button";
+    dismiss.textContent = "Dismiss";
+    dismiss.style.cssText = `${buttonCss("#2563eb")};display:block;margin:14px 0 0 auto`;
+    const close = () => this.clear();
+    dismiss.onclick = close;
+    this.cancelCurrent = close;
+    this.body.append(dismiss);
+    dismiss.focus();
   }
 
-  showListening(message: string): void {
+  showListening(message: string, cancel: () => void): void {
     this.open(message, "Mia is listening");
     const hint = document.createElement("div");
     hint.textContent = "Speak your answer now.";
     hint.style.cssText = `margin-top:10px;color:${this.lightTheme ? "#1d4ed8" : "#93c5fd"};font:700 13px/1.35 system-ui,sans-serif`;
-    this.body.append(hint);
+    const cancelButton = document.createElement("button");
+    cancelButton.type = "button";
+    cancelButton.textContent = "Cancel";
+    cancelButton.style.cssText = `${buttonCss("#475569")};display:block;margin:14px 0 0 auto`;
+    const cancelListening = () => {
+      cancel();
+      this.clear();
+    };
+    cancelButton.onclick = cancelListening;
+    this.cancelCurrent = cancelListening;
+    this.body.append(hint, cancelButton);
   }
 
   clear(): void {
@@ -156,6 +175,10 @@ export class MiaPromptUI {
     const previousFocus = this.previousFocus;
     this.previousFocus = undefined;
     if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
+  }
+
+  cancel(): void {
+    this.cancelCurrent?.();
   }
 
   destroy(): void {

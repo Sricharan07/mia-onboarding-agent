@@ -14,6 +14,8 @@ type MiaAssistantPanelOptions = {
   onAsk: (text: string) => Promise<void>;
   onStartVoice: () => Promise<void>;
   onStopVoice: () => Promise<void>;
+  onStartScreenShare: () => Promise<void>;
+  onStopScreenShare: () => void;
   onCancel: () => Promise<void>;
 };
 
@@ -27,7 +29,7 @@ const STATUS_LABELS: Record<MiaStatus, string> = {
   fading: "Ready",
   offline: "Offline",
   error: "Needs attention",
-  ended: "Voice stopped"
+  ended: "Voice off"
 };
 
 const STATUS_TONES: Record<MiaStatus, "green" | "yellow" | "red" | "gray"> = {
@@ -49,6 +51,8 @@ export class MiaAssistantPanel {
   private status: MiaStatus = "idle";
   private open = false;
   private busy = false;
+  private voiceActive = false;
+  private screenShareActive = false;
   private entries: MiaTranscriptEntry[] = [];
   private readonly handleDocumentPointerDown = (event: PointerEvent): void => {
     if (!this.open) return;
@@ -80,6 +84,18 @@ export class MiaAssistantPanel {
   setStatus(status: MiaStatus): void {
     this.status = status;
     this.updateStatus();
+    this.updateControls();
+  }
+
+  setVoiceActive(active: boolean): void {
+    this.voiceActive = active;
+    this.updateControls();
+  }
+
+  setScreenShareActive(active: boolean): void {
+    this.screenShareActive = active;
+    const state = this.shadow.querySelector<HTMLElement>("[data-screen-state]");
+    if (state) state.textContent = active ? "Screen sharing on" : "Screen not shared";
     this.updateControls();
   }
 
@@ -124,7 +140,7 @@ export class MiaAssistantPanel {
           <div class="mia-state-row">
             <span class="mia-status-pill ${STATUS_TONES[this.status]}" data-status-pill>${STATUS_LABELS[this.status]}</span>
             <span class="mia-privacy-pill">${this.options.textRedacted ? "Page text hidden from Mia" : "Mia can see this page"}</span>
-            ${this.options.enableScreenShare ? `<span class="mia-privacy-pill">Screen share off by default</span>` : ""}
+            ${this.options.enableScreenShare ? `<span class="mia-privacy-pill" data-screen-state>${this.screenShareActive ? "Screen sharing on" : "Screen not shared"}</span>` : ""}
           </div>
 
           <form class="mia-ask-form">
@@ -139,6 +155,7 @@ export class MiaAssistantPanel {
 
           <div class="mia-controls">
             ${this.options.enableVoice ? `<button class="mia-control" type="button" data-voice>${this.isVoiceActive() ? "Stop voice" : "Start voice"}</button>` : ""}
+            ${this.options.enableScreenShare ? `<button class="mia-control" type="button" data-screen aria-pressed="${this.screenShareActive}">${this.screenShareActive ? "Stop sharing" : "Share screen"}</button>` : ""}
             <button class="mia-control" type="button" data-cancel>Stop Mia</button>
           </div>
 
@@ -163,6 +180,12 @@ export class MiaAssistantPanel {
     });
     this.shadow.querySelector("[data-voice]")?.addEventListener("click", () => {
       void this.runTask(() => this.isVoiceActive() ? this.options.onStopVoice() : this.options.onStartVoice());
+    });
+    this.shadow.querySelector("[data-screen]")?.addEventListener("click", () => {
+      void this.runTask(async () => {
+        if (this.screenShareActive) this.options.onStopScreenShare();
+        else await this.options.onStartScreenShare();
+      });
     });
     // Stop must work while Mia is busy, so it bypasses the busy gate that guards other tasks.
     this.shadow.querySelector("[data-cancel]")?.addEventListener("click", () => {
@@ -271,18 +294,24 @@ export class MiaAssistantPanel {
 
   private updateControls(): void {
     const voice = this.shadow.querySelector<HTMLButtonElement>("[data-voice]");
+    const screen = this.shadow.querySelector<HTMLButtonElement>("[data-screen]");
     const send = this.shadow.querySelector<HTMLButtonElement>(".mia-send");
     const thinking = this.shadow.querySelector<HTMLElement>(".mia-thinking");
     if (voice) {
       voice.textContent = this.isVoiceActive() ? "Stop voice" : "Start voice";
       voice.disabled = this.busy || !this.options.enableVoice;
     }
+    if (screen) {
+      screen.textContent = this.screenShareActive ? "Stop sharing" : "Share screen";
+      screen.setAttribute("aria-pressed", String(this.screenShareActive));
+      screen.disabled = this.busy || !this.options.enableScreenShare;
+    }
     if (send) send.disabled = this.busy;
     if (thinking) thinking.hidden = !this.busy;
   }
 
   private isVoiceActive(): boolean {
-    return ["connecting", "listening", "thinking", "speaking", "guiding"].includes(this.status);
+    return this.voiceActive;
   }
 }
 
@@ -293,6 +322,9 @@ function friendlyErrorText(message: string): string {
   }
   if (lower.includes("401") || lower.includes("403") || lower.includes("unauthorized") || lower.includes("forbidden")) {
     return "Mia isn't available right now. Please let your team know if this keeps happening.";
+  }
+  if (lower.includes("screen sharing") || lower.includes("display media")) {
+    return "Screen sharing was not started. Choose Share screen when you want to try again.";
   }
   if (lower.includes("microphone") || lower.includes("notallowederror") || lower.includes("permission denied")) {
     return "Mia can't use your microphone. Allow microphone access in your browser to use voice.";
