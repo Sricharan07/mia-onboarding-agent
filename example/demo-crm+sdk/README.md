@@ -12,7 +12,7 @@ npm run dev:backend
 npm --prefix example/demo-crm+sdk run dev
 ```
 
-Before runtime requests can succeed, create an app and server integration key in the Mia Console. Put the app ID and integration key in `.env.local`. The integration key stays in the Next.js server route; the browser receives only short-lived runtime tokens.
+Before runtime requests can succeed, create an app and server integration key in the Mia Console. Put the app ID and integration key in `.env.local`, and set `MIA_DEMO_ORIGIN` to the exact browser origin serving the demo. The integration key stays in the Next.js server route; the browser receives only short-lived runtime tokens.
 
 This demo intentionally mints tokens for one fixed, low-privilege identity and disables runtime DOM text redaction because every record is sample data. It is not an authentication example. A real host backend must derive the runtime-token user ID from its verified server session, authorize access to Mia, and keep runtime text redaction enabled unless its data handling has been reviewed.
 
