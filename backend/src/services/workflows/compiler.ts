@@ -18,6 +18,7 @@ export class WorkflowCompiler {
     requestedDescription?: string;
   }): Promise<Workflow> {
     const steps: WorkflowStep[] = [];
+    const uiMapVersionId = this.repositories.getLatestCompletedUiMapVersion(input.appId)?.id;
     const workflowName = input.requestedName ?? input.timeline.goal;
     const workflowDescription = input.requestedDescription ?? input.timeline.summary ?? `Guides the user through ${input.timeline.goal}.`;
 
@@ -44,7 +45,7 @@ export class WorkflowCompiler {
         startingRoutes: Array.from(new Set(input.timeline.steps.map((step) => step.route).filter(Boolean) as string[]))
       },
       steps,
-      createdFrom: { videoId: input.videoId, jobId: input.jobId },
+      createdFrom: { videoId: input.videoId, jobId: input.jobId, uiMapVersionId },
       review: {},
       createdAt: now,
       updatedAt: now
@@ -57,26 +58,26 @@ export class WorkflowCompiler {
     }
 
     if (step.action === "wait") {
-      const target = await this.matchTarget(appId, step);
-      if (!target) return [createReviewStep(step, `I could not match "${step.observedElement ?? "wait target"}" automatically. Please review this step before publishing.`)];
-      return [{ id: createId("step"), type: "wait_for_element", target, timeoutMs: 10000 }];
+      const match = await this.matchTarget(appId, step);
+      if (!match) return [createReviewStep(step, `I could not match "${step.observedElement ?? "wait target"}" automatically. Resolve or remove this step before publishing.`)];
+      return [{
+        id: createId("step"),
+        type: "wait_for_element",
+        target: match.target,
+        timeoutMs: 10000,
+        source: sourceMetadata(step, match.matchConfidence)
+      }];
     }
 
     if (!["click", "focus", "fill", "select"].includes(step.action)) {
       return [createReviewStep(step, `I could not convert the recorded "${step.action}" action automatically. Please review this step before publishing.`)];
     }
 
-    const target = await this.matchTarget(appId, step);
-    if (!target) {
-      return [{
-        id: createId("step"),
-        type: "confirm",
-        message: `I could not match "${step.observedElement ?? step.action}" automatically. Please review this step before publishing.`,
-        source: { extractedStepId: step.id, matchConfidence: 0 }
-      }];
-    }
+    const match = await this.matchTarget(appId, step);
+    if (!match) return [createReviewStep(step, `I could not match "${step.observedElement ?? step.action}" automatically. Resolve or remove this step before publishing.`)];
+    const target = match.target;
 
-    const source = { extractedStepId: step.id, matchConfidence: step.confidence };
+    const source = sourceMetadata(step, match.matchConfidence);
     const executionPolicy = isDangerousAction(step, target) ? "requires_confirmation" : "auto";
     if (step.action === "click") return [{ id: createId("step"), type: "click", target, executionPolicy, source }];
     if (step.action === "focus") return [{ id: createId("step"), type: "focus", target, executionPolicy: "auto", source }];
@@ -107,7 +108,7 @@ export class WorkflowCompiler {
     ];
   }
 
-  private async matchTarget(appId: string, step: ExtractedActionStep): Promise<WorkflowTarget | undefined> {
+  private async matchTarget(appId: string, step: ExtractedActionStep): Promise<{ target: WorkflowTarget; matchConfidence: number } | undefined> {
     const query = [step.action, step.observedElement, step.page, step.visualContext].filter(Boolean).join(" ");
     const filters: Record<string, string> = { appId, kind: "ui_element" };
     if (step.route) filters.route = step.route;
@@ -118,7 +119,7 @@ export class WorkflowCompiler {
       if (result.score < 0.55 || typeof elementId !== "string") continue;
       const record = this.repositories.getElementByElementId(appId, elementId);
       if (!record || !hasExecutableSelector(record)) continue;
-      return toWorkflowTarget(record);
+      return { target: toWorkflowTarget(record), matchConfidence: result.score };
     }
 
     return undefined;
@@ -132,7 +133,10 @@ function toWorkflowTarget(record: UIElementRecord): WorkflowTarget {
     selector: record.selector,
     fallbackSelectors: record.fallbackSelectors,
     route: record.route,
-    pageName: record.pageName
+    pageName: record.pageName,
+    uiMapVersionId: record.uiMapVersionId,
+    fingerprint: record.fingerprint,
+    elementType: record.elementType
   };
 }
 
@@ -143,9 +147,18 @@ const paymentFieldPattern = /\b(card|credit|debit|cvv|cvc|expiry|payment|billing
 function createReviewStep(step: ExtractedActionStep, message: string): WorkflowStep {
   return {
     id: createId("step"),
-    type: "confirm",
+    type: "review_required",
     message,
-    source: { extractedStepId: step.id, matchConfidence: step.confidence ?? 0 }
+    observedAction: step.action,
+    source: sourceMetadata(step, 0)
+  };
+}
+
+function sourceMetadata(step: ExtractedActionStep, matchConfidence: number): NonNullable<WorkflowStep["source"]> {
+  return {
+    extractedStepId: step.id,
+    extractionConfidence: step.confidence,
+    matchConfidence
   };
 }
 

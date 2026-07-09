@@ -460,6 +460,7 @@ function App() {
             onUpload={() => setActiveRoute("upload")}
             onBack={() => setActiveRoute("workflows")}
             reviewerEmail={consoleUser?.email}
+            elements={elements}
             showToast={showToast}
           />
         )}

@@ -80,7 +80,10 @@ export const workflowTargetSchema = z.object({
   selector: z.string().min(1),
   fallbackSelectors: z.array(z.string()).optional(),
   route: z.string().optional(),
-  pageName: z.string().optional()
+  pageName: z.string().optional(),
+  uiMapVersionId: z.string().optional(),
+  fingerprint: z.string().optional(),
+  elementType: z.string().optional()
 });
 export type WorkflowTarget = z.infer<typeof workflowTargetSchema>;
 
@@ -91,11 +94,17 @@ const workflowStepBase = z.object({
   executionPolicy: executionPolicySchema.optional(),
   source: z.object({
     extractedStepId: z.string().optional(),
+    extractionConfidence: z.number().min(0).max(1).optional(),
     matchConfidence: z.number().min(0).max(1).optional()
   }).optional()
 });
 
 export const workflowStepSchema = z.discriminatedUnion("type", [
+  workflowStepBase.extend({
+    type: z.literal("review_required"),
+    message: z.string().min(1),
+    observedAction: z.string().optional()
+  }),
   workflowStepBase.extend({
     type: z.literal("navigate"),
     route: z.string().min(1)
@@ -169,7 +178,8 @@ export const workflowSchema = z.object({
   review: z.object({
     reviewedBy: z.string().optional(),
     reviewedAt: z.string().optional(),
-    notes: z.string().optional()
+    notes: z.string().optional(),
+    uiMapVersionId: z.string().optional()
   }),
   createdAt: z.string(),
   updatedAt: z.string()

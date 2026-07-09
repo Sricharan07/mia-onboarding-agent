@@ -160,6 +160,9 @@ Mia does not let a model freely control the application.
 
 - AI-generated workflows must be reviewed before publication.
 - Only reviewed and published workflow DSL can execute in the SDK.
+- Unmatched recording actions compile to non-executable review blockers, never confirmation placeholders.
+- Approval is bound to the latest UI map and target fingerprints; completing a new scan moves stale approved or published workflows back to review.
+- Q&A-only mode is enforced by the backend and cannot return workflows or element actions.
 - Sensitive steps require user confirmation.
 - Manual-only steps guide the user without clicking for them.
 - Runtime-sensitive SDK and backend routes use scoped API keys.

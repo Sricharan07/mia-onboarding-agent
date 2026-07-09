@@ -21,7 +21,7 @@ import { WorkflowService } from "../src/services/workflows/workflowService.js";
 import { AppError } from "../src/utils/errors.js";
 
 test("workflow compiler creates unique ids and review steps for unmatched recorded actions", async () => {
-  const compiler = new WorkflowCompiler({} as unknown as Repositories, emptySearch);
+  const compiler = new WorkflowCompiler(compilerRepositories(), emptySearch);
 
   const first = await compiler.compile({
     appId: "app_one",
@@ -44,12 +44,12 @@ test("workflow compiler creates unique ids and review steps for unmatched record
 
   assert.notEqual(first.workflowId, "invite_teammate");
   assert.notEqual(first.workflowId, second.workflowId);
-  assert.equal(first.steps[0]?.type, "confirm");
-  assert.equal(first.steps[1]?.type, "confirm");
+  assert.equal(first.steps[0]?.type, "review_required");
+  assert.equal(first.steps[1]?.type, "review_required");
 });
 
 test("workflow compiler honors requested upload metadata", async () => {
-  const compiler = new WorkflowCompiler({} as unknown as Repositories, emptySearch);
+  const compiler = new WorkflowCompiler(compilerRepositories(), emptySearch);
 
   const compiled = await compiler.compile({
     appId: "app_one",
@@ -74,6 +74,7 @@ test("workflow compiler never collects secret or payment values", async () => {
     label: "Account password"
   });
   const repositories = {
+    getLatestCompletedUiMapVersion: () => ({ id: "map_one" }),
     getElementByElementId: () => target
   } as unknown as Repositories;
   const semanticSearch = {
@@ -108,11 +109,14 @@ test("workflow compiler never collects secret or payment values", async () => {
       selector: '[data-testid="password-field"]',
       fallbackSelectors: [],
       route: "/",
-      pageName: "Home"
+      pageName: "Home",
+      uiMapVersionId: "map_one",
+      fingerprint: "password-field",
+      elementType: "button"
     },
     executionPolicy: "manual_only",
     label: "Enter Account password yourself",
-    source: { extractedStepId: "password", matchConfidence: 0.99 }
+    source: { extractedStepId: "password", extractionConfidence: 0.99, matchConfidence: 0.99 }
   });
 });
 
@@ -444,7 +448,7 @@ test("runtime resolve returns control actions and includes screen context in ans
     },
     analyzeImagesOrVideo: async <T>() => ({ data: {} as T, raw: {} })
   };
-  const runtime = new RuntimeService({} as unknown as Repositories, gateway, emptySearch);
+  const runtime = new RuntimeService(runtimeRepositories("workflow"), gateway, emptySearch);
 
   const control = await runtime.resolve({
     appId: "app_one",
@@ -473,7 +477,7 @@ test("runtime resolve returns a visible target for pointing requests", async () 
     },
     analyzeImagesOrVideo: async <T>() => ({ data: {} as T, raw: {} })
   };
-  const runtime = new RuntimeService({} as unknown as Repositories, gateway, emptySearch);
+  const runtime = new RuntimeService(runtimeRepositories("workflow"), gateway, emptySearch);
 
   const result = await runtime.resolve({
     appId: "app_one",
@@ -495,7 +499,7 @@ test("runtime resolve returns visible element actions for direct click requests"
     },
     analyzeImagesOrVideo: async <T>() => ({ data: {} as T, raw: {} })
   };
-  const runtime = new RuntimeService({} as unknown as Repositories, gateway, emptySearch);
+  const runtime = new RuntimeService(runtimeRepositories("workflow"), gateway, emptySearch);
 
   const result = await runtime.resolve({
     appId: "app_one",
@@ -508,6 +512,29 @@ test("runtime resolve returns visible element actions for direct click requests"
   assert.equal(result.action, "click");
   assert.equal(result.executionPolicy, "auto");
   assert.equal(result.target?.label, "Invite teammate");
+});
+
+test("Q&A-only runtime mode never returns executable actions", async () => {
+  const gateway: ModelGatewayAdapter = {
+    generateJson: async <T>() => ({ data: {} as T, raw: {} }),
+    generateText: async () => ({ text: "The Invite teammate button opens the invitation form.", raw: {} }),
+    analyzeImagesOrVideo: async <T>() => ({ data: {} as T, raw: {} })
+  };
+  const runtime = new RuntimeService(runtimeRepositories("qa_only"), gateway, {
+    ...emptySearch,
+    search: async () => {
+      throw new Error("Q&A-only mode must not search executable workflows.");
+    }
+  });
+
+  const result = await runtime.resolve({
+    appId: "app_one",
+    sessionId: "session_one",
+    utterance: "Click the invite button",
+    context: runtimeContext()
+  });
+
+  assert.equal(result.type, "answer");
 });
 
 test("video processing service starts and resumes unfinished jobs", async () => {
@@ -543,6 +570,7 @@ test("video processing service starts and resumes unfinished jobs", async () => 
 
   try {
     repositories.upsertApp({ name: "Workflow app", slug: "one", baseUrl: "http://localhost:3000" });
+    completeEmptyUiMap(repositories, "app_one");
     const first = repositories.createWorkflowVideo({
       appId: "app_one",
       filename: "first.mp4",
@@ -599,6 +627,7 @@ test("workflow service syncs source job status across review lifecycle", async (
 
   try {
     repositories.upsertApp({ name: "Workflow app", slug: "one", baseUrl: "http://localhost:3000" });
+    completeEmptyUiMap(repositories, "app_one");
     const video = repositories.createWorkflowVideo({
       appId: "app_one",
       filename: "workflow.mp4",
@@ -631,6 +660,89 @@ test("workflow service syncs source job status across review lifecycle", async (
   }
 });
 
+test("a new UI map invalidates published workflow approvals and changed targets", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mia-workflow-map-drift-"));
+  const db = createDatabase(testConfig(dir));
+  const repositories = new Repositories(db);
+  const service = new WorkflowService(repositories, emptySearch);
+
+  try {
+    repositories.upsertApp({ name: "Workflow app", slug: "one", baseUrl: "http://localhost:3000" });
+    const firstMap = repositories.createUiMapVersion("app_one");
+    const firstPage = repositories.createPage({
+      appId: "app_one",
+      uiMapVersionId: firstMap.id,
+      name: "Home",
+      route: "/",
+      url: "http://localhost:3000/",
+      status: "mapped"
+    });
+    const firstTarget = uiElement({
+      id: "element-row-v1",
+      appId: "app_one",
+      uiMapVersionId: firstMap.id,
+      pageId: firstPage,
+      elementId: "invite-button",
+      label: "Invite teammate",
+      fingerprint: "fingerprint-v1"
+    });
+    repositories.saveUiElement(firstTarget);
+    repositories.updateUiMapVersion(firstMap.id, "completed");
+    repositories.saveWorkflow(workflow({
+      appId: "app_one",
+      workflowId: "workflow_map_bound",
+      steps: [{
+        id: "click-invite",
+        type: "click",
+        target: {
+          elementId: firstTarget.elementId,
+          label: firstTarget.label,
+          selector: firstTarget.selector,
+          fallbackSelectors: [],
+          route: firstTarget.route,
+          pageName: firstTarget.pageName,
+          uiMapVersionId: firstTarget.uiMapVersionId,
+          fingerprint: firstTarget.fingerprint,
+          elementType: firstTarget.elementType
+        },
+        executionPolicy: "requires_confirmation"
+      }, { id: "complete", type: "complete", message: "Done." }]
+    }));
+    await service.approveWorkflow("workflow_map_bound", { reviewedBy: "tester" });
+    await service.publishWorkflow("workflow_map_bound");
+    assert.equal(repositories.getWorkflow("workflow_map_bound").status, "published");
+
+    const nextMap = repositories.createUiMapVersion("app_one");
+    const nextPage = repositories.createPage({
+      appId: "app_one",
+      uiMapVersionId: nextMap.id,
+      name: "Home",
+      route: "/",
+      url: "http://localhost:3000/",
+      status: "mapped"
+    });
+    repositories.saveUiElement(uiElement({
+      id: "element-row-v2",
+      appId: "app_one",
+      uiMapVersionId: nextMap.id,
+      pageId: nextPage,
+      elementId: "invite-button",
+      label: "Invite teammate",
+      fingerprint: "fingerprint-v2"
+    }));
+    repositories.updateUiMapVersion(nextMap.id, "completed");
+
+    assert.equal(repositories.getWorkflow("workflow_map_bound").status, "needs_review");
+    const report = service.reviewWorkflow("workflow_map_bound");
+    assert.equal(report.publishable, false);
+    assert.ok(report.issues.some((issue) => issue.id === "target-map:click-invite"));
+    assert.ok(report.issues.some((issue) => issue.id === "target-fingerprint:click-invite"));
+  } finally {
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("workflow service does not persist status changes when semantic sync fails", async () => {
   const dir = mkdtempSync(join(tmpdir(), "mia-workflow-semantic-fail-"));
   const db = createDatabase(testConfig(dir));
@@ -645,7 +757,12 @@ test("workflow service does not persist status changes when semantic sync fails"
 
   try {
     repositories.upsertApp({ name: "Workflow app", slug: "one", baseUrl: "http://localhost:3000" });
-    repositories.saveWorkflow(workflow({ workflowId: "workflow_semantic_fail", status: "approved" }));
+    const uiMapVersionId = completeEmptyUiMap(repositories, "app_one");
+    repositories.saveWorkflow(workflow({
+      workflowId: "workflow_semantic_fail",
+      status: "approved",
+      review: { reviewedBy: "tester", reviewedAt: "2026-01-01T00:00:00.000Z", uiMapVersionId }
+    }));
 
     await assert.rejects(
       () => service.publishWorkflow("workflow_semantic_fail"),
@@ -813,6 +930,7 @@ function uiElement(input: {
   route?: string;
   selectorQuality?: UIElementRecord["selectorQuality"];
   selectorWarnings?: string[];
+  fingerprint?: string;
 }): UIElementRecord {
   const now = "2026-01-01T00:00:00.000Z";
   return {
@@ -838,10 +956,28 @@ function uiElement(input: {
     selectorWarnings: input.selectorWarnings ?? [],
     stateName: "default",
     discoveredBy: "route_scan",
-    fingerprint: input.elementId,
+    fingerprint: input.fingerprint ?? input.elementId,
     createdAt: now,
     updatedAt: now
   };
+}
+
+function compilerRepositories(): Repositories {
+  return {
+    getLatestCompletedUiMapVersion: () => undefined
+  } as unknown as Repositories;
+}
+
+function runtimeRepositories(runtimeMode: "qa_only" | "workflow"): Repositories {
+  return {
+    getActiveApp: () => ({ uiScanConfig: { runtimeMode } })
+  } as unknown as Repositories;
+}
+
+function completeEmptyUiMap(repositories: Repositories, appId: string): string {
+  const version = repositories.createUiMapVersion(appId);
+  repositories.updateUiMapVersion(version.id, "completed");
+  return version.id;
 }
 
 function testConfig(dir: string): AppConfig {

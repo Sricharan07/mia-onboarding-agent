@@ -137,6 +137,9 @@ export class WorkflowExecutor {
   }
 
   private async executeStep(step: WorkflowStep): Promise<void> {
+    if (step.type === "review_required") {
+      throw new Error("Workflow contains an unresolved review step.");
+    }
     if ("executionPolicy" in step && step.executionPolicy === "blocked") {
       throw new Error("Blocked step cannot be executed.");
     }

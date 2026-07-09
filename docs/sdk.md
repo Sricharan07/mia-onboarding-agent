@@ -137,6 +137,8 @@ await AIOnboardingAgent.stopVoice();
 
 The backend mints short-lived Gemini Live tokens. The SDK does not need direct provider credentials.
 
+Apps configured as Q&A-only are restricted by the backend to answers and pointing. They cannot return workflows or element actions even if a client asks for a click.
+
 When `enableVoice` is true, the SDK also registers push-to-talk: hold `Control+Space` to start a voice session and stream microphone audio, then release either key to pause microphone streaming. Calling `startVoice()` directly still starts a normal open-mic voice session.
 
 Mia uses Gemini Live voice `Aoede` by default. Override `voice.voiceName` only after testing the replacement voice in Google AI Studio.

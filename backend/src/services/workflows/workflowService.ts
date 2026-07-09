@@ -33,20 +33,29 @@ export class WorkflowService {
 
   async updateWorkflow(workflowId: string, patch: Partial<Workflow>): Promise<void> {
     const current = this.repositories.getWorkflow(workflowId);
-    const next = workflowSchema.parse({ ...current, ...patch, workflowId: current.workflowId, appId: current.appId, updatedAt: nowIso() });
+    const next = workflowSchema.parse(invalidateReview({
+      ...current,
+      ...patch,
+      workflowId: current.workflowId,
+      appId: current.appId,
+      updatedAt: nowIso()
+    }));
     await this.saveWorkflow(next);
   }
 
   async approveWorkflow(workflowId: string, input: { reviewedBy: string; notes?: string }): Promise<Workflow> {
     const workflow = this.repositories.getWorkflow(workflowId);
     this.assertReviewClean(workflow);
+    const latestMap = this.repositories.getLatestCompletedUiMapVersion(workflow.appId);
+    if (!latestMap) throw new AppError("WORKFLOW_UI_MAP_REQUIRED", "A completed UI map is required before approval.", 400);
     const next = workflowSchema.parse({
       ...workflow,
       status: "approved",
       review: {
         reviewedBy: input.reviewedBy,
         reviewedAt: nowIso(),
-        notes: input.notes
+        notes: input.notes,
+        uiMapVersionId: latestMap.id
       },
       updatedAt: nowIso()
     });
@@ -145,11 +154,10 @@ export class WorkflowService {
   }
 
   private validateStepMutation(workflow: Workflow): Workflow {
-    return workflowSchema.parse({
+    return workflowSchema.parse(invalidateReview({
       ...workflow,
-      status: workflow.status === "published" ? "needs_review" : workflow.status,
       updatedAt: nowIso()
-    });
+    }));
   }
 
   private assertReviewClean(workflow: Workflow): void {
@@ -163,7 +171,29 @@ export class WorkflowService {
 
   private buildReviewReport(workflow: Workflow): WorkflowReviewReport {
     const issues: WorkflowReviewIssue[] = [];
-    const mappedRoutes = new Set(this.repositories.listUiElementsForApp(workflow.appId).map((element) => element.route));
+    const latestMap = this.repositories.getLatestCompletedUiMapVersion(workflow.appId);
+    const latestElements = this.repositories.listUiElementsForApp(workflow.appId);
+    const mappedRoutes = new Set(latestElements.map((element) => element.route));
+
+    if (!latestMap) {
+      issues.push({
+        id: "ui-map-missing",
+        severity: "blocker",
+        label: "UI map required",
+        message: "No completed UI map is available for this workflow.",
+        fix: "Complete a UI map scan before approval."
+      });
+    }
+
+    if ((workflow.status === "approved" || workflow.status === "published") && workflow.review.uiMapVersionId !== latestMap?.id) {
+      issues.push({
+        id: "review-map-stale",
+        severity: "blocker",
+        label: "Approval is stale",
+        message: "This workflow was not approved against the latest UI map.",
+        fix: "Review every target again and re-approve the workflow."
+      });
+    }
 
     if (workflow.triggerPhrases.length === 0) {
       issues.push({
@@ -189,7 +219,7 @@ export class WorkflowService {
       if (!mappedRoutes.has(route)) {
         issues.push({
           id: `route:${route}`,
-          severity: "warning",
+          severity: "blocker",
           label: "Starting route coverage",
           message: `Starting route ${route} is not present in the latest UI map.`,
           fix: "Run a UI map scan that includes this route."
@@ -198,18 +228,43 @@ export class WorkflowService {
     }
 
     for (const step of workflow.steps) {
-      if (step.source?.matchConfidence !== undefined && step.source.matchConfidence < 0.7) {
+      if (step.type === "review_required") {
         issues.push({
-          id: `source-confidence:${step.id}`,
-          severity: "warning",
-          label: "Source confidence",
-          message: `Step ${step.id} has low video match confidence (${step.source.matchConfidence.toFixed(2)}).`,
+          id: `review-required:${step.id}`,
+          severity: "blocker",
+          label: "Unresolved recorded action",
+          message: step.message,
           stepId: step.id,
-          fix: "Review the step instruction and target before approval."
+          fix: "Resolve this step to a mapped action or remove it."
+        });
+        continue;
+      }
+
+      if (step.source?.extractionConfidence !== undefined && step.source.extractionConfidence < 0.7) {
+        issues.push({
+          id: `extraction-confidence:${step.id}`,
+          severity: "warning",
+          label: "Video extraction confidence",
+          message: `Step ${step.id} has low extraction confidence (${step.source.extractionConfidence.toFixed(2)}).`,
+          stepId: step.id,
+          fix: "Compare this step with the recording."
         });
       }
 
-      if (!isExecutableTargetStep(step)) continue;
+      if (step.source && (step.source.matchConfidence === undefined || step.source.matchConfidence < 0.7)) {
+        issues.push({
+          id: `match-confidence:${step.id}`,
+          severity: "blocker",
+          label: "Target match confidence",
+          message: step.source.matchConfidence === undefined
+            ? `Step ${step.id} has no target match confidence.`
+            : `Step ${step.id} has low target match confidence (${step.source.matchConfidence.toFixed(2)}).`,
+          stepId: step.id,
+          fix: "Select and save the exact target from the latest UI map."
+        });
+      }
+
+      if (!isTargetStep(step)) continue;
       const element = this.repositories.getElementByElementId(workflow.appId, step.target.elementId);
       if (!element) {
         issues.push({
@@ -220,10 +275,43 @@ export class WorkflowService {
           stepId: step.id,
           fix: "Re-scan the UI map or choose a mapped target."
         });
-      } else if (element.selectorQuality === "weak") {
+      } else {
+        if (!latestMap || step.target.uiMapVersionId !== latestMap.id || step.target.uiMapVersionId !== element.uiMapVersionId) {
+          issues.push({
+            id: `target-map:${step.id}`,
+            severity: "blocker",
+            label: "Target map version",
+            message: `Step ${step.id} is not bound to the latest UI map.`,
+            stepId: step.id,
+            fix: "Re-select this target from the latest map."
+          });
+        }
+        if (!step.target.fingerprint || step.target.fingerprint !== element.fingerprint) {
+          issues.push({
+            id: `target-fingerprint:${step.id}`,
+            severity: "blocker",
+            label: "Target changed",
+            message: `Step ${step.id} no longer matches the reviewed element fingerprint.`,
+            stepId: step.id,
+            fix: "Inspect and re-select the intended element."
+          });
+        }
+        if (step.target.selector !== element.selector || step.target.elementType !== element.elementType || step.target.route !== element.route) {
+          issues.push({
+            id: `target-definition:${step.id}`,
+            severity: "blocker",
+            label: "Target definition changed",
+            message: `Step ${step.id} selector, type, or route differs from the latest map.`,
+            stepId: step.id,
+            fix: "Re-select the target from the latest map."
+          });
+        }
+      }
+
+      if (element?.selectorQuality === "weak") {
         issues.push({
           id: `target-weak:${step.id}`,
-          severity: step.executionPolicy === "auto" ? "blocker" : "warning",
+          severity: step.type === "wait_for_element" || step.executionPolicy === "auto" ? "blocker" : "warning",
           label: "Weak selector",
           message: `Step ${step.id} targets ${element.elementId} with a weak selector.`,
           stepId: step.id,
@@ -231,7 +319,29 @@ export class WorkflowService {
         });
       }
 
-      if (step.executionPolicy === "blocked") {
+      if (element?.selectorWarnings.length) {
+        issues.push({
+          id: `target-warnings:${step.id}`,
+          severity: step.type === "wait_for_element" || step.executionPolicy === "auto" ? "blocker" : "warning",
+          label: "Selector warnings",
+          message: `Step ${step.id} target has selector warnings: ${element.selectorWarnings.join(" ")}`,
+          stepId: step.id,
+          fix: "Resolve selector warnings or use a non-automatic policy."
+        });
+      }
+
+      if (element && this.repositories.countLatestElementsBySelector(workflow.appId, element.selector) !== 1) {
+        issues.push({
+          id: `target-selector-unique:${step.id}`,
+          severity: step.type === "wait_for_element" || step.executionPolicy === "auto" ? "blocker" : "warning",
+          label: "Selector is not unique",
+          message: `Step ${step.id} selector does not identify exactly one element in the latest map.`,
+          stepId: step.id,
+          fix: "Add a unique stable selector and re-scan."
+        });
+      }
+
+      if (step.type !== "wait_for_element" && step.executionPolicy === "blocked") {
         issues.push({
           id: `blocked-step:${step.id}`,
           severity: "blocker",
@@ -240,7 +350,7 @@ export class WorkflowService {
           stepId: step.id,
           fix: "Resolve the step or remove it before approval."
         });
-      } else if (step.executionPolicy === "manual_only") {
+      } else if (step.type !== "wait_for_element" && step.executionPolicy === "manual_only") {
         issues.push({
           id: `manual-step:${step.id}`,
           severity: "warning",
@@ -251,7 +361,7 @@ export class WorkflowService {
         });
       }
 
-      if (step.executionPolicy === "auto") {
+      if (step.type !== "wait_for_element" && step.executionPolicy === "auto") {
         const selectors = [step.target.selector, ...(step.target.fallbackSelectors ?? [])];
         if (!selectors.some(isStableEnoughSelector)) {
           issues.push({
@@ -263,6 +373,31 @@ export class WorkflowService {
             fix: "Re-scan the UI map or add a stable selector before publishing."
           });
         }
+      }
+
+      if (step.type === "wait_for_element") {
+        const selectors = [step.target.selector, ...(step.target.fallbackSelectors ?? [])];
+        if (!selectors.some(isStableEnoughSelector)) {
+          issues.push({
+            id: `brittle-wait-selector:${step.id}`,
+            severity: "blocker",
+            label: "Brittle wait target",
+            message: `Wait step ${step.id} only has brittle selectors.`,
+            stepId: step.id,
+            fix: "Re-scan or select a stable wait target."
+          });
+        }
+      }
+
+      if (step.type !== "wait_for_element" && step.type !== "focus" && step.executionPolicy === "auto" && isDangerousTarget(step)) {
+        issues.push({
+          id: `dangerous-auto:${step.id}`,
+          severity: "blocker",
+          label: "Dangerous automatic action",
+          message: `Step ${step.id} is a consequential action configured to run automatically.`,
+          stepId: step.id,
+          fix: "Require confirmation or make the step manual-only."
+        });
       }
     }
 
@@ -278,8 +413,8 @@ export class WorkflowService {
   }
 }
 
-function isExecutableTargetStep(step: WorkflowStep): step is Extract<WorkflowStep, { type: "click" | "focus" | "fill" | "select" }> {
-  return step.type === "click" || step.type === "focus" || step.type === "fill" || step.type === "select";
+function isTargetStep(step: WorkflowStep): step is Extract<WorkflowStep, { type: "click" | "focus" | "fill" | "select" | "wait_for_element" }> {
+  return step.type === "click" || step.type === "focus" || step.type === "fill" || step.type === "select" || step.type === "wait_for_element";
 }
 
 function isStableEnoughSelector(selector: string): boolean {
@@ -288,4 +423,45 @@ function isStableEnoughSelector(selector: string): boolean {
   if (trimmed.includes(":nth-of-type") || trimmed.includes(":nth-child")) return false;
   if (/^[a-z][a-z0-9-]*$/i.test(trimmed)) return false;
   return true;
+}
+
+function invalidateReview(workflow: Workflow): Workflow {
+  if (workflow.status !== "approved" && workflow.status !== "published") return workflow;
+  return { ...workflow, status: "needs_review", review: {} };
+}
+
+function isDangerousTarget(step: Extract<WorkflowStep, { type: "click" | "fill" | "select" }>): boolean {
+  return /\b(delete|remove|archive|submit|send|pay|purchase|checkout|invite|publish|approve|revoke|disable|deactivate|transfer|refund|cancel)\b/i.test([
+    step.type,
+    step.label,
+    step.description,
+    step.target.label,
+    step.target.elementId
+  ].filter(Boolean).join(" "));
+}
+
+export function assertWorkflowRuntimeBinding(repositories: Repositories, workflow: Workflow): void {
+  const latestMap = repositories.getLatestCompletedUiMapVersion(workflow.appId);
+  if (!latestMap || workflow.review.uiMapVersionId !== latestMap.id) {
+    throw new AppError("WORKFLOW_UI_MAP_STALE", "Workflow approval is not valid for the latest UI map.", 409);
+  }
+  for (const step of workflow.steps) {
+    if (step.type === "review_required") {
+      throw new AppError("WORKFLOW_REVIEW_REQUIRED", "Workflow contains an unresolved review step.", 409);
+    }
+    if (!isTargetStep(step)) continue;
+    const current = repositories.getElementByElementId(workflow.appId, step.target.elementId);
+    if (!current
+      || step.target.uiMapVersionId !== latestMap.id
+      || step.target.fingerprint !== current.fingerprint
+      || step.target.selector !== current.selector
+      || step.target.route !== current.route
+      || step.target.elementType !== current.elementType
+      || repositories.countLatestElementsBySelector(workflow.appId, step.target.selector) !== 1) {
+      throw new AppError("WORKFLOW_TARGET_STALE", `Workflow target is stale: ${step.target.elementId}`, 409);
+    }
+    if (step.type !== "wait_for_element" && step.executionPolicy === "blocked") {
+      throw new AppError("WORKFLOW_STEP_BLOCKED", `Workflow step is blocked: ${step.id}`, 409);
+    }
+  }
 }

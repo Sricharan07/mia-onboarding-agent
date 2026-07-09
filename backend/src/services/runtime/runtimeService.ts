@@ -2,6 +2,7 @@ import type { Repositories } from "../../db/repositories.js";
 import type { ModelGatewayAdapter, SemanticSearchAdapter } from "../../adapters/interfaces.js";
 import type { SDKRuntimeContext, Workflow } from "../../schemas/domain.js";
 import { AppError, NotFoundError } from "../../utils/errors.js";
+import { assertWorkflowRuntimeBinding } from "../workflows/workflowService.js";
 
 type RuntimeContextInput = Omit<SDKRuntimeContext, "appId" | "sessionId">;
 type RuntimeElement = NonNullable<RuntimeContextInput["visibleElements"]>[number];
@@ -22,29 +23,33 @@ export class RuntimeService {
     context: Omit<SDKRuntimeContext, "appId" | "sessionId">;
     includeTts?: boolean;
   }) {
+    const app = this.repositories.getActiveApp(input.appId);
+    const workflowMode = app.uiScanConfig.runtimeMode === "workflow";
     const controlAction = parseControlAction(input.utterance);
     if (controlAction) {
       return { type: "control", action: controlAction, message: controlMessage(controlAction) };
     }
 
-    const matches = await this.semanticSearch.search({
-      query: `${input.utterance}\nCurrent route: ${input.context.currentRoute}`,
-      filters: { kind: "workflow", appId: input.appId, status: "published" },
-      limit: 5
-    });
+    if (workflowMode) {
+      const matches = await this.semanticSearch.search({
+        query: `${input.utterance}\nCurrent route: ${input.context.currentRoute}`,
+        filters: { kind: "workflow", appId: input.appId, status: "published" },
+        limit: 5
+      });
 
-    const workflow = this.findExecutableWorkflow(matches, input.appId);
-    if (workflow) {
-      return {
-        type: "workflow",
-        workflow: sanitizeWorkflowForRuntime(workflow),
-        message: `I can help you with ${workflow.name}. Let's start.`
-      };
+      const workflow = this.findExecutableWorkflow(matches, input.appId);
+      if (workflow) {
+        return {
+          type: "workflow",
+          workflow: sanitizeWorkflowForRuntime(workflow),
+          message: `I can help you with ${workflow.name}. Let's start.`
+        };
+      }
     }
 
     const target = findVisibleTarget(input.utterance, input.context);
     const elementAction = target ? parseElementAction(input.utterance) : undefined;
-    if (target && elementAction) {
+    if (workflowMode && target && elementAction) {
       return {
         type: "element_action",
         action: elementAction,
@@ -81,7 +86,10 @@ ${summarizeRuntimeContext(input.context)}`
 
       try {
         const workflow = this.repositories.getWorkflow(workflowId);
-        if (workflow.status === "published" && workflow.appId === appId) return workflow;
+        if (workflow.status === "published" && workflow.appId === appId) {
+          assertWorkflowRuntimeBinding(this.repositories, workflow);
+          return workflow;
+        }
       } catch (error) {
         if (error instanceof NotFoundError) {
           console.warn(`[runtime] Semantic search returned stale workflowId=${workflowId}; skipping.`);

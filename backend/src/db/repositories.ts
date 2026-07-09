@@ -237,8 +237,29 @@ export class Repositories {
   }
 
   updateUiMapVersion(id: string, status: "completed" | "failed", error?: string): void {
+    const version = this.getUiMapVersion(id);
     this.db.prepare("UPDATE ui_map_versions SET status = ?, completed_at = ?, error = ?, locked_by = NULL, locked_until = NULL WHERE id = ?")
       .run(status, nowIso(), error ?? null, id);
+    if (status === "completed") this.invalidateWorkflowsForUiMap(String(version.app_id), id);
+  }
+
+  private invalidateWorkflowsForUiMap(appId: string, uiMapVersionId: string): void {
+    const rows = this.db.prepare(`
+      SELECT workflow_id, workflow_json FROM workflows
+      WHERE app_id = ? AND status IN ('approved', 'published')
+    `).all(appId) as Array<{ workflow_id: string; workflow_json: string }>;
+    const invalidate = this.db.transaction(() => {
+      for (const row of rows) {
+        const workflow = JSON.parse(row.workflow_json) as Workflow;
+        if (workflow.review.uiMapVersionId === uiMapVersionId) continue;
+        const next: Workflow = { ...workflow, status: "needs_review", review: {}, updatedAt: nowIso() };
+        this.db.prepare(`
+          UPDATE workflows SET status = 'needs_review', workflow_json = ?, updated_at = ? WHERE workflow_id = ?
+        `).run(JSON.stringify(next), next.updatedAt, row.workflow_id);
+        if (next.createdFrom?.jobId) this.updateWorkflowJobStatus(next.createdFrom.jobId, "needs_review");
+      }
+    });
+    invalidate();
   }
 
   getUiMapVersion(id: string): Row {
@@ -443,6 +464,16 @@ export class Repositories {
     const row = this.db.prepare("SELECT raw_json FROM ui_elements WHERE app_id = ? AND ui_map_version_id = ? AND element_id = ? ORDER BY created_at DESC LIMIT 1")
       .get(appId, latestVersion.id, elementId) as { raw_json: string } | undefined;
     return row ? JSON.parse(row.raw_json) as UIElementRecord : undefined;
+  }
+
+  countLatestElementsBySelector(appId: string, selector: string): number {
+    const latestVersion = this.getLatestCompletedUiMapVersion(appId);
+    if (!latestVersion) return 0;
+    const row = this.db.prepare(`
+      SELECT COUNT(*) as count FROM ui_elements
+      WHERE app_id = ? AND ui_map_version_id = ? AND selector = ?
+    `).get(appId, latestVersion.id, selector) as { count: number };
+    return Number(row.count);
   }
 
   listLatestUiElementsForApp(appId: string, limit = 200): UIElementRecord[] {

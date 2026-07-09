@@ -1,6 +1,6 @@
 import { Check, FileVideo, Plus, Play, RefreshCw, Save, Upload, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { AppRecord, BackendApi, ExecutionPolicy, Workflow, WorkflowJob, WorkflowReviewReport, WorkflowStep, WorkflowSummary } from "../api";
+import type { AppRecord, BackendApi, ExecutionPolicy, UiElement, Workflow, WorkflowJob, WorkflowReviewReport, WorkflowStep, WorkflowSummary } from "../api";
 import { ActionEmptyState, InlineAlert, PageIntro, Panel, StatusBadge, StatusPill, SummaryItem } from "../components/console";
 import { describeStep, errorMessage, formatDate } from "../utils/format";
 
@@ -122,6 +122,7 @@ export function WorkflowReviewPage({
   onUpload,
   onBack,
   reviewerEmail,
+  elements,
   showToast
 }: {
   workflow: Workflow | null;
@@ -132,6 +133,7 @@ export function WorkflowReviewPage({
   onUpload: () => void;
   onBack: () => void;
   reviewerEmail?: string;
+  elements: UiElement[];
   showToast: (message: string) => void;
 }) {
   const [name, setName] = useState("");
@@ -389,6 +391,7 @@ export function WorkflowReviewPage({
             <WorkflowStepCard
               key={step.id}
               step={step}
+              elements={elements}
               order={index + 1}
               disabled={pendingAction !== null}
               onUpdate={(patch) => updateStep(step.id, patch)}
@@ -461,7 +464,8 @@ export function WorkflowStepCard({
   disabled,
   onUpdate,
   onDelete,
-  onMove
+  onMove,
+  elements
 }: {
   step: WorkflowStep;
   order: number;
@@ -469,19 +473,58 @@ export function WorkflowStepCard({
   onUpdate: (patch: Partial<WorkflowStep>) => Promise<void>;
   onDelete: () => Promise<void>;
   onMove: (direction: -1 | 1) => Promise<void>;
+  elements: UiElement[];
 }) {
   const [label, setLabel] = useState(step.label ?? "");
   const [message, setMessage] = useState(stepText(step));
+  const [resolutionAction, setResolutionAction] = useState<"click" | "focus" | "wait_for_element">(
+    step.type === "review_required" && step.observedAction === "focus" ? "focus" : "click"
+  );
+  const [resolutionTargetId, setResolutionTargetId] = useState(elements[0]?.id ?? "");
 
   useEffect(() => {
     setLabel(step.label ?? "");
     setMessage(stepText(step));
+    if (step.type === "review_required") {
+      setResolutionAction(step.observedAction === "focus" ? "focus" : "click");
+    }
   }, [step]);
+
+  useEffect(() => {
+    if (!resolutionTargetId && elements[0]) setResolutionTargetId(elements[0].id);
+  }, [elements, resolutionTargetId]);
 
   const saveText = async () => {
     if (step.type === "ask_user") await onUpdate({ label, prompt: message } as Partial<WorkflowStep>);
     else if (step.type === "confirm" || step.type === "complete") await onUpdate({ label, message } as Partial<WorkflowStep>);
     else await onUpdate({ label, description: message } as Partial<WorkflowStep>);
+  };
+
+  const remapTarget = async (elementRowId: string) => {
+    const element = elements.find((candidate) => candidate.id === elementRowId);
+    if (!element || !("target" in step)) return;
+    await onUpdate({
+      target: targetFromElement(element),
+      source: "source" in step && step.source
+        ? { ...step.source, matchConfidence: 1 }
+        : undefined
+    } as Partial<WorkflowStep>);
+  };
+
+  const resolveReviewStep = async () => {
+    const element = elements.find((candidate) => candidate.id === resolutionTargetId);
+    if (!element || step.type !== "review_required") return;
+    const source = { ...step.source, matchConfidence: 1 };
+    if (resolutionAction === "wait_for_element") {
+      await onUpdate({ type: "wait_for_element", target: targetFromElement(element), timeoutMs: 10_000, source } as unknown as Partial<WorkflowStep>);
+      return;
+    }
+    await onUpdate({
+      type: resolutionAction,
+      target: targetFromElement(element),
+      executionPolicy: "requires_confirmation",
+      source
+    } as unknown as Partial<WorkflowStep>);
   };
 
   return (
@@ -499,7 +542,29 @@ export function WorkflowStepCard({
         </div>
       </div>
       <div className="step-columns">
-        <div className="step-column editor">
+        {step.type === "review_required" && (
+          <div className="step-column editor">
+            <h4>Resolve recorded action</h4>
+            <label>
+              Action
+              <select value={resolutionAction} onChange={(event) => setResolutionAction(event.target.value as typeof resolutionAction)}>
+                <option value="click">Click with confirmation</option>
+                <option value="focus">Focus with confirmation</option>
+                <option value="wait_for_element">Wait for element</option>
+              </select>
+            </label>
+            <label>
+              Current mapped target
+              <select value={resolutionTargetId} onChange={(event) => setResolutionTargetId(event.target.value)}>
+                {elements.map((element) => <option value={element.id} key={element.id}>{element.route} - {element.label ?? element.elementId}</option>)}
+              </select>
+            </label>
+            <button className="button secondary small" type="button" disabled={disabled || !resolutionTargetId} onClick={() => void resolveReviewStep()}>
+              Resolve step
+            </button>
+          </div>
+        )}
+        {step.type !== "review_required" && <div className="step-column editor">
           <h4>Instruction</h4>
           <label>
             Label
@@ -529,14 +594,31 @@ export function WorkflowStepCard({
           >
             {disabled ? "Saving" : "Save step text"}
           </button>
-        </div>
+        </div>}
         {"target" in step && (
           <div className="step-column">
             <h4>Target</h4>
+            <label>
+              Mapped element
+              <select value={elements.find((element) => element.fingerprint === step.target.fingerprint && element.uiMapVersionId === step.target.uiMapVersionId)?.id ?? ""} onChange={(event) => void remapTarget(event.target.value)}>
+                <option value="">Select current target</option>
+                {elements.map((element) => <option value={element.id} key={element.id}>{element.route} - {element.label ?? element.elementId}</option>)}
+              </select>
+            </label>
+            <button
+              className="button secondary small"
+              type="button"
+              disabled={disabled || !elements.some((element) => element.elementId === step.target.elementId)}
+              onClick={() => {
+                const current = elements.find((element) => element.elementId === step.target.elementId);
+                if (current) void remapTarget(current.id);
+              }}
+            >
+              Rebind to latest map
+            </button>
             <p>Element ID: {step.target.elementId}</p>
             <p>Label: {step.target.label ?? "None"}</p>
             <p>Selector: <code>{step.target.selector}</code></p>
-            <p>Review task: confirm this target is the exact UI element the user expects Mia to use.</p>
           </div>
         )}
         {"source" in step && step.source && (
@@ -564,6 +646,7 @@ function ReviewCheck({ title, done, detail }: { title: string; done: boolean; de
 }
 
 function humanStepTitle(step: WorkflowStep): string {
+  if (step.type === "review_required") return "Resolve recorded action";
   if (step.type === "navigate") return `Open ${step.route}`;
   if (step.type === "ask_user") return step.label || step.prompt;
   if (step.type === "confirm" || step.type === "complete") return step.label || step.message;
@@ -674,9 +757,24 @@ export function WorkflowsPage({
 }
 
 function stepText(step: WorkflowStep): string {
+  if (step.type === "review_required") return step.message;
   if (step.type === "ask_user") return step.prompt;
   if (step.type === "confirm" || step.type === "complete") return step.message;
   return step.description ?? "";
+}
+
+function targetFromElement(element: UiElement) {
+  return {
+    elementId: element.elementId,
+    label: element.label,
+    selector: element.selector,
+    fallbackSelectors: element.fallbackSelectors,
+    route: element.route,
+    pageName: element.pageName,
+    uiMapVersionId: element.uiMapVersionId,
+    fingerprint: element.fingerprint,
+    elementType: element.elementType
+  };
 }
 
 function formatBytes(value: number): string {

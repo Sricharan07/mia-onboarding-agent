@@ -83,9 +83,13 @@ export type WorkflowTarget = {
   fallbackSelectors?: string[];
   route?: string;
   pageName?: string;
+  uiMapVersionId?: string;
+  fingerprint?: string;
+  elementType?: string;
 };
 
 export type WorkflowStep =
+  | { id: string; type: "review_required"; message: string; observedAction?: string; label?: string }
   | { id: string; type: "navigate"; route: string; label?: string }
   | { id: string; type: "click"; target: WorkflowTarget; executionPolicy: ExecutionPolicy; label?: string }
   | { id: string; type: "focus"; target: WorkflowTarget; executionPolicy: ExecutionPolicy; label?: string }
@@ -105,6 +109,7 @@ export type Workflow = {
   version: number;
   triggerPhrases: string[];
   steps: WorkflowStep[];
+  review?: { reviewedBy?: string; reviewedAt?: string; notes?: string; uiMapVersionId?: string };
 };
 
 export type ResolveResponse =

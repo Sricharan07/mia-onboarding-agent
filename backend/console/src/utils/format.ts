@@ -56,6 +56,7 @@ function capitalize(value: string): string {
 }
 
 export function describeStep(step: WorkflowStep): string {
+  if (step.type === "review_required") return step.message;
   if (step.type === "navigate") return `Navigate to ${step.route}`;
   if (step.type === "ask_user") return `${step.prompt} -> ${step.field}`;
   if (step.type === "confirm") return step.message;

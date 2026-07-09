@@ -199,6 +199,15 @@ export type WorkflowSummary = {
 export type WorkflowStep =
   | {
       id: string;
+      type: "review_required";
+      message: string;
+      observedAction?: string;
+      label?: string;
+      description?: string;
+      source?: WorkflowStepSource;
+    }
+  | {
+      id: string;
       type: "navigate";
       route: string;
       label?: string;
@@ -268,10 +277,14 @@ export type WorkflowTarget = {
   fallbackSelectors?: string[];
   route?: string;
   pageName?: string;
+  uiMapVersionId?: string;
+  fingerprint?: string;
+  elementType?: string;
 };
 
 export type WorkflowStepSource = {
   extractedStepId?: string;
+  extractionConfidence?: number;
   matchConfidence?: number;
 };
 
@@ -297,6 +310,7 @@ export type Workflow = {
     reviewedBy?: string;
     reviewedAt?: string;
     notes?: string;
+    uiMapVersionId?: string;
   };
   createdAt: string;
   updatedAt: string;

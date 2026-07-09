@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { AppDependencies } from "../app.js";
 import { sdkRuntimeContextSchema } from "../schemas/domain.js";
 import { AppError } from "../utils/errors.js";
+import { assertWorkflowRuntimeBinding } from "../services/workflows/workflowService.js";
 import { requireRuntimeCapability, requireRuntimeTokenAppAccess } from "./auth.js";
 
 export async function registerRuntimeRoutes(app: FastifyInstance, dependencies: AppDependencies): Promise<void> {
@@ -30,6 +31,10 @@ export async function registerRuntimeRoutes(app: FastifyInstance, dependencies: 
       userId: z.string().optional()
     }).parse(request.body);
     requireRuntimeTokenAppAccess(request, dependencies, body.appId, "runtime:workflow");
+    const appRecord = dependencies.repositories.getActiveApp(body.appId);
+    if (appRecord.uiScanConfig.runtimeMode !== "workflow") {
+      throw new AppError("APP_QA_ONLY", "This app is configured for answers and pointing only.", 403);
+    }
     const workflow = dependencies.repositories.getWorkflow(body.workflowId);
     if (workflow.appId !== body.appId) {
       throw new AppError("WORKFLOW_APP_MISMATCH", "Workflow does not belong to the requested app.", 403);
@@ -37,6 +42,7 @@ export async function registerRuntimeRoutes(app: FastifyInstance, dependencies: 
     if (workflow.status !== "published") {
       throw new AppError("WORKFLOW_NOT_PUBLISHED", "Only published workflows can create runtime sessions.", 403);
     }
+    assertWorkflowRuntimeBinding(dependencies.repositories, workflow);
     return dependencies.repositories.createRuntimeSession({
       ...body,
       userId: request.runtimeToken?.userId ?? body.userId
