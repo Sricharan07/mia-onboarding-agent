@@ -23,16 +23,17 @@ After the npm release exists, use:
 npm install @mia/onboarding-agent
 ```
 
-## Create A Browser SDK Key
+## Create A Server Integration Key
 
-In the console, create an app-bound key with:
+In the console, create an app-bound server key with:
 
-- `runtime:write`
-- `logs:write`
+- `runtime:tokens:create`
 - the target `appId`
 - every browser origin that will load the SDK
 
-Do not expose an `admin` key in browser code. Non-admin keys are rejected unless they are bound to an app and origin-restricted.
+Keep this key in the host application's backend. Never expose an admin or integration key in browser code.
+
+Add an authenticated host-backend endpoint that calls `POST /api/v1/runtime/tokens` with the current user's server-verified ID, the configured app ID, and the request origin. Return the backend response to the browser. The included demo implements this pattern at `/api/mia/runtime-token`.
 
 ## Initialize
 
@@ -42,7 +43,11 @@ import { AIOnboardingAgent } from "@mia/onboarding-agent";
 AIOnboardingAgent.init({
   appId: "app_example",
   backendUrl: "https://mia.example.com",
-  apiKey: "mia_<prefix>_<secret>",
+  tokenProvider: async () => {
+    const response = await fetch("/api/mia/runtime-token", { method: "POST" });
+    if (!response.ok) throw new Error("Unable to start Mia");
+    return response.json();
+  },
   enableVoice: true,
   ui: {
     assistantPanel: true
@@ -79,7 +84,7 @@ Visible DOM text is redacted by default before runtime context leaves the browse
 AIOnboardingAgent.init({
   appId: "app_example",
   backendUrl: "https://mia.example.com",
-  apiKey: "mia_<prefix>_<secret>",
+  tokenProvider: async () => (await fetch("/api/mia/runtime-token", { method: "POST" })).json(),
   privacy: {
     redactText: true,
     redactedSelectors: ["[data-private]", ".billing-card"],
@@ -100,7 +105,7 @@ The assistant panel is enabled by default. It gives end users a visible Ask box,
 AIOnboardingAgent.init({
   appId: "app_example",
   backendUrl: "https://mia.example.com",
-  apiKey: "mia_<prefix>_<secret>",
+  tokenProvider: async () => (await fetch("/api/mia/runtime-token", { method: "POST" })).json(),
   ui: {
     assistantPanel: true,
     theme: "auto",
@@ -117,7 +122,7 @@ After installing the SDK, use Console -> Test Mia for a resolver dry-run and Con
 Voice mode requires:
 
 - backend `GEMINI_API_KEY`;
-- a browser SDK key with `runtime:write`;
+- a host-backend integration key with `runtime:tokens:create`;
 - `enableVoice: true`.
 
 ```ts
@@ -137,9 +142,9 @@ The SDK writes voice transcripts, final assistant speech, runtime resolution res
 
 ## Common Integration Issues
 
-- `401 API_KEY_REQUIRED`: pass `apiKey`, or ensure the backend URL points at the MIA backend.
-- `403 API_KEY_ORIGIN_FORBIDDEN`: add the host app origin to the SDK key's allowed origins.
-- `403 API_KEY_APP_FORBIDDEN`: use a key bound to the same `appId` passed to `init`.
+- `401 RUNTIME_TOKEN_REQUIRED`: verify `tokenProvider` returns the runtime-token response from your host backend.
+- `403 RUNTIME_TOKEN_ORIGIN_FORBIDDEN`: add the host app origin to the integration key and mint the token for that exact origin.
+- `403 RUNTIME_TOKEN_APP_FORBIDDEN`: use an integration key bound to the same `appId` passed to `init`.
 - Voice does not start: confirm backend Gemini config and check `/api/v1/system/readiness` with an admin credential.
 - Mia cannot point at UI: make sure runtime context contains usable selectors or reviewed visible text. Use `enableScreenShare: true` only for non-DOM visual surfaces.
 - Mia only talks and does not move the cursor: run Console -> Test Mia, then ask from the host app and inspect Console -> Logs. A point/click request needs a mapped element with a stable selector or current-page bounding box.

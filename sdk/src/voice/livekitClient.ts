@@ -6,7 +6,7 @@ export class LiveKitVoiceClient {
 
   constructor(private readonly backendClient: BackendClient) {}
 
-  async connect(input: { sessionId: string; identity: string }): Promise<Room> {
+  async connect(input: { sessionId: string }): Promise<Room> {
     const session = await this.backendClient.getLiveKitToken(input);
     this.room = new Room();
     await this.room.connect(session.url, session.token);

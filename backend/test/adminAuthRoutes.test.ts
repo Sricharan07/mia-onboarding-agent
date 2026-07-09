@@ -131,8 +131,8 @@ test("console users sign in with email and password and authorize admin routes",
       url: "/api/v1/api-keys",
       headers: { authorization: `Bearer ${setupBody.token}` },
       payload: {
-        name: "SDK key",
-        scopes: ["runtime:write", "logs:write"],
+        name: "SDK token issuer",
+        scopes: ["runtime:tokens:create"],
         appId,
         allowedOrigins: ["http://localhost:3000"]
       }
@@ -219,6 +219,7 @@ test("console auth routes throttle repeated credential attempts", async () => {
     });
     assert.equal(limited.statusCode, 429);
     assert.equal(limited.json<{ error: { code: string } }>().error.code, "RATE_LIMITED");
+    assert.equal(limited.headers["retry-after"], "60");
   } finally {
     await app.close();
     rmSync(dir, { recursive: true, force: true });
@@ -431,7 +432,7 @@ test("CORS preflight allows console mutation methods", async () => {
   }
 });
 
-test("non-admin API keys are bound to one app and allowed origins", async () => {
+test("integration keys mint origin-bound runtime tokens without entering browser code", async () => {
   const dir = mkdtempSync(join(tmpdir(), "mia-app-key-"));
   const app = await buildApp(testConfig(dir));
 
@@ -458,7 +459,7 @@ test("non-admin API keys are bound to one app and allowed origins", async () => 
       headers: { authorization: `Bearer ${adminKey}` },
       payload: {
         name: "bad SDK key",
-        scopes: ["logs:write"],
+        scopes: ["runtime:tokens:create"],
         appId: "app_missing",
         allowedOrigins: ["http://localhost:3000"]
       }
@@ -470,27 +471,80 @@ test("non-admin API keys are bound to one app and allowed origins", async () => 
       url: "/api/v1/api-keys",
       headers: { authorization: `Bearer ${adminKey}` },
       payload: {
-        name: "SDK key",
-        scopes: ["logs:write"],
+        name: "SDK token issuer",
+        scopes: ["runtime:tokens:create"],
         appId,
         allowedOrigins: ["http://localhost:3000"]
       }
     });
     assert.equal(keyResponse.statusCode, 200);
-    const sdkKey = keyResponse.json<{ key: string }>().key;
+    const integrationKey = keyResponse.json<{ key: string }>().key;
+
+    const tokenResponse = await app.inject({
+      method: "POST",
+      url: "/api/v1/runtime/tokens",
+      headers: { authorization: `Bearer ${integrationKey}` },
+      payload: { appId, userId: "user-123", origin: "http://localhost:3000", capabilities: ["logs:write"] }
+    });
+    assert.equal(tokenResponse.statusCode, 200);
+    const runtimeToken = tokenResponse.json<{ token: string }>().token;
+    assert.match(runtimeToken, /^mia_rt_/);
+
+    const forbiddenTokenOrigin = await app.inject({
+      method: "POST",
+      url: "/api/v1/runtime/tokens",
+      headers: { authorization: `Bearer ${integrationKey}` },
+      payload: { appId, userId: "user-123", origin: "http://evil.test" }
+    });
+    assert.equal(forbiddenTokenOrigin.statusCode, 403);
+
+    const forbiddenCapability = await app.inject({
+      method: "POST",
+      url: "/api/v1/runtime/resolve",
+      headers: { authorization: `Bearer ${runtimeToken}`, origin: "http://localhost:3000" },
+      payload: {
+        appId,
+        sessionId: "session-1",
+        utterance: "Help",
+        context: { currentUrl: "http://localhost:3000", currentRoute: "/" }
+      }
+    });
+    assert.equal(forbiddenCapability.statusCode, 403);
 
     const ok = await app.inject({
       method: "POST",
       url: "/api/v1/logs/execution",
-      headers: { authorization: `Bearer ${sdkKey}`, origin: "http://localhost:3000" },
+      headers: { authorization: `Bearer ${runtimeToken}`, origin: "http://localhost:3000" },
       payload: { appId, eventType: "session_started" }
     });
     assert.equal(ok.statusCode, 200);
 
+    const oneUseTokenResponse = await app.inject({
+      method: "POST",
+      url: "/api/v1/runtime/tokens",
+      headers: { authorization: `Bearer ${integrationKey}` },
+      payload: { appId, userId: "user-456", origin: "http://localhost:3000", capabilities: ["logs:write"], maxUses: 1 }
+    });
+    const oneUseToken = oneUseTokenResponse.json<{ token: string }>().token;
+    const oneUseSuccess = await app.inject({
+      method: "POST",
+      url: "/api/v1/logs/execution",
+      headers: { authorization: `Bearer ${oneUseToken}`, origin: "http://localhost:3000" },
+      payload: { appId, eventType: "session_started" }
+    });
+    assert.equal(oneUseSuccess.statusCode, 200);
+    const exhausted = await app.inject({
+      method: "POST",
+      url: "/api/v1/logs/execution",
+      headers: { authorization: `Bearer ${oneUseToken}`, origin: "http://localhost:3000" },
+      payload: { appId, eventType: "session_started" }
+    });
+    assert.equal(exhausted.statusCode, 401);
+
     const wrongOrigin = await app.inject({
       method: "POST",
       url: "/api/v1/logs/execution",
-      headers: { authorization: `Bearer ${sdkKey}`, origin: "http://evil.test" },
+      headers: { authorization: `Bearer ${runtimeToken}`, origin: "http://evil.test" },
       payload: { appId, eventType: "session_started" }
     });
     assert.equal(wrongOrigin.statusCode, 403);
@@ -498,10 +552,10 @@ test("non-admin API keys are bound to one app and allowed origins", async () => 
     const missingApp = await app.inject({
       method: "POST",
       url: "/api/v1/logs/execution",
-      headers: { authorization: `Bearer ${sdkKey}`, origin: "http://localhost:3000" },
+      headers: { authorization: `Bearer ${runtimeToken}`, origin: "http://localhost:3000" },
       payload: { eventType: "session_started" }
     });
-    assert.equal(missingApp.statusCode, 403);
+    assert.equal(missingApp.statusCode, 400);
 
     const archived = await app.inject({
       method: "POST",
@@ -521,7 +575,7 @@ test("non-admin API keys are bound to one app and allowed origins", async () => 
     const archivedKeyUse = await app.inject({
       method: "POST",
       url: "/api/v1/logs/execution",
-      headers: { authorization: `Bearer ${sdkKey}`, origin: "http://localhost:3000" },
+      headers: { authorization: `Bearer ${runtimeToken}`, origin: "http://localhost:3000" },
       payload: { appId, eventType: "session_started" }
     });
     assert.equal(archivedKeyUse.statusCode, 401);
@@ -532,7 +586,7 @@ test("non-admin API keys are bound to one app and allowed origins", async () => 
       headers: { authorization: `Bearer ${adminKey}` },
       payload: {
         name: "archived SDK key",
-        scopes: ["logs:write"],
+        scopes: ["runtime:tokens:create"],
         appId,
         allowedOrigins: ["http://localhost:3000"]
       }
@@ -649,6 +703,11 @@ function testConfig(dir: string, overrides: Partial<AppConfig> = {}): AppConfig 
     CONSOLE_AUTH_RATE_LIMIT_MAX: 8,
     RATE_LIMIT_WINDOW_MS: 60_000,
     RATE_LIMIT_MAX: 300,
+    RUNTIME_TOKEN_TTL_SECONDS: 900,
+    RUNTIME_TOKEN_MAX_USES: 2_000,
+    RUNTIME_RATE_LIMIT_MAX: 180,
+    APP_RATE_LIMIT_MAX: 1_200,
+    APP_VOICE_RATE_LIMIT_MAX: 120,
     WORKFLOW_VIDEO_MAX_BYTES: 50 * 1024 * 1024,
     GEMINI_LIVE_TOKEN_RATE_LIMIT_MAX: 30,
     GEMINI_BASE_URL: "https://generativelanguage.googleapis.com",

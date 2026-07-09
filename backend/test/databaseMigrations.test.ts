@@ -11,7 +11,8 @@ import { runMigrations } from "../src/db/migrations.js";
 const currentMigrations = [
   { id: 1, name: "initial_schema" },
   { id: 2, name: "schema_hardening_columns" },
-  { id: 3, name: "foreign_key_constraints" }
+  { id: 3, name: "foreign_key_constraints" },
+  { id: 4, name: "runtime_access_tokens_and_quotas" }
 ];
 
 test("database migrations are recorded and idempotent", () => {
@@ -23,7 +24,7 @@ test("database migrations are recorded and idempotent", () => {
       first.prepare("SELECT id, name FROM schema_migrations ORDER BY id").all(),
       currentMigrations
     );
-    assert.equal(Number(first.pragma("user_version", { simple: true })), 3);
+    assert.equal(Number(first.pragma("user_version", { simple: true })), 4);
     first.close();
 
     const second = createDatabase(testConfig(dir));
@@ -51,6 +52,7 @@ test("database schema enforces core foreign key relationships", () => {
       ["workflows", 1],
       ["runtime_sessions", 2],
       ["api_keys", 1],
+      ["runtime_access_tokens", 1],
       ["console_sessions", 1]
     ]);
 
@@ -72,7 +74,7 @@ test("database hardening columns migrate when only the initial migration was rec
     db.exec(`
       DROP INDEX IF EXISTS idx_ui_elements_fingerprint;
       ALTER TABLE ui_elements DROP COLUMN fingerprint;
-      DELETE FROM schema_migrations WHERE id IN (2, 3);
+      DELETE FROM schema_migrations WHERE id IN (2, 3, 4);
       PRAGMA user_version = 1;
     `);
 
@@ -83,7 +85,7 @@ test("database hardening columns migrate when only the initial migration was rec
       db.prepare("SELECT id, name FROM schema_migrations ORDER BY id").all(),
       currentMigrations
     );
-    assert.equal(Number(db.pragma("user_version", { simple: true })), 3);
+    assert.equal(Number(db.pragma("user_version", { simple: true })), 4);
   } finally {
     db.close();
     rmSync(dir, { recursive: true, force: true });
@@ -112,7 +114,7 @@ test("foreign key migration rebuilds legacy tables without constraints", () => {
       INSERT INTO api_keys (id, name, prefix, key_hash, scopes_json, app_id, allowed_origins_json, created_at, last_used_at, revoked_at)
       SELECT id, name, prefix, key_hash, scopes_json, app_id, allowed_origins_json, created_at, last_used_at, revoked_at FROM api_keys_without_fk;
       DROP TABLE api_keys_without_fk;
-      DELETE FROM schema_migrations WHERE id = 3;
+      DELETE FROM schema_migrations WHERE id IN (3, 4);
       PRAGMA user_version = 2;
     `);
     assert.equal(foreignKeyCount(db, "api_keys"), 0);
@@ -153,6 +155,11 @@ function testConfig(dir: string): AppConfig {
     CONSOLE_AUTH_RATE_LIMIT_MAX: 8,
     RATE_LIMIT_WINDOW_MS: 60_000,
     RATE_LIMIT_MAX: 300,
+    RUNTIME_TOKEN_TTL_SECONDS: 900,
+    RUNTIME_TOKEN_MAX_USES: 2_000,
+    RUNTIME_RATE_LIMIT_MAX: 180,
+    APP_RATE_LIMIT_MAX: 1_200,
+    APP_VOICE_RATE_LIMIT_MAX: 120,
     WORKFLOW_VIDEO_MAX_BYTES: 50 * 1024 * 1024,
     GEMINI_LIVE_TOKEN_RATE_LIMIT_MAX: 30,
     GEMINI_BASE_URL: "https://generativelanguage.googleapis.com",

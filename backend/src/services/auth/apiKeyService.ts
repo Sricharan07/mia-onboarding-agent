@@ -1,9 +1,8 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { ApiKeyRecord, ApiKeyScope, Repositories } from "../../db/repositories.js";
 import { AppError } from "../../utils/errors.js";
-import { isConsoleSessionToken } from "./consoleAuthService.js";
 
-export const apiKeyScopes = ["apps:read", "ui-map:read", "workflows:read", "runtime:write", "logs:write", "logs:read", "admin"] as const;
+export const apiKeyScopes = ["apps:read", "ui-map:read", "workflows:read", "runtime:tokens:create", "logs:read", "admin"] as const;
 export type AuthenticatedApiKey = ApiKeyRecord;
 
 export class ApiKeyService {
@@ -112,6 +111,16 @@ export class ApiKeyService {
       });
     }
   }
+
+  requireAppBinding(auth: AuthenticatedApiKey | undefined, appId: string): AuthenticatedApiKey {
+    const key = this.requireScope(auth, ["runtime:tokens:create"]);
+    this.repositories.getActiveApp(appId);
+    if (key.scopes.includes("admin")) return key;
+    if (key.appId !== appId) {
+      throw new AppError("API_KEY_APP_FORBIDDEN", "API key is not allowed to access this app.", 403);
+    }
+    return key;
+  }
 }
 
 export function extractApiKey(headers: { authorization?: unknown; "x-api-key"?: unknown }): string | undefined {
@@ -121,7 +130,8 @@ export function extractApiKey(headers: { authorization?: unknown; "x-api-key"?: 
   const authorization = typeof headers.authorization === "string" ? headers.authorization : undefined;
   const match = authorization?.match(/^Bearer\s+(.+)$/i);
   const token = match?.[1];
-  return isConsoleSessionToken(token) ? undefined : token;
+  if (!token || token.startsWith("mia_console_") || token.startsWith("mia_rt_")) return undefined;
+  return token;
 }
 
 function parsePrefix(rawKey: string): string | undefined {

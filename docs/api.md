@@ -1,6 +1,6 @@
 # HTTP API
 
-All API routes live under `/api/v1`. The console uses the same API as operators, and the SDK uses app-bound scoped keys.
+All API routes live under `/api/v1`. The console and trusted integrations use API credentials; the browser SDK uses short-lived runtime tokens.
 
 ## Authentication
 
@@ -18,17 +18,20 @@ x-api-key: mia_...
 
 Console admin sessions are also accepted for admin routes through the console login flow.
 
+SDK routes use `Authorization: Bearer mia_rt_...`. A trusted host backend mints this token with `POST /api/v1/runtime/tokens`; reusable API keys must never enter browser code.
+
 ## Scopes
 
 - `admin`: full administrative access.
 - `apps:read`: list/read accessible apps.
 - `ui-map:read`: read UI map versions, pages, and elements.
 - `workflows:read`: read workflow jobs and workflows.
-- `runtime:write`: resolve runtime requests, create/update runtime workflow sessions, and mint Gemini Live tokens.
-- `logs:write`: write execution logs.
+- `runtime:tokens:create`: mint and revoke runtime tokens from a trusted app backend.
 - `logs:read`: read execution logs and usage metrics.
 
 Non-admin keys must be bound to one app and at least one allowed browser origin.
+
+Runtime token capabilities are `runtime:resolve`, `runtime:workflow`, `logs:write`, `voice:live`, `voice:tts`, and `voice:livekit`.
 
 ## System
 
@@ -58,6 +61,8 @@ Non-admin keys must be bound to one app and at least one allowed browser origin.
 - `GET /api/v1/api-keys`
 - `POST /api/v1/api-keys`
 - `DELETE /api/v1/api-keys/:keyId`
+- `POST /api/v1/runtime/tokens`
+- `DELETE /api/v1/runtime/tokens/:tokenId`
 
 App records include base URL and optional UI scan profile settings. API key creation returns the raw key once; store it immediately.
 

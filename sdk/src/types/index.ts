@@ -4,10 +4,17 @@ export type MiaCursorState = "idle" | "connecting" | "listening" | "thinking" | 
 export type MiaStatus = MiaCursorState | "ended";
 export type VoiceSessionStatus = "connecting" | "listening" | "thinking" | "speaking" | "ended" | "error";
 
+export type RuntimeToken = {
+  token: string;
+  expiresAt?: string;
+};
+
+export type RuntimeTokenProvider = () => Promise<RuntimeToken>;
+
 export type SDKConfig = {
   appId: string;
   backendUrl: string;
-  apiKey?: string;
+  tokenProvider: RuntimeTokenProvider;
   enableVoice: boolean;
   enableScreenShare?: boolean;
   voice?: {

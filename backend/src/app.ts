@@ -25,6 +25,7 @@ import { RuntimeService } from "./services/runtime/runtimeService.js";
 import { SemanticIndexService } from "./services/semantic/semanticIndexService.js";
 import { ApiKeyService } from "./services/auth/apiKeyService.js";
 import { ConsoleAuthService } from "./services/auth/consoleAuthService.js";
+import { RuntimeTokenService } from "./services/auth/runtimeTokenService.js";
 import { UsageService } from "./services/metrics/usageService.js";
 import { ReadinessService } from "./services/system/readinessService.js";
 import { GeminiLiveTokenService } from "./services/gemini/geminiLiveTokenService.js";
@@ -101,11 +102,12 @@ function createDependencies(config: AppConfig) {
       semanticIndex: new SemanticIndexService(repositories, semanticSearch),
       runtime,
       apiKeys: new ApiKeyService(repositories),
+      runtimeTokens: new RuntimeTokenService(config, repositories),
       consoleAuth: new ConsoleAuthService(config, repositories),
       usage: new UsageService(repositories),
       readiness: new ReadinessService(config, repositories),
       geminiLiveTokens: new GeminiLiveTokenService(config),
-      rateLimit: new RateLimitService(config)
+      rateLimit: new RateLimitService(config, repositories)
     }
   };
 }
@@ -115,6 +117,9 @@ function registerErrorHandler(app: FastifyInstance): void {
     request.log.error(safeErrorLogPayload(error), safeErrorLogMessage(error));
 
     if (error instanceof AppError) {
+      if (error.statusCode === 429 && isRetryAfterDetails(error.details)) {
+        reply.header("retry-after", String(Math.max(1, Math.ceil(error.details.retryAfterMs / 1_000))));
+      }
       const payload: { code: string; message: string; details?: unknown } = {
         code: error.code,
         message: clientErrorMessage(error)
@@ -156,6 +161,10 @@ function registerErrorHandler(app: FastifyInstance): void {
       }
     });
   });
+}
+
+function isRetryAfterDetails(value: unknown): value is { retryAfterMs: number } {
+  return Boolean(value && typeof value === "object" && "retryAfterMs" in value && typeof value.retryAfterMs === "number");
 }
 
 type SafeErrorLogPayload = {

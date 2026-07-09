@@ -5,7 +5,9 @@ import type { AppRecord, AppUiScanConfig, UIElementRecord, UiScanAuthMode, Workf
 import { decryptSecret, encryptSecret, hasSecretEncryptionKey, isEncryptedSecret } from "../services/security/secretCrypto.js";
 
 type Row = Record<string, unknown>;
-export type ApiKeyScope = "apps:read" | "ui-map:read" | "workflows:read" | "runtime:write" | "logs:write" | "logs:read" | "admin";
+export type ApiKeyScope = "apps:read" | "ui-map:read" | "workflows:read" | "runtime:tokens:create" | "logs:read" | "admin";
+
+export type RuntimeTokenCapability = "runtime:resolve" | "runtime:workflow" | "logs:write" | "voice:live" | "voice:tts" | "voice:livekit";
 
 export type ApiKeyRecord = {
   id: string;
@@ -21,6 +23,25 @@ export type ApiKeyRecord = {
 
 export type ApiKeySecretRecord = ApiKeyRecord & {
   keyHash: string;
+};
+
+export type RuntimeAccessTokenRecord = {
+  id: string;
+  prefix: string;
+  appId: string;
+  userId: string;
+  allowedOrigin: string;
+  capabilities: RuntimeTokenCapability[];
+  expiresAt: string;
+  maxUses: number;
+  useCount: number;
+  createdAt: string;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+};
+
+export type RuntimeAccessTokenSecretRecord = RuntimeAccessTokenRecord & {
+  tokenHash: string;
 };
 
 export type ConsoleUserRecord = {
@@ -167,6 +188,8 @@ export class Repositories {
         .run(now, now, appId);
       changes = result.changes;
       this.db.prepare("UPDATE api_keys SET revoked_at = COALESCE(revoked_at, ?) WHERE app_id = ?")
+        .run(now, appId);
+      this.db.prepare("UPDATE runtime_access_tokens SET revoked_at = COALESCE(revoked_at, ?) WHERE app_id = ?")
         .run(now, appId);
     });
     tx();
@@ -727,11 +750,11 @@ export class Repositories {
     }
   }
 
-  getRuntimeSession(id: string): { id: string; appId: string; workflowId: string; status: string } {
+  getRuntimeSession(id: string): { id: string; appId: string; workflowId: string; userId: string | null; status: string } {
     const row = this.db.prepare(`
-      SELECT id, app_id as appId, workflow_id as workflowId, status
+      SELECT id, app_id as appId, workflow_id as workflowId, user_id as userId, status
       FROM runtime_sessions WHERE id = ?
-    `).get(id) as { id: string; appId: string; workflowId: string; status: string } | undefined;
+    `).get(id) as { id: string; appId: string; workflowId: string; userId: string | null; status: string } | undefined;
     if (!row) throw new NotFoundError(`Runtime session not found: ${id}`);
     return row;
   }
@@ -816,6 +839,92 @@ export class Repositories {
 
   markApiKeyUsed(id: string): void {
     this.db.prepare("UPDATE api_keys SET last_used_at = ? WHERE id = ?").run(nowIso(), id);
+  }
+
+  createRuntimeAccessToken(input: {
+    prefix: string;
+    tokenHash: string;
+    appId: string;
+    userId: string;
+    allowedOrigin: string;
+    capabilities: RuntimeTokenCapability[];
+    expiresAt: string;
+    maxUses: number;
+  }): RuntimeAccessTokenRecord {
+    const id = createId("runtime_token");
+    this.db.prepare(`
+      INSERT INTO runtime_access_tokens (
+        id, prefix, token_hash, app_id, user_id, allowed_origin,
+        capabilities_json, expires_at, max_uses, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      input.prefix,
+      input.tokenHash,
+      input.appId,
+      input.userId,
+      input.allowedOrigin,
+      JSON.stringify(input.capabilities),
+      input.expiresAt,
+      input.maxUses,
+      nowIso()
+    );
+    return this.getRuntimeAccessToken(id);
+  }
+
+  getRuntimeAccessToken(id: string): RuntimeAccessTokenRecord {
+    const row = this.db.prepare("SELECT * FROM runtime_access_tokens WHERE id = ?").get(id) as Row | undefined;
+    if (!row) throw new NotFoundError(`Runtime access token not found: ${id}`);
+    return mapRuntimeAccessToken(row);
+  }
+
+  getRuntimeAccessTokenSecretByPrefix(prefix: string): RuntimeAccessTokenSecretRecord | undefined {
+    const row = this.db.prepare("SELECT * FROM runtime_access_tokens WHERE prefix = ? LIMIT 1").get(prefix) as Row | undefined;
+    return row ? mapRuntimeAccessTokenSecret(row) : undefined;
+  }
+
+  consumeRuntimeAccessToken(id: string, usedAt: string): boolean {
+    const result = this.db.prepare(`
+      UPDATE runtime_access_tokens
+      SET use_count = use_count + 1, last_used_at = ?
+      WHERE id = ?
+        AND revoked_at IS NULL
+        AND expires_at > ?
+        AND use_count < max_uses
+    `).run(usedAt, id, usedAt);
+    return result.changes === 1;
+  }
+
+  revokeRuntimeAccessToken(id: string): RuntimeAccessTokenRecord {
+    const result = this.db.prepare("UPDATE runtime_access_tokens SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ?")
+      .run(nowIso(), id);
+    if (result.changes === 0) throw new NotFoundError(`Runtime access token not found: ${id}`);
+    return this.getRuntimeAccessToken(id);
+  }
+
+  consumeRateLimitBucket(key: string, limit: number, windowMs: number, now: number): { allowed: boolean; retryAfterMs: number; remaining: number } {
+    const consume = this.db.transaction(() => {
+      const row = this.db.prepare("SELECT request_count, reset_at FROM rate_limit_buckets WHERE bucket_key = ?")
+        .get(key) as { request_count: number; reset_at: number } | undefined;
+      if (!row || row.reset_at <= now) {
+        this.db.prepare(`
+          INSERT INTO rate_limit_buckets (bucket_key, request_count, reset_at)
+          VALUES (?, 1, ?)
+          ON CONFLICT(bucket_key) DO UPDATE SET request_count = 1, reset_at = excluded.reset_at
+        `).run(key, now + windowMs);
+        return { allowed: true, retryAfterMs: windowMs, remaining: Math.max(0, limit - 1) };
+      }
+      if (row.request_count >= limit) {
+        return { allowed: false, retryAfterMs: Math.max(0, row.reset_at - now), remaining: 0 };
+      }
+      this.db.prepare("UPDATE rate_limit_buckets SET request_count = request_count + 1 WHERE bucket_key = ?").run(key);
+      return { allowed: true, retryAfterMs: Math.max(0, row.reset_at - now), remaining: Math.max(0, limit - row.request_count - 1) };
+    });
+    return consume();
+  }
+
+  deleteExpiredRateLimitBuckets(now: number): void {
+    this.db.prepare("DELETE FROM rate_limit_buckets WHERE reset_at <= ?").run(now);
   }
 
   countConsoleUsers(): number {
@@ -1250,6 +1359,30 @@ function mapApiKeySecret(row: Row): ApiKeySecretRecord {
   return {
     ...mapApiKey(row),
     keyHash: String(row.key_hash)
+  };
+}
+
+function mapRuntimeAccessToken(row: Row): RuntimeAccessTokenRecord {
+  return {
+    id: String(row.id),
+    prefix: String(row.prefix),
+    appId: String(row.app_id),
+    userId: String(row.user_id),
+    allowedOrigin: String(row.allowed_origin),
+    capabilities: parseStringArray(row.capabilities_json) as RuntimeTokenCapability[],
+    expiresAt: String(row.expires_at),
+    maxUses: Number(row.max_uses),
+    useCount: Number(row.use_count),
+    createdAt: String(row.created_at),
+    lastUsedAt: row.last_used_at ? String(row.last_used_at) : null,
+    revokedAt: row.revoked_at ? String(row.revoked_at) : null
+  };
+}
+
+function mapRuntimeAccessTokenSecret(row: Row): RuntimeAccessTokenSecretRecord {
+  return {
+    ...mapRuntimeAccessToken(row),
+    tokenHash: String(row.token_hash)
   };
 }
 

@@ -21,6 +21,11 @@ const migrations: Migration[] = [
     id: 3,
     name: "foreign_key_constraints",
     up: migrateForeignKeyConstraints
+  },
+  {
+    id: 4,
+    name: "runtime_access_tokens_and_quotas",
+    up: migrateRuntimeAccessTokensAndQuotas
   }
 ];
 
@@ -268,6 +273,40 @@ function migrateInitialSchema(db: Db): void {
 
 function migrateSchemaHardeningColumns(db: Db): void {
   ensureCurrentSchemaAdditions(db);
+}
+
+function migrateRuntimeAccessTokensAndQuotas(db: Db): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS runtime_access_tokens (
+      id TEXT PRIMARY KEY,
+      prefix TEXT NOT NULL UNIQUE,
+      token_hash TEXT NOT NULL,
+      app_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      allowed_origin TEXT NOT NULL,
+      capabilities_json TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      max_uses INTEGER NOT NULL,
+      use_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      last_used_at TEXT,
+      revoked_at TEXT,
+      FOREIGN KEY (app_id) REFERENCES apps(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS rate_limit_buckets (
+      bucket_key TEXT PRIMARY KEY,
+      request_count INTEGER NOT NULL,
+      reset_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_runtime_access_tokens_prefix
+      ON runtime_access_tokens(prefix);
+    CREATE INDEX IF NOT EXISTS idx_runtime_access_tokens_active
+      ON runtime_access_tokens(app_id, expires_at, revoked_at);
+    CREATE INDEX IF NOT EXISTS idx_rate_limit_buckets_reset_at
+      ON rate_limit_buckets(reset_at);
+  `);
 }
 
 function ensureCurrentSchemaAdditions(db: Db): void {

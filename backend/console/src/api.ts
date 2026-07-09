@@ -351,7 +351,7 @@ export type RuntimeResolveContext = {
   userMetadata?: Record<string, unknown>;
 };
 
-export type ApiKeyScope = "apps:read" | "ui-map:read" | "workflows:read" | "runtime:write" | "logs:write" | "logs:read" | "admin";
+export type ApiKeyScope = "apps:read" | "ui-map:read" | "workflows:read" | "runtime:tokens:create" | "logs:read" | "admin";
 
 export type ApiKeyRecord = {
   id: string;

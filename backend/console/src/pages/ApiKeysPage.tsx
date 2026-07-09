@@ -5,11 +5,11 @@ import { EmptyTableRow, InlineAlert, PageIntro, Panel, StatusPill } from "../com
 import { errorMessage, formatDate } from "../utils/format";
 
 type Notice = { tone: "red" | "green" | "yellow" | "gray"; title: string; message: string };
-type KeyMode = "browser" | "admin";
+type KeyMode = "integration" | "admin";
 
-const browserScopeOptions: ApiKeyScope[] = ["runtime:write", "logs:write", "apps:read", "ui-map:read", "workflows:read", "logs:read"];
+const integrationScopeOptions: ApiKeyScope[] = ["runtime:tokens:create", "apps:read", "ui-map:read", "workflows:read", "logs:read"];
 const presets: Array<{ label: string; scopes: ApiKeyScope[] }> = [
-  { label: "SDK runtime key", scopes: ["runtime:write", "logs:write"] },
+  { label: "SDK token issuer", scopes: ["runtime:tokens:create"] },
   { label: "Read-only integration key", scopes: ["apps:read", "ui-map:read", "workflows:read", "logs:read"] }
 ];
 
@@ -27,9 +27,9 @@ export function ApiKeysPage({
   showToast: (message: string) => void;
 }) {
   const [keys, setKeys] = useState<ApiKeyRecord[]>([]);
-  const [keyMode, setKeyMode] = useState<KeyMode>("browser");
-  const [name, setName] = useState("Local SDK key");
-  const [scopes, setScopes] = useState<ApiKeyScope[]>(["runtime:write", "logs:write"]);
+  const [keyMode, setKeyMode] = useState<KeyMode>("integration");
+  const [name, setName] = useState("SDK token issuer");
+  const [scopes, setScopes] = useState<ApiKeyScope[]>(["runtime:tokens:create"]);
   const [appId, setAppId] = useState(selectedAppId);
   const [allowedOrigins, setAllowedOrigins] = useState(() => defaultOrigin(apps.find((app) => app.id === selectedAppId)));
   const [createdKey, setCreatedKey] = useState<CreatedApiKey | null>(null);
@@ -62,7 +62,7 @@ export function ApiKeysPage({
 
   const create = async () => {
     const nextScopes: ApiKeyScope[] = keyMode === "admin" ? ["admin"] : scopes;
-    if (keyMode === "browser" && (!appId || parseOrigins(allowedOrigins).length === 0)) {
+    if (keyMode === "integration" && (!appId || parseOrigins(allowedOrigins).length === 0)) {
       const message = "Choose an app and at least one allowed origin for non-admin keys.";
       setNotice({ tone: "yellow", title: "API key needs an app boundary", message });
       showToast(message);
@@ -111,21 +111,21 @@ export function ApiKeysPage({
   return (
     <div className="page-grid">
       <PageIntro
-        title={keyMode === "admin" ? "Backend admin keys" : "Browser SDK keys"}
+        title={keyMode === "admin" ? "Backend admin keys" : "Server integration keys"}
         description={keyMode === "admin"
           ? "Create server-side keys for trusted backend automation. Admin keys are never safe for browser code."
-          : "Create app-bound runtime keys for the installed web SDK, with explicit scopes and allowed origins."}
+          : "Create app-bound server credentials that mint short-lived browser runtime tokens for approved origins."}
         action={<StatusPill tone={visibleKeys.some((key) => !key.revokedAt) ? "green" : "gray"} label={`${visibleKeys.length} keys`} />}
       />
       {notice && <InlineAlert tone={notice.tone} title={notice.title} message={notice.message} />}
       <div className="segmented-tabs" role="tablist" aria-label="API key type">
-        <button className={keyMode === "browser" ? "is-active" : ""} type="button" role="tab" aria-selected={keyMode === "browser"} onClick={() => {
-          setKeyMode("browser");
-          setName("Local SDK key");
-          setScopes(["runtime:write", "logs:write"]);
+        <button className={keyMode === "integration" ? "is-active" : ""} type="button" role="tab" aria-selected={keyMode === "integration"} onClick={() => {
+          setKeyMode("integration");
+          setName("SDK token issuer");
+          setScopes(["runtime:tokens:create"]);
           setCreatedKey(null);
         }}>
-          Browser SDK keys
+          Integration keys
         </button>
         <button className={keyMode === "admin" ? "is-active" : ""} type="button" role="tab" aria-selected={keyMode === "admin"} onClick={() => {
           setKeyMode("admin");
@@ -149,7 +149,7 @@ export function ApiKeysPage({
               setCreatedKey(null);
             }} />
           </label>
-          {keyMode === "browser" ? (
+          {keyMode === "integration" ? (
           <div>
             <div className="field-label">Scopes</div>
             <div className="preset-row">
@@ -163,7 +163,7 @@ export function ApiKeysPage({
               ))}
             </div>
             <div className="scope-grid">
-              {browserScopeOptions.map((scope) => (
+              {integrationScopeOptions.map((scope) => (
                 <label className="check-row" key={scope}>
                   <input type="checkbox" checked={scopes.includes(scope)} onChange={() => {
                     toggleScope(scope);
@@ -183,7 +183,7 @@ export function ApiKeysPage({
               </div>
             </div>
           )}
-          {keyMode === "browser" && (
+          {keyMode === "integration" && (
             <>
               <label>
                 Bound app
@@ -214,7 +214,7 @@ export function ApiKeysPage({
         <div className="panel-actions">
           <button className="button primary" type="button" onClick={() => void create()}>
             <Plus size={16} />
-            {keyMode === "admin" ? "Create admin key" : "Create browser SDK key"}
+            {keyMode === "admin" ? "Create admin key" : "Create integration key"}
           </button>
         </div>
       </Panel>
@@ -261,7 +261,7 @@ export function ApiKeysPage({
         </Panel>
       )}
 
-      <Panel title={keyMode === "admin" ? "Admin keys" : "Browser SDK keys"} action={<KeyRound size={16} />}>
+      <Panel title={keyMode === "admin" ? "Admin keys" : "Integration keys"} action={<KeyRound size={16} />}>
         <div className="table-frame">
           <table>
             <thead>
@@ -279,7 +279,7 @@ export function ApiKeysPage({
             </thead>
             <tbody>
               {visibleKeys.length === 0 && (
-                <EmptyTableRow colSpan={9} message={keyMode === "admin" ? "No admin keys created yet." : "No browser SDK keys created yet."} />
+                <EmptyTableRow colSpan={9} message={keyMode === "admin" ? "No admin keys created yet." : "No integration keys created yet."} />
               )}
               {visibleKeys.map((key) => (
                 <tr key={key.id}>
@@ -353,12 +353,24 @@ npm install /absolute/path/to/mia-onboarding-agent/mia-onboarding-agent-0.1.0.tg
 }
 
 function initSnippet(key: CreatedApiKey, app: AppRecord, backendUrl: string): string {
-  return `import { AIOnboardingAgent } from "@mia/onboarding-agent";
+  return `# Server-only environment variables
+MIA_INTEGRATION_API_KEY=${key.key}
+MIA_BACKEND_URL=${backendUrl.replace(/\/+$/, "")}
+
+# Your authenticated backend must POST to /api/v1/runtime/tokens with:
+{ "appId": "${app.id}", "userId": currentUser.id, "origin": requestOrigin }
+
+# Browser initialization
+import { AIOnboardingAgent } from "@mia/onboarding-agent";
 
 AIOnboardingAgent.init({
   appId: "${app.id}",
   backendUrl: "${backendUrl.replace(/\/+$/, "")}",
-  apiKey: "${key.key}",
+  tokenProvider: async () => {
+    const response = await fetch("/api/mia/runtime-token", { method: "POST" });
+    if (!response.ok) throw new Error("Unable to start Mia");
+    return response.json();
+  },
   enableVoice: false,
   ui: {
     assistantPanel: true

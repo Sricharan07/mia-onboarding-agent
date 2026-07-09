@@ -1,25 +1,37 @@
 import type { FastifyRequest } from "fastify";
 import type { AppConfig } from "../../config/env.js";
+import type { Repositories } from "../../db/repositories.js";
 import { AppError } from "../../utils/errors.js";
 
-type Bucket = {
-  count: number;
-  resetAt: number;
-};
-
 export class RateLimitService {
-  private readonly buckets = new Map<string, Bucket>();
+  private consumedSinceSweep = 0;
 
-  constructor(private readonly config: AppConfig) {}
+  constructor(
+    private readonly config: AppConfig,
+    private readonly repositories: Repositories
+  ) {}
 
   consume(request: FastifyRequest): void {
     if (request.method === "OPTIONS") return;
 
-    const limit = request.url.startsWith("/api/v1/gemini/live-token")
-      ? this.config.GEMINI_LIVE_TOKEN_RATE_LIMIT_MAX
-      : this.config.RATE_LIMIT_MAX;
-    const key = `${request.apiKey?.prefix ?? request.ip}:${request.method}:${routeKey(request.url)}`;
-    this.consumeBucket(key, limit);
+    const route = routeKey(request.url);
+    const principal = request.runtimeToken
+      ? `runtime:${request.runtimeToken.id}:${request.ip}`
+      : request.consoleSession
+        ? `console:${request.consoleSession.userId}:${request.ip}`
+        : request.apiKey
+          ? `api:${request.apiKey.id}:${request.ip}`
+          : `ip:${request.ip}`;
+    const principalLimit = request.runtimeToken ? this.config.RUNTIME_RATE_LIMIT_MAX : this.config.RATE_LIMIT_MAX;
+    this.consumeBucket(`${principal}:${request.method}:${route}`, principalLimit);
+
+    if (request.runtimeToken) {
+      const isVoice = route.startsWith("/api/v1/gemini/") || route.startsWith("/api/v1/tts") || route.startsWith("/api/v1/livekit/");
+      this.consumeBucket(
+        `app:${request.runtimeToken.appId}:${isVoice ? "voice" : "runtime"}`,
+        isVoice ? this.config.APP_VOICE_RATE_LIMIT_MAX : this.config.APP_RATE_LIMIT_MAX
+      );
+    }
   }
 
   consumeConsoleAuth(request: FastifyRequest, action: "login" | "setup", subject?: string): void {
@@ -33,26 +45,18 @@ export class RateLimitService {
 
   private consumeBucket(key: string, limit: number): void {
     const now = Date.now();
-    const bucket = this.buckets.get(key);
-
-    if (!bucket || bucket.resetAt <= now) {
-      this.buckets.set(key, { count: 1, resetAt: now + this.config.RATE_LIMIT_WINDOW_MS });
-      this.sweep(now);
-      return;
+    const result = this.repositories.consumeRateLimitBucket(key, limit, this.config.RATE_LIMIT_WINDOW_MS, now);
+    this.consumedSinceSweep += 1;
+    if (this.consumedSinceSweep >= 1_000) {
+      this.repositories.deleteExpiredRateLimitBuckets(now);
+      this.consumedSinceSweep = 0;
     }
-
-    bucket.count += 1;
-    if (bucket.count > limit) {
+    if (!result.allowed) {
       throw new AppError("RATE_LIMITED", "Too many requests. Try again later.", 429, {
-        retryAfterMs: Math.max(0, bucket.resetAt - now)
+        retryAfterMs: result.retryAfterMs,
+        remaining: result.remaining,
+        limit
       });
-    }
-  }
-
-  private sweep(now: number): void {
-    if (this.buckets.size < 10_000) return;
-    for (const [key, bucket] of this.buckets) {
-      if (bucket.resetAt <= now) this.buckets.delete(key);
     }
   }
 }

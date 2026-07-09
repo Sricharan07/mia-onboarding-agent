@@ -262,8 +262,7 @@ function buildActivationSteps({
   const mapReady = latestUiMap?.status === "completed" && pages.length > 0;
   const sdkKeyReady = apiKeys.some((key) => !key.revokedAt
     && key.appId === app.id
-    && key.scopes.includes("runtime:write")
-    && key.scopes.includes("logs:write"));
+    && key.scopes.includes("runtime:tokens:create"));
   const runtimeSeen = logs.some((log) => log.eventType === "session_started" || log.eventType.startsWith("workflow_") || log.eventType.startsWith("sdk_"));
   const miaResolved = logs.some((log) => log.eventType === "runtime_resolution" || log.eventType === "voice_resolution");
   const miaPointedOrActed = logs.some((log) => {

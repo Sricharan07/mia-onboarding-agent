@@ -27,7 +27,11 @@ import { AIOnboardingAgent } from "@mia/onboarding-agent";
 AIOnboardingAgent.init({
   appId: "app_example",
   backendUrl: "https://mia.example.com",
-  apiKey: "mia_<prefix>_<secret>",
+  tokenProvider: async () => {
+    const response = await fetch("/api/mia/runtime-token", { method: "POST" });
+    if (!response.ok) throw new Error("Unable to start Mia");
+    return response.json();
+  },
   enableVoice: true,
   ui: {
     assistantPanel: true
@@ -58,15 +62,13 @@ Calling `init` again automatically destroys the previous SDK instance before cre
 
 ## Required Backend Setup
 
-Create an app-bound SDK key in the MIA console with:
+Create an app-bound server integration key in the MIA console with:
 
-- `runtime:write`
-- `logs:write`
+- `runtime:tokens:create`
 - the target `appId`
 - allowed browser origins for the host app
 
-Do not ship admin API keys in browser code.
-The SDK key's allowed origins must include the exact browser origin that loads the host app.
+Keep this key in the host backend and use it to call `POST /api/v1/runtime/tokens` for the authenticated user. Do not ship admin or integration API keys in browser code. The key's allowed origins must include the exact browser origin that loads the host app.
 
 ## Configuration
 
@@ -76,7 +78,7 @@ The SDK accepts visual options under `ui`, user identity under `user`, and priva
 AIOnboardingAgent.init({
   appId: "app_example",
   backendUrl: "https://mia.example.com",
-  apiKey: "mia_<prefix>_<secret>",
+  tokenProvider: async () => (await fetch("/api/mia/runtime-token", { method: "POST" })).json(),
   ui: {
     assistantPanel: true,
     theme: "auto",
@@ -107,7 +109,7 @@ Mia is DOM-first. Runtime pointing, simple visible-element actions such as click
 
 Voice user transcripts, final assistant transcripts, runtime resolutions, and voice errors are written to execution logs so operators can debug what Mia heard and said.
 
-If voice fails, check the backend readiness endpoint with an admin credential and confirm the SDK key has `runtime:write`. If Mia talks but does not point or act, use Console -> Test Mia for a resolver dry-run and Console -> Logs to confirm real host-app targets and element actions.
+If voice fails, check the backend readiness endpoint with an admin credential and confirm runtime tokens include `voice:live`. If Mia talks but does not point or act, use Console -> Test Mia for a resolver dry-run and Console -> Logs to confirm real host-app targets and element actions.
 
 ## License
 

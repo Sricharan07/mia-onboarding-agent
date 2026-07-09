@@ -1,6 +1,9 @@
 import type { GeminiLiveTokenResponse, ResolveResponse, SDKConfig, SDKRuntimeContext } from "../types/index.js";
 
 export class BackendClient {
+  private cachedToken?: RuntimeTokenCache;
+  private tokenRequest?: Promise<RuntimeTokenCache>;
+
   constructor(private readonly config: SDKConfig) {}
 
   async resolve(input: { sessionId: string; utterance: string; context: SDKRuntimeContext }): Promise<ResolveResponse> {
@@ -46,11 +49,10 @@ export class BackendClient {
     });
   }
 
-  async getLiveKitToken(input: { sessionId: string; identity: string }): Promise<{ token: string; url: string }> {
+  async getLiveKitToken(input: { sessionId: string }): Promise<{ token: string; url: string }> {
     return this.post("/api/v1/livekit/token", {
       appId: this.config.appId,
       sessionId: input.sessionId,
-      identity: input.identity
     });
   }
 
@@ -63,20 +65,60 @@ export class BackendClient {
   }
 
   private async request<T>(path: string, input: { method: string; body?: unknown }): Promise<T> {
-    const response = await fetchWithBackendError(`${this.config.backendUrl.replace(/\/+$/, "")}${path}`, {
-      method: input.method,
-      headers: {
-        "content-type": "application/json",
-        ...(this.config.apiKey ? { authorization: `Bearer ${this.config.apiKey}` } : {})
-      },
-      body: input.body === undefined ? undefined : JSON.stringify(input.body)
-    }, this.config.backendUrl);
-    const json = await response.json();
-    if (!response.ok || json?.error) {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const token = await this.getRuntimeToken(attempt > 0);
+      const response = await fetchWithBackendError(`${this.config.backendUrl.replace(/\/+$/, "")}${path}`, {
+        method: input.method,
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${token}`
+        },
+        body: input.body === undefined ? undefined : JSON.stringify(input.body)
+      }, this.config.backendUrl);
+      const json = await response.json();
+      if (response.ok && !json?.error) return json as T;
+      const code = typeof json?.error?.code === "string" ? json.error.code : undefined;
+      if (attempt === 0 && response.status === 401 && isRefreshableRuntimeTokenError(code)) {
+        this.cachedToken = undefined;
+        continue;
+      }
       throw new Error(json?.error?.message ?? `Backend request failed: ${response.status}`);
     }
-    return json as T;
+    throw new Error("Runtime token refresh failed.");
   }
+
+  private async getRuntimeToken(forceRefresh: boolean): Promise<string> {
+    if (!forceRefresh && this.cachedToken && this.cachedToken.refreshAt > Date.now()) {
+      return this.cachedToken.token;
+    }
+    if (!forceRefresh && this.tokenRequest) return (await this.tokenRequest).token;
+    this.tokenRequest = this.config.tokenProvider().then((result) => {
+      if (!result?.token) throw new Error("Mia tokenProvider returned an empty runtime token.");
+      const expiresAt = result.expiresAt ? Date.parse(result.expiresAt) : Number.NaN;
+      const refreshAt = Number.isFinite(expiresAt)
+        ? Math.max(Date.now(), expiresAt - 30_000)
+        : Date.now() + 60_000;
+      const next = { token: result.token, refreshAt };
+      this.cachedToken = next;
+      return next;
+    }).finally(() => {
+      this.tokenRequest = undefined;
+    });
+    return (await this.tokenRequest).token;
+  }
+}
+
+type RuntimeTokenCache = {
+  token: string;
+  refreshAt: number;
+};
+
+function isRefreshableRuntimeTokenError(code: string | undefined): boolean {
+  return code === "INVALID_RUNTIME_TOKEN"
+    || code === "RUNTIME_TOKEN_EXPIRED"
+    || code === "RUNTIME_TOKEN_EXHAUSTED"
+    || code === "RUNTIME_TOKEN_REVOKED"
+    || code === "RUNTIME_TOKEN_UNAVAILABLE";
 }
 
 async function fetchWithBackendError(url: string, init: RequestInit, backendUrl: string): Promise<Response> {

@@ -244,11 +244,11 @@ The console opens on `http://localhost:5173` and the demo CRM opens on `http://l
 6. Upload a workflow recording.
 7. Review the generated workflow and clear safety blockers.
 8. Publish the workflow only when the selectors, steps, and confirmation rules are correct.
-9. Create an app-bound browser SDK key with `runtime:write` and `logs:write`.
-10. Install the SDK in the host app using the console-generated snippet.
+9. Create an app-bound server integration key with `runtime:tokens:create` and keep it out of browser code.
+10. Add an authenticated host-backend endpoint that exchanges the signed-in user for a short-lived runtime token, then install the SDK using the console-generated snippet.
 11. Open Console -> Test Mia to dry-run answers, pointing, and action resolution before giving the workflow to users.
 
-All non-admin SDK keys must include `appId`, allowed browser origins, and the correct scopes. Admin keys are for trusted server-side automation only.
+Integration keys are bound to one `appId` and the browser origins for which they may mint tokens. Only short-lived `mia_rt_...` tokens belong in browser memory. Admin and integration keys are server-side credentials.
 
 ## Privacy And Safety
 
@@ -258,7 +258,11 @@ The SDK redacts visible DOM text by default before context leaves the browser. K
 AIOnboardingAgent.init({
   appId: "app_local",
   backendUrl: "http://localhost:4000",
-  apiKey: "...",
+  tokenProvider: async () => {
+    const response = await fetch("/api/mia/runtime-token", { method: "POST" });
+    if (!response.ok) throw new Error("Unable to start Mia");
+    return response.json();
+  },
   enableVoice: true,
   privacy: {
     redactText: true,
