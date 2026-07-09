@@ -79,6 +79,34 @@ export async function scanVisibleElements(page: Page, options: { ignoredSelector
         ?? labelledBy(table)
         ?? text(table.querySelector("caption,h1,h2,h3,h4,h5,h6")?.textContent);
     };
+    const cssString = (value) => Array.from(value).map((character) => {
+      const code = character.codePointAt(0) ?? 0;
+      if (character === "\\\\" || character === "'") return "\\\\" + character;
+      if (code === 0) return "\\\\fffd ";
+      if (code < 0x20 || code === 0x7f) return "\\\\" + code.toString(16) + " ";
+      return character;
+    }).join("");
+    const domPath = (element) => {
+      const parts = [];
+      let current = element;
+      while (current instanceof HTMLElement && current !== document.documentElement) {
+        const tag = current.tagName.toLowerCase();
+        if (current.id) {
+          parts.unshift("[id='" + cssString(current.id) + "']");
+          break;
+        }
+        const parent = current.parentElement;
+        if (!parent) {
+          parts.unshift(tag);
+          break;
+        }
+        const siblings = Array.from(parent.children).filter((sibling) => sibling.tagName === current.tagName);
+        const position = siblings.indexOf(current) + 1;
+        parts.unshift(siblings.length > 1 ? tag + ":nth-of-type(" + position + ")" : tag);
+        current = parent;
+      }
+      return parts.join(" > ");
+    };
     return nodes
       .filter((node) => node instanceof HTMLElement && visible(node) && !matchesAny(node, ignoredSelectors))
       .map((element) => {
@@ -108,6 +136,7 @@ export async function scanVisibleElements(page: Page, options: { ignoredSelector
           inputType: element.type || undefined,
           title: redacted ? undefined : element.getAttribute("title") ?? undefined,
           href: element.href || undefined,
+          domPath: domPath(element),
           sectionName: redacted ? undefined : nearestHeading(element),
           formName: redacted ? undefined : nearestForm(element),
           dialogName: redacted ? undefined : nearestDialog(element),

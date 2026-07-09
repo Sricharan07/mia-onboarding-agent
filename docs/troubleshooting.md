@@ -79,7 +79,7 @@ Supported uploads are MP4, MOV, WebM, MKV, and MPEG. The backend validates MIME 
 
 - Open Console -> Test Mia and run a prompt such as `Where is the stage filter?` or `Click the stage filter`.
 - If Test Mia cannot find a target, rescan or review the UI map until the element has a medium or strong selector.
-- If Test Mia finds a target but the host app does not move the cursor, ask from the SDK assistant panel and inspect Console -> Logs for `runtime_resolution`, `voice_resolution`, and `element_action_completed`.
+- If Test Mia finds a target but the host app does not move the cursor, ask from the SDK assistant panel and inspect Console -> Logs for `runtime_resolution`, `voice_resolution`, and `element_action_completed`, `element_action_unverified`, or `element_action_failed`.
 - Keep `privacy.redactText: true` for production by default, but provide stable labels/selectors for controls Mia should understand.
 - Enable screen sharing only when the DOM cannot describe the surface, such as canvas charts, images, videos, PDFs, or custom-rendered UI.
 

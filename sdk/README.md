@@ -106,7 +106,7 @@ With `enableVoice: true`, users can also hold `Control+Space` for push-to-talk. 
 
 Mia uses Gemini Live voice `Aoede` by default. Override `voice.voiceName` only after testing the replacement voice in Google AI Studio.
 
-Mia is DOM-first. Runtime pointing, simple visible-element actions such as click/focus, and workflows use collected DOM context, stable selectors, and element bounding boxes. Set `enableScreenShare: true` only for visual content the DOM cannot describe well, such as canvas charts, images, videos, PDFs, or custom-rendered surfaces.
+Mia is DOM-first. UI maps and live runtime context use structured CSS, role/name, label, and exact-text locators. Element bounding boxes are used only to position Mia's cursor, never as an action target. Direct click/focus requests always require confirmation, and the SDK reports completion only after it verifies a URL, control state, value, or relevant DOM change. Set `enableScreenShare: true` only for visual content the DOM cannot describe well, such as canvas charts, images, videos, PDFs, or custom-rendered surfaces.
 
 URL query strings, page titles, user metadata, and telemetry payloads are omitted by default. Workflow values remain in memory only, and Mia never collects secret or payment fields. Screen sharing requires a redaction callback or an explicit unredacted-screen decision.
 

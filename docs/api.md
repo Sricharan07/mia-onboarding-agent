@@ -92,7 +92,7 @@ Automated scans accept explicit routes and optional auth mode. Preflight checks 
 
 UI map version records include scan progress fields for console polling and external operators: `routes`, `routeCount`, `pageCount`, `failedPageCount`, `elementCount`, `strongSelectorCount`, `mediumSelectorCount`, and `weakSelectorCount`.
 
-Completing a new UI map invalidates approvals for workflows bound to an older map. The workflow review report blocks missing routes, unresolved actions, low target-match confidence, stale fingerprints, selector warnings, non-unique selectors, type/route changes, and dangerous automatic actions.
+Completing a new UI map invalidates approvals for workflows bound to an older map. UI elements expose ordered structured locators for standard CSS, role/name, label, and exact text; Playwright-only pseudo-selectors are never sent to the browser SDK. The workflow review report blocks missing routes, unresolved actions, low target-match confidence, stale fingerprints, locator changes, selector warnings, non-unique selectors, type/route changes, and dangerous automatic actions.
 
 ## Workflows
 

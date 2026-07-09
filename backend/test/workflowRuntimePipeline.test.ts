@@ -13,6 +13,7 @@ import type { UIElementRecord, Workflow } from "../src/schemas/domain.js";
 import { RuntimeService } from "../src/services/runtime/runtimeService.js";
 import { SemanticIndexService } from "../src/services/semantic/semanticIndexService.js";
 import { InteractiveUiMapScanService } from "../src/services/ui-map/interactiveScanService.js";
+import { buildUiElementRecord } from "../src/services/ui-map/selector.js";
 import { UiMapService } from "../src/services/ui-map/uiMapService.js";
 import { ReadinessService } from "../src/services/system/readinessService.js";
 import { WorkflowCompiler } from "../src/services/workflows/compiler.js";
@@ -46,6 +47,29 @@ test("workflow compiler creates unique ids and review steps for unmatched record
   assert.notEqual(first.workflowId, second.workflowId);
   assert.equal(first.steps[0]?.type, "review_required");
   assert.equal(first.steps[1]?.type, "review_required");
+});
+
+test("UI map records use standard CSS plus structured semantic locators", () => {
+  const record = buildUiElementRecord({
+    appId: "app_one",
+    uiMapVersionId: "map_one",
+    pageId: "page_one",
+    pageName: "Team",
+    route: "/team",
+    index: 17,
+    raw: {
+      tagName: "BUTTON",
+      label: "Invite teammate",
+      text: "Invite teammate",
+      domPath: "main > section > button:nth-of-type(2)",
+      boundingBox: { x: 10, y: 20, width: 100, height: 32 }
+    }
+  });
+
+  assert.equal(record.selector, "main > section > button:nth-of-type(2)");
+  assert.equal(record.selector.includes(":has-text("), false);
+  assert.ok(record.locators.some((locator) => locator.strategy === "role" && locator.role === "button" && locator.name === "Invite teammate"));
+  assert.ok(record.locators.some((locator) => locator.strategy === "text" && locator.text === "Invite teammate"));
 });
 
 test("workflow compiler honors requested upload metadata", async () => {
@@ -108,6 +132,11 @@ test("workflow compiler never collects secret or payment values", async () => {
       label: "Account password",
       selector: '[data-testid="password-field"]',
       fallbackSelectors: [],
+      locators: [
+        { strategy: "css", selector: '[data-testid="password-field"]' },
+        { strategy: "role", role: "button", name: "Account password" },
+        { strategy: "text", text: "Account password", tagName: "button" }
+      ],
       route: "/",
       pageName: "Home",
       uiMapVersionId: "map_one",
@@ -510,8 +539,29 @@ test("runtime resolve returns visible element actions for direct click requests"
 
   assert.equal(result.type, "element_action");
   assert.equal(result.action, "click");
-  assert.equal(result.executionPolicy, "auto");
+  assert.equal(result.executionPolicy, "requires_confirmation");
   assert.equal(result.target?.label, "Invite teammate");
+});
+
+test("runtime treats where-do-I-click questions as pointing, not actions", async () => {
+  const gateway: ModelGatewayAdapter = {
+    generateJson: async <T>() => ({ data: {} as T, raw: {} }),
+    generateText: async () => {
+      throw new Error("Pointing requests should resolve without text generation.");
+    },
+    analyzeImagesOrVideo: async <T>() => ({ data: {} as T, raw: {} })
+  };
+  const runtime = new RuntimeService(runtimeRepositories("workflow"), gateway, emptySearch);
+
+  const result = await runtime.resolve({
+    appId: "app_one",
+    sessionId: "session_one",
+    utterance: "Where do I click to invite someone?",
+    context: runtimeContext()
+  });
+
+  assert.equal(result.type, "answer");
+  assert.match(result.message, /^Pointing to /);
 });
 
 test("Q&A-only runtime mode never returns executable actions", async () => {
@@ -699,6 +749,7 @@ test("a new UI map invalidates published workflow approvals and changed targets"
           label: firstTarget.label,
           selector: firstTarget.selector,
           fallbackSelectors: [],
+          locators: firstTarget.locators,
           route: firstTarget.route,
           pageName: firstTarget.pageName,
           uiMapVersionId: firstTarget.uiMapVersionId,
@@ -883,10 +934,34 @@ function runtimeContext() {
     currentUrl: "http://localhost:3000/team",
     currentRoute: "/team",
     pageTitle: "Team settings",
-    focusedElement: { tagName: "button", role: "button", label: "Invite teammate", text: "Invite", boundingBox: { x: 24, y: 32, width: 140, height: 36 } },
+    focusedElement: {
+      tagName: "button",
+      role: "button",
+      label: "Invite teammate",
+      text: "Invite",
+      selector: '[data-testid="invite-button"]',
+      locators: [
+        { strategy: "css" as const, selector: '[data-testid="invite-button"]' },
+        { strategy: "role" as const, role: "button", name: "Invite teammate" }
+      ],
+      elementId: "invite-button",
+      boundingBox: { x: 24, y: 32, width: 140, height: 36 }
+    },
     hoveredElement: null,
     visibleElements: [
-      { tagName: "button", role: "button", label: "Invite teammate", text: "Invite", boundingBox: { x: 24, y: 32, width: 140, height: 36 } }
+      {
+        tagName: "button",
+        role: "button",
+        label: "Invite teammate",
+        text: "Invite",
+        selector: '[data-testid="invite-button"]',
+        locators: [
+          { strategy: "css" as const, selector: '[data-testid="invite-button"]' },
+          { strategy: "role" as const, role: "button", name: "Invite teammate" }
+        ],
+        elementId: "invite-button",
+        boundingBox: { x: 24, y: 32, width: 140, height: 36 }
+      }
     ],
     userMetadata: {}
   };
@@ -950,6 +1025,11 @@ function uiElement(input: {
     selector: `[data-testid="${input.elementId}"]`,
     selectorType: "data-testid",
     fallbackSelectors: [],
+    locators: [
+      { strategy: "css", selector: `[data-testid="${input.elementId}"]` },
+      { strategy: "role", role: "button", name: input.label },
+      { strategy: "text", text: input.label, tagName: "button" }
+    ],
     nearbyText: [],
     tags: [],
     selectorQuality: input.selectorQuality ?? "strong",
@@ -969,8 +1049,17 @@ function compilerRepositories(): Repositories {
 }
 
 function runtimeRepositories(runtimeMode: "qa_only" | "workflow"): Repositories {
+  const mapped = uiElement({
+    appId: "app_one",
+    uiMapVersionId: "map_one",
+    pageId: "page_team",
+    elementId: "invite-button",
+    label: "Invite teammate",
+    route: "/team"
+  });
   return {
-    getActiveApp: () => ({ uiScanConfig: { runtimeMode } })
+    getActiveApp: () => ({ uiScanConfig: { runtimeMode } }),
+    listLatestUiElementsForApp: () => [mapped]
   } as unknown as Repositories;
 }
 

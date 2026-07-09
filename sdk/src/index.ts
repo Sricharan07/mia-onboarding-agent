@@ -1,8 +1,8 @@
 import { BackendClient } from "./client/backendClient.js";
-import { collectRuntimeContext } from "./context/collectRuntimeContext.js";
+import { collectRuntimeContext, installRuntimeContextTracking } from "./context/collectRuntimeContext.js";
 import { MiaShadowCursor } from "./cursor/MiaShadowCursor.js";
-import { activateElement } from "./execution/activateElement.js";
-import { findElement } from "./execution/elementResolution.js";
+import { executeElementAction } from "./execution/activateElement.js";
+import { resolveElement } from "./execution/elementResolution.js";
 import { WorkflowExecutor } from "./execution/WorkflowExecutor.js";
 import type { GeminiLiveEvent, MiaStatus, ResolveResponse, RuntimeElementContext, SDKConfig } from "./types/index.js";
 import { MiaAssistantPanel } from "./ui/MiaAssistantPanel.js";
@@ -27,6 +27,7 @@ class AIOnboardingAgentInstance {
   private pendingWorkflowInputCleanup?: () => void;
   private suppressNextAssistantResponse = false;
   private removePushToTalkListeners?: () => void;
+  private removeRuntimeContextTracking?: () => void;
   private pushToTalkHeld = false;
   private pushToTalkVoiceSession = false;
   private voiceStartPromise?: Promise<void>;
@@ -67,6 +68,7 @@ class AIOnboardingAgentInstance {
     }
     this.promptUi = new MiaPromptUI();
     this.voice = new GeminiLiveClient(this.backendClient);
+    this.removeRuntimeContextTracking = installRuntimeContextTracking();
     this.installPushToTalk();
     void this.backendClient.logExecution({
       sessionId: this.sessionId,
@@ -80,6 +82,8 @@ class AIOnboardingAgentInstance {
     const activeConfig = this.config;
     this.removePushToTalkListeners?.();
     this.removePushToTalkListeners = undefined;
+    this.removeRuntimeContextTracking?.();
+    this.removeRuntimeContextTracking = undefined;
     this.pushToTalkHeld = false;
     this.pushToTalkVoiceSession = false;
     this.voiceStartPromise = undefined;
@@ -318,14 +322,21 @@ class AIOnboardingAgentInstance {
     this.cursor.setState("guiding");
     this.cursor.setBubbleText(result.message);
 
-    const element = resolveRuntimeTargetElement(result.target);
-    if (!element) {
+    const resolution = resolveElement(result.target);
+    if (resolution.status !== "resolved") {
       this.pointAtResolveTarget({ type: "answer", message: result.message, target: result.target });
+      this.cursor.setBubbleText(resolution.message);
+      this.logExecutionEvent("element_action_failed", {
+        action: result.action,
+        reason: resolution.status,
+        target: targetLogPayload(result.target)
+      });
       this.cursor.startBubbleFade();
       this.setStatus(this.isVoiceConnected() ? "listening" : "idle");
       return;
     }
 
+    const element = resolution.element;
     element.scrollIntoView({ behavior: "smooth", block: "center" });
     await wait(260);
     const rect = element.getBoundingClientRect();
@@ -342,17 +353,15 @@ class AIOnboardingAgentInstance {
       }
     }
 
-    if (result.action === "click") {
-      activateElement(element as HTMLElement);
-    } else {
-      (element as HTMLElement).focus();
-    }
-    this.logExecutionEvent("element_action_completed", {
+    const actionResult = await executeElementAction({ element, action: result.action, locator: resolution.locator });
+    this.logExecutionEvent(`element_action_${actionResult.status}`, {
       action: result.action,
-      target: targetLogPayload(result.target)
+      target: targetLogPayload(result.target),
+      result: actionResult
     });
     this.cursor.returnToCursor();
-    this.cursor.setBubbleText("Done");
+    this.cursor.setBubbleText(actionResult.message);
+    if (actionResult.status === "failed") this.promptUi.showError(actionResult.message);
     this.cursor.startBubbleFade();
     this.setStatus(this.isVoiceConnected() ? "listening" : "idle");
   }
@@ -632,22 +641,16 @@ function targetLogPayload(target: RuntimeElementContext): Record<string, unknown
     text: target.text,
     elementId: target.elementId,
     selector: target.selector,
+    locators: target.locators,
+    mappedElementId: target.mappedElementId,
+    uiMapVersionId: target.uiMapVersionId,
+    fingerprint: target.fingerprint,
     boundingBox: target.boundingBox
   };
 }
 
 function targetLabel(target: RuntimeElementContext): string {
   return target.label ?? target.text ?? target.elementId ?? target.selector ?? "target";
-}
-
-function resolveRuntimeTargetElement(target: RuntimeElementContext): Element | null {
-  if (target.selector) {
-    const element = findElement(target.selector);
-    if (element) return element;
-  }
-  const box = target.boundingBox;
-  if (!box) return null;
-  return document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
 }
 
 function wait(ms: number): Promise<void> {

@@ -296,7 +296,12 @@ export class WorkflowService {
             fix: "Inspect and re-select the intended element."
           });
         }
-        if (step.target.selector !== element.selector || step.target.elementType !== element.elementType || step.target.route !== element.route) {
+        if (
+          step.target.selector !== element.selector
+          || step.target.elementType !== element.elementType
+          || step.target.route !== element.route
+          || !sameLocators(step.target.locators, element.locators)
+        ) {
           issues.push({
             id: `target-definition:${step.id}`,
             severity: "blocker",
@@ -413,6 +418,13 @@ export class WorkflowService {
   }
 }
 
+function sameLocators(
+  left: import("../../schemas/domain.js").TargetLocator[] | undefined,
+  right: import("../../schemas/domain.js").TargetLocator[] | undefined
+): boolean {
+  return JSON.stringify(left ?? []) === JSON.stringify(right ?? []);
+}
+
 function isTargetStep(step: WorkflowStep): step is Extract<WorkflowStep, { type: "click" | "focus" | "fill" | "select" | "wait_for_element" }> {
   return step.type === "click" || step.type === "focus" || step.type === "fill" || step.type === "select" || step.type === "wait_for_element";
 }
@@ -457,6 +469,7 @@ export function assertWorkflowRuntimeBinding(repositories: Repositories, workflo
       || step.target.selector !== current.selector
       || step.target.route !== current.route
       || step.target.elementType !== current.elementType
+      || !sameLocators(step.target.locators, current.locators)
       || repositories.countLatestElementsBySelector(workflow.appId, step.target.selector) !== 1) {
       throw new AppError("WORKFLOW_TARGET_STALE", `Workflow target is stale: ${step.target.elementId}`, 409);
     }

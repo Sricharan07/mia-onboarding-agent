@@ -11,6 +11,12 @@ export type RuntimeToken = {
 
 export type RuntimeTokenProvider = () => Promise<RuntimeToken>;
 
+export type TargetLocator =
+  | { strategy: "css"; selector: string }
+  | { strategy: "role"; role: string; name?: string }
+  | { strategy: "label"; label: string }
+  | { strategy: "text"; text: string; tagName?: string };
+
 export type SDKConfig = {
   appId: string;
   backendUrl: string;
@@ -60,7 +66,11 @@ export type RuntimeElementContext = {
   label?: string;
   text?: string;
   selector?: string;
+  locators?: TargetLocator[];
   elementId?: string;
+  mappedElementId?: string;
+  uiMapVersionId?: string;
+  fingerprint?: string;
   boundingBox?: { x: number; y: number; width: number; height: number };
 };
 
@@ -81,6 +91,7 @@ export type WorkflowTarget = {
   label?: string;
   selector: string;
   fallbackSelectors?: string[];
+  locators: TargetLocator[];
   route?: string;
   pageName?: string;
   uiMapVersionId?: string;
@@ -115,7 +126,7 @@ export type Workflow = {
 export type ResolveResponse =
   | { type: "workflow"; workflow: Workflow; message: string }
   | { type: "control"; action: "cancel" | "pause" | "resume"; message: string }
-  | { type: "element_action"; action: "click" | "focus"; target: RuntimeElementContext; executionPolicy: "auto" | "requires_confirmation"; message: string }
+  | { type: "element_action"; action: "click" | "focus"; target: RuntimeElementContext; executionPolicy: "requires_confirmation"; message: string }
   | { type: "answer"; message: string; target?: RuntimeElementContext }
   | { type: "no_match"; message: string; target?: RuntimeElementContext };
 
@@ -148,3 +159,22 @@ export type SDKEvent =
   | { type: "step_failed"; workflowId: string; stepId: string; error: string }
   | { type: "workflow_completed"; workflowId: string }
   | { type: "workflow_cancelled"; workflowId: string };
+
+export type BrowserActionResult = {
+  status: "completed" | "unverified" | "failed";
+  action: "click" | "focus" | "fill" | "select";
+  message: string;
+  evidence: {
+    locator?: TargetLocator;
+    urlChanged?: boolean;
+    focusChanged?: boolean;
+    valueChanged?: boolean;
+    checkedChanged?: boolean;
+    selectedIndexChanged?: boolean;
+    expandedChanged?: boolean;
+    selectedChanged?: boolean;
+    pressedChanged?: boolean;
+    openChanged?: boolean;
+    domMutations?: number;
+  };
+};

@@ -1,6 +1,6 @@
 import type { Repositories } from "../../db/repositories.js";
 import type { ModelGatewayAdapter, SemanticSearchAdapter } from "../../adapters/interfaces.js";
-import type { SDKRuntimeContext, Workflow } from "../../schemas/domain.js";
+import type { SDKRuntimeContext, TargetLocator, UIElementRecord, Workflow } from "../../schemas/domain.js";
 import { AppError, NotFoundError } from "../../utils/errors.js";
 import { assertWorkflowRuntimeBinding } from "../workflows/workflowService.js";
 
@@ -47,19 +47,32 @@ export class RuntimeService {
       }
     }
 
-    const target = findVisibleTarget(input.utterance, input.context);
-    const elementAction = target ? parseElementAction(input.utterance) : undefined;
-    if (workflowMode && target && elementAction) {
+    const intent = classifyRuntimeIntent(input.utterance);
+    const mappedTarget = findMappedVisibleTarget(
+      input.utterance,
+      input.context,
+      this.repositories.listLatestUiElementsForApp(input.appId, 500)
+    );
+    const target = mappedTarget ?? findVisibleTarget(input.utterance, input.context);
+    if (workflowMode && mappedTarget && intent.type === "action" && hasExecutableLiveLocator(mappedTarget)) {
       return {
         type: "element_action",
-        action: elementAction,
-        target,
-        executionPolicy: requiresConfirmation(input.utterance, target) ? "requires_confirmation" : "auto",
-        message: elementAction === "click" ? `Clicking ${describeTarget(target)}.` : `Focusing ${describeTarget(target)}.`
+        action: intent.action,
+        target: mappedTarget,
+        executionPolicy: "requires_confirmation" as const,
+        message: `Ready to ${intent.action} ${describeTarget(mappedTarget)} after your confirmation.`
       };
     }
 
-    if (target && isPointingRequest(input.utterance)) {
+    if (workflowMode && target && intent.type === "action") {
+      return {
+        type: "no_match",
+        message: `I found ${describeTarget(target)}, but it is not verified against the current UI map, so I did not act on it.`,
+        target
+      };
+    }
+
+    if (target && intent.type === "point") {
       return {
         type: "answer",
         message: `Pointing to ${describeTarget(target)}.`,
@@ -101,6 +114,11 @@ ${summarizeRuntimeContext(input.context)}`
     return undefined;
   }
 }
+
+type RuntimeIntent =
+  | { type: "point" }
+  | { type: "action"; action: "click" | "focus" }
+  | { type: "answer" };
 
 function controlMessage(action: "cancel" | "pause" | "resume"): string {
   if (action === "cancel") return "Okay, I stopped the current workflow.";
@@ -156,6 +174,71 @@ function findVisibleTarget(utterance: string, context: RuntimeContextInput): Run
   const minimumScore = terms.length === 1 ? 2.1 : TARGET_MATCH_THRESHOLD;
   if (!best || best.score < minimumScore) return undefined;
   return best.element;
+}
+
+function findMappedVisibleTarget(
+  utterance: string,
+  context: RuntimeContextInput,
+  elements: UIElementRecord[]
+): RuntimeElement | undefined {
+  const visible = (context.visibleElements ?? []).filter(hasUsableBounds);
+  const routeElements = elements.filter((element) => normalizeRoute(element.route) === normalizeRoute(context.currentRoute));
+  const referenced = findReferencedElement(utterance, context);
+  if (referenced) {
+    const mapped = routeElements.find((element) => liveElementMatchesMap(referenced, element));
+    if (mapped) return bindMappedTarget(referenced, mapped);
+  }
+
+  const terms = meaningfulTerms(utterance);
+  if (terms.length === 0) return undefined;
+  const ranked = routeElements
+    .map((element) => ({ element, score: scoreMappedElement(element, terms, utterance) }))
+    .sort((left, right) => right.score - left.score);
+  const minimumScore = terms.length === 1 ? 2.1 : TARGET_MATCH_THRESHOLD;
+
+  for (const candidate of ranked) {
+    if (candidate.score < minimumScore) break;
+    const live = visible.find((element) => liveElementMatchesMap(element, candidate.element));
+    if (live) return bindMappedTarget(live, candidate.element);
+  }
+  return undefined;
+}
+
+function scoreMappedElement(element: UIElementRecord, terms: string[], utterance: string): number {
+  return scoreElementMatch({
+    tagName: element.elementType,
+    role: element.role,
+    label: element.label ?? element.accessibleName,
+    text: element.visibleText,
+    elementId: element.elementId,
+    selector: element.selector
+  }, terms, utterance);
+}
+
+function liveElementMatchesMap(live: RuntimeElement, mapped: UIElementRecord): boolean {
+  if (live.elementId && live.elementId === mapped.elementId) return true;
+  const mappedSelectors = new Set([mapped.selector, ...mapped.fallbackSelectors]);
+  if (live.selector && mappedSelectors.has(live.selector)) return true;
+  const liveLocators = new Set((live.locators ?? []).map(locatorKey));
+  return (mapped.locators ?? []).some((locator) => liveLocators.has(locatorKey(locator)));
+}
+
+function bindMappedTarget(live: RuntimeElement, mapped: UIElementRecord): RuntimeElement {
+  return {
+    ...live,
+    mappedElementId: mapped.elementId,
+    uiMapVersionId: mapped.uiMapVersionId,
+    fingerprint: mapped.fingerprint
+  };
+}
+
+function locatorKey(locator: TargetLocator): string {
+  return JSON.stringify(locator);
+}
+
+function normalizeRoute(route: string): string {
+  const path = route.split(/[?#]/, 1)[0] || "/";
+  return path.length > 1 ? path.replace(/\/+$/, "") : path;
 }
 
 function findReferencedElement(utterance: string, context: RuntimeContextInput): RuntimeElement | undefined {
@@ -220,24 +303,22 @@ function hasUsableBounds(element: RuntimeElement): boolean {
   return Boolean(box && box.width > 0 && box.height > 0);
 }
 
-function isPointingRequest(utterance: string): boolean {
-  return /\b(point|show|highlight|locate|find)\b|\bwhere\s+(is|are|'s)\b/i.test(utterance);
+function classifyRuntimeIntent(utterance: string): RuntimeIntent {
+  const text = utterance.trim();
+  if (
+    /\bwhere\s+(?:is|are|'s|do|does|should|can|could|would)\b/i.test(text)
+    || /\bwhich\s+.+\b(?:click|press|tap|choose|select)\b/i.test(text)
+    || /^(?:please\s+)?(?:point(?:\s+me)?(?:\s+to)?|show(?:\s+me)?|highlight|locate|find)\b/i.test(text)
+  ) return { type: "point" };
+
+  const actionRequest = text.match(/^(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(click|press|tap|open|choose|select|focus)\b/i);
+  if (actionRequest) return { type: "action", action: actionRequest[1]?.toLowerCase() === "focus" ? "focus" : "click" };
+  if (/^(?:please\s+)?(?:put|place)\s+(?:the\s+)?cursor\b/i.test(text)) return { type: "action", action: "focus" };
+  return { type: "answer" };
 }
 
-function parseElementAction(utterance: string): "click" | "focus" | undefined {
-  if (/\b(click|press|tap|open|select|choose)\b/i.test(utterance)) return "click";
-  if (/\b(focus|put\s+(the\s+)?cursor|place\s+(the\s+)?cursor)\b/i.test(utterance)) return "focus";
-  return undefined;
-}
-
-function requiresConfirmation(utterance: string, element: RuntimeElement): boolean {
-  return /\b(delete|remove|archive|logout|log\s*out|sign\s*out|disable|deactivate|submit|send|pay|purchase|buy|confirm)\b/i.test([
-    utterance,
-    element.label,
-    element.text,
-    element.elementId,
-    element.selector
-  ].filter(Boolean).join(" "));
+function hasExecutableLiveLocator(element: RuntimeElement): boolean {
+  return Boolean(element.locators?.length || element.selector);
 }
 
 function describeTarget(element: RuntimeElement): string {

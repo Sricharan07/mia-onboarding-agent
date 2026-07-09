@@ -14,6 +14,14 @@ export type TelemetryMode = z.infer<typeof telemetryModeSchema>;
 export const fieldSensitivitySchema = z.enum(["standard", "personal", "secret", "payment"]);
 export type FieldSensitivity = z.infer<typeof fieldSensitivitySchema>;
 
+export const targetLocatorSchema = z.discriminatedUnion("strategy", [
+  z.object({ strategy: z.literal("css"), selector: z.string().min(1) }),
+  z.object({ strategy: z.literal("role"), role: z.string().min(1), name: z.string().min(1).optional() }),
+  z.object({ strategy: z.literal("label"), label: z.string().min(1) }),
+  z.object({ strategy: z.literal("text"), text: z.string().min(1), tagName: z.string().min(1).optional() })
+]);
+export type TargetLocator = z.infer<typeof targetLocatorSchema>;
+
 export const appUiScanConfigSchema = z.object({
   runtimeMode: appRuntimeModeSchema.default("workflow"),
   routes: z.array(z.string().min(1)).default(["/"]),
@@ -79,6 +87,7 @@ export const workflowTargetSchema = z.object({
   label: z.string().optional(),
   selector: z.string().min(1),
   fallbackSelectors: z.array(z.string()).optional(),
+  locators: z.array(targetLocatorSchema).default([]),
   route: z.string().optional(),
   pageName: z.string().optional(),
   uiMapVersionId: z.string().optional(),
@@ -236,6 +245,7 @@ export const uiElementRecordSchema = z.object({
   selector: z.string(),
   selectorType: z.enum(["data-ai-id", "data-testid", "role-name", "aria-label", "label", "name", "id", "placeholder", "text", "css", "dom-path"]),
   fallbackSelectors: z.array(z.string()),
+  locators: z.array(targetLocatorSchema).default([]),
   nearbyText: z.array(z.string()),
   parentSection: z.string().optional(),
   formName: z.string().optional(),
@@ -265,7 +275,11 @@ export const runtimeElementContextSchema = z.object({
   label: z.string().optional(),
   text: z.string().optional(),
   selector: z.string().optional(),
+  locators: z.array(targetLocatorSchema).optional(),
   elementId: z.string().optional(),
+  mappedElementId: z.string().optional(),
+  uiMapVersionId: z.string().optional(),
+  fingerprint: z.string().optional(),
   boundingBox: z.object({
     x: z.number(),
     y: z.number(),

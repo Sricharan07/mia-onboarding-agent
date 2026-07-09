@@ -143,7 +143,7 @@ When `enableVoice` is true, the SDK also registers push-to-talk: hold `Control+S
 
 Mia uses Gemini Live voice `Aoede` by default. Override `voice.voiceName` only after testing the replacement voice in Google AI Studio.
 
-Mia is DOM-first. Runtime pointing, simple visible-element actions such as click/focus, workflow execution, and screen-aware answers use collected DOM context, stable selectors, and element bounding boxes. Set `enableScreenShare: true` only when Mia must understand visual content the DOM cannot describe well, such as canvas charts, images, videos, PDFs, or custom-rendered surfaces. The browser asks the user before any screen frames are streamed.
+Mia is DOM-first. Runtime pointing, click/focus actions, workflow execution, and screen-aware answers reconcile the reviewed UI map with the current DOM through structured CSS, role/name, label, and exact-text locators. Bounding boxes position the visible cursor but are never used to choose an element for execution. Direct element actions always ask for confirmation. Workflow and direct actions run uniqueness, visibility, enabled-state, route, and obstruction checks, then report completion only when the page exposes a verifiable result. Set `enableScreenShare: true` only when Mia must understand visual content the DOM cannot describe well, such as canvas charts, images, videos, PDFs, or custom-rendered surfaces. The browser asks the user before any screen frames are streamed.
 
 Screen sharing also requires `privacy.redactScreenFrame` or an explicit `privacy.allowUnredactedScreenShare: true` decision. Enabling the feature flag alone is not consent to stream an unredacted screen.
 
@@ -156,7 +156,7 @@ The SDK emits voice and runtime events under the configured telemetry policy. Tr
 - `403 RUNTIME_TOKEN_APP_FORBIDDEN`: use an integration key bound to the same `appId` passed to `init`.
 - Voice does not start: confirm backend Gemini config and check `/api/v1/system/readiness` with an admin credential.
 - Mia cannot point at UI: make sure runtime context contains usable selectors or reviewed visible text. Use `enableScreenShare: true` only for non-DOM visual surfaces.
-- Mia only talks and does not move the cursor: run Console -> Test Mia, then ask from the host app and inspect Console -> Logs. A point/click request needs a mapped element with a stable selector or current-page bounding box.
+- Mia only talks and does not move the cursor: run Console -> Test Mia, then ask from the host app and inspect Console -> Logs. Pointing needs a matched visible target. Clicking also requires a current reviewed UI-map binding, a unique live structured locator, and user confirmation.
 - Context includes sensitive text: add `privacy.redactedSelectors` or a screen redaction callback.
 
 See [Troubleshooting](troubleshooting.md) for backend and console checks.

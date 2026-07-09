@@ -3,8 +3,8 @@ import type { MiaShadowCursor } from "../cursor/MiaShadowCursor.js";
 import type { MiaPromptUI } from "../ui/MiaPromptUI.js";
 import type { Workflow, WorkflowStep } from "../types/index.js";
 import { prefersReducedMotion } from "../accessibility/motion.js";
-import { activateElement } from "./activateElement.js";
-import { findElement } from "./elementResolution.js";
+import { executeElementAction } from "./activateElement.js";
+import { resolveElement, type ElementResolution } from "./elementResolution.js";
 
 export class WorkflowExecutor {
   private values: Record<string, string> = {};
@@ -105,8 +105,8 @@ export class WorkflowExecutor {
     await this.log("step_started", step);
     await this.updateRuntimeStatus("running");
     try {
-      await this.executeStep(step);
-      await this.log("step_completed", step);
+      const actionResult = await this.executeStep(step);
+      await this.log("step_completed", step, actionResult ? { actionResult } : {});
       await this.updateRuntimeStatus("running");
       this.options.onWorkflowEvent?.({ type: "step_completed", workflowId: this.options.workflow.workflowId, stepId: step.id });
     } catch (error) {
@@ -136,7 +136,7 @@ export class WorkflowExecutor {
     }
   }
 
-  private async executeStep(step: WorkflowStep): Promise<void> {
+  private async executeStep(step: WorkflowStep) {
     if (step.type === "review_required") {
       throw new Error("Workflow contains an unresolved review step.");
     }
@@ -177,10 +177,12 @@ export class WorkflowExecutor {
 
     this.options.cursor.setState(step.type === "wait_for_element" ? "thinking" : "guiding");
     this.options.cursor.setBubbleText(step.label ?? step.target.label ?? step.target.elementId);
-    const element = step.type === "wait_for_element"
-      ? await waitForElement(step.target.selector, step.target.fallbackSelectors, step.timeoutMs, this.abortController.signal)
-      : findElement(step.target.selector, step.target.fallbackSelectors);
-    if (!element) throw new Error(`Target element not found: ${step.target.elementId}`);
+    assertTargetRoute(step.target.route);
+    const resolution = step.type === "wait_for_element"
+      ? await waitForTarget(step.target, step.timeoutMs, this.abortController.signal)
+      : resolveElement(step.target);
+    if (resolution.status !== "resolved") throw new Error(`${resolution.message} Target: ${step.target.elementId}`);
+    const element = resolution.element;
     const reduceMotion = prefersReducedMotion();
     element.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
     await wait(reduceMotion ? 0 : 260, this.abortController.signal);
@@ -208,20 +210,22 @@ export class WorkflowExecutor {
 
       if (step.type === "click") {
         this.options.cursor.setBubbleText(`Click ${step.target.label ?? step.target.elementId}`);
-        activateElement(element as HTMLElement);
+        return requireVerifiedAction(await executeElementAction({ element, action: "click", locator: resolution.locator }));
       }
-      if (step.type === "focus") (element as HTMLElement).focus();
+      if (step.type === "focus") {
+        return requireVerifiedAction(await executeElementAction({ element, action: "focus", locator: resolution.locator }));
+      }
       if (step.type === "fill") {
         const value = this.values[step.valueFrom];
         if (value === undefined) throw new Error(`Missing collected value for ${step.valueFrom}.`);
         this.options.cursor.setBubbleText(`Fill ${step.target.label ?? step.target.elementId}`);
-        setNativeValue(element, value);
+        return requireVerifiedAction(await executeElementAction({ element, action: "fill", value, locator: resolution.locator }));
       }
       if (step.type === "select") {
         const value = this.values[step.valueFrom];
         if (value === undefined) throw new Error(`Missing collected value for ${step.valueFrom}.`);
         this.options.cursor.setBubbleText(`Select ${step.target.label ?? step.target.elementId}`);
-        setNativeValue(element, value);
+        return requireVerifiedAction(await executeElementAction({ element, action: "select", value, locator: resolution.locator }));
       }
       if (step.type === "wait_for_element") return;
     } finally {
@@ -322,32 +326,28 @@ function wait(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-function setNativeValue(element: Element, value: string): void {
-  const input = element as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
-  const valueSetter = Object.getOwnPropertyDescriptor(input, "value")?.set;
-  const prototype = Object.getPrototypeOf(input);
-  const prototypeValueSetter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
-
-  if (prototypeValueSetter && valueSetter !== prototypeValueSetter) {
-    prototypeValueSetter.call(input, value);
-  } else if (valueSetter) {
-    valueSetter.call(input, value);
-  } else {
-    input.value = value;
-  }
-
-  input.dispatchEvent(new Event("input", { bubbles: true }));
-  input.dispatchEvent(new Event("change", { bubbles: true }));
-}
-
-async function waitForElement(selector: string, fallbackSelectors: string[] | undefined, timeoutMs: number, signal?: AbortSignal): Promise<Element | null> {
+async function waitForTarget(target: { selector: string; fallbackSelectors?: string[]; locators?: import("../types/index.js").TargetLocator[] }, timeoutMs: number, signal?: AbortSignal): Promise<ElementResolution> {
   const startedAt = Date.now();
+  let lastResolution: ElementResolution = { status: "not_found", message: "The reviewed target is not present on this page." };
 
   while (Date.now() - startedAt < timeoutMs) {
-    const element = findElement(selector, fallbackSelectors);
-    if (element) return element;
+    lastResolution = resolveElement(target);
+    if (lastResolution.status === "resolved") return lastResolution;
     await wait(100, signal);
   }
 
-  return null;
+  return lastResolution;
+}
+
+function assertTargetRoute(route?: string): void {
+  if (!route) return;
+  const expectedPath = route.split(/[?#]/, 1)[0] || "/";
+  if (expectedPath !== window.location.pathname) {
+    throw new Error(`Workflow target belongs to ${expectedPath}, but the current page is ${window.location.pathname}.`);
+  }
+}
+
+function requireVerifiedAction<T extends { status: string; message: string }>(result: T): T {
+  if (result.status !== "completed") throw new Error(result.message);
+  return result;
 }

@@ -1,5 +1,5 @@
 import { createId, nowIso } from "../../utils/id.js";
-import type { UIElementRecord } from "../../schemas/domain.js";
+import type { TargetLocator, UIElementRecord } from "../../schemas/domain.js";
 
 export type RawElement = {
   tagName: string;
@@ -18,6 +18,7 @@ export type RawElement = {
   inputType?: string;
   title?: string;
   href?: string;
+  domPath?: string;
   redacted?: boolean;
   sectionName?: string;
   formName?: string;
@@ -70,6 +71,7 @@ export function buildUiElementRecord(input: {
     selector: selectorInfo.selector,
     selectorType: selectorInfo.selectorType,
     fallbackSelectors: selectorInfo.fallbackSelectors,
+    locators: selectorInfo.locators,
     nearbyText: [input.raw.text, input.raw.sectionName, input.raw.formName, input.raw.dialogName, input.raw.tableName].filter(Boolean) as string[],
     boundingBox: input.raw.boundingBox,
     tags: deriveTags(label, input.pageName, stateName),
@@ -89,24 +91,33 @@ type SelectorCandidate = {
   selectorType: UIElementRecord["selectorType"];
 };
 
-function generateSelector(raw: RawElement, index: number): { selector: string; selectorType: UIElementRecord["selectorType"]; fallbackSelectors: string[] } {
+function generateSelector(raw: RawElement, _index: number): {
+  selector: string;
+  selectorType: UIElementRecord["selectorType"];
+  fallbackSelectors: string[];
+  locators: TargetLocator[];
+} {
   const candidates = buildSelectorCandidates(raw);
   const positionalFallback = {
-    selector: `${raw.tagName.toLowerCase()}:nth-of-type(${index + 1})`,
-    selectorType: "css" as const
+    selector: raw.domPath ?? raw.tagName.toLowerCase(),
+    selectorType: "dom-path" as const
   };
   const [primary = positionalFallback, ...fallbackCandidates] = candidates.length ? candidates : [positionalFallback];
+  const cssLocators = [primary, ...fallbackCandidates].map((candidate) => ({
+    strategy: "css" as const,
+    selector: candidate.selector
+  }));
 
   return {
     selector: primary.selector,
     selectorType: primary.selectorType,
-    fallbackSelectors: unique(fallbackCandidates.map((candidate) => candidate.selector))
+    fallbackSelectors: unique(fallbackCandidates.map((candidate) => candidate.selector)),
+    locators: uniqueLocators([...cssLocators, ...buildSemanticLocators(raw)])
   };
 }
 
 function buildSelectorCandidates(raw: RawElement): SelectorCandidate[] {
   const tag = raw.tagName.toLowerCase();
-  const label = raw.label ?? raw.ariaLabel ?? raw.title ?? raw.text;
   const candidates: Array<SelectorCandidate | undefined> = [
     raw.dataAiId ? { selector: `[data-ai-id='${escapeCssValue(raw.dataAiId)}']`, selectorType: "data-ai-id" } : undefined,
     raw.testId ? { selector: `[data-testid='${escapeCssValue(raw.testId)}']`, selectorType: "data-testid" } : undefined,
@@ -116,13 +127,38 @@ function buildSelectorCandidates(raw: RawElement): SelectorCandidate[] {
     raw.dataState && raw.ariaLabel ? { selector: attrSelector({ "data-state": raw.dataState, "aria-label": raw.ariaLabel }), selectorType: "css" } : undefined,
     raw.ariaLabel ? { selector: `[aria-label='${escapeCssValue(raw.ariaLabel)}']`, selectorType: "aria-label" } : undefined,
     raw.title ? { selector: `[title='${escapeCssValue(raw.title)}']`, selectorType: "css" } : undefined,
-    raw.name ? { selector: `[name='${escapeCssValue(raw.name)}']`, selectorType: "name" } : undefined,
-    raw.id ? { selector: `#${cssEscape(raw.id)}`, selectorType: "id" } : undefined,
-    raw.placeholder ? { selector: `[placeholder='${escapeCssValue(raw.placeholder)}']`, selectorType: "placeholder" } : undefined,
-    label && supportsTextSelector(tag, raw.role) ? { selector: `${tag}:has-text('${escapeCssValue(label)}')`, selectorType: "text" } : undefined
+    raw.name ? { selector: `${tag}[name='${escapeCssValue(raw.name)}']`, selectorType: "name" } : undefined,
+    raw.id ? { selector: `[id='${escapeCssValue(raw.id)}']`, selectorType: "id" } : undefined,
+    raw.placeholder ? { selector: `${tag}[placeholder='${escapeCssValue(raw.placeholder)}']`, selectorType: "placeholder" } : undefined,
+    raw.domPath ? { selector: raw.domPath, selectorType: "dom-path" } : undefined
   ];
 
   return uniqueCandidates(candidates.filter(Boolean) as SelectorCandidate[]);
+}
+
+function buildSemanticLocators(raw: RawElement): TargetLocator[] {
+  const label = raw.label ?? raw.ariaLabel ?? raw.title ?? raw.text;
+  const role = raw.role ?? implicitRole(raw);
+  const tagName = raw.tagName.toLowerCase();
+  const locators: Array<TargetLocator | undefined> = [
+    role ? { strategy: "role", role, name: label } : undefined,
+    label && ["input", "textarea", "select"].includes(tagName) ? { strategy: "label", label } : undefined,
+    label && supportsTextLocator(tagName, role) ? { strategy: "text", text: label, tagName } : undefined
+  ];
+  return locators.filter(Boolean) as TargetLocator[];
+}
+
+function implicitRole(raw: RawElement): string | undefined {
+  const tag = raw.tagName.toLowerCase();
+  const type = raw.inputType?.toLowerCase();
+  if (tag === "button" || tag === "summary") return "button";
+  if (tag === "a" && raw.href) return "link";
+  if (tag === "textarea") return "textbox";
+  if (tag === "select") return "combobox";
+  if (tag === "input" && type === "checkbox") return "checkbox";
+  if (tag === "input" && type === "radio") return "radio";
+  if (tag === "input" && type !== "hidden") return "textbox";
+  return undefined;
 }
 
 function scoreSelector(selectorType: UIElementRecord["selectorType"], selector: string): { quality: UIElementRecord["selectorQuality"]; warnings: string[] } {
@@ -166,7 +202,7 @@ function attrSelector(attrs: Record<string, string | undefined>): string {
     .join("");
 }
 
-function supportsTextSelector(tag: string, role?: string): boolean {
+function supportsTextLocator(tag: string, role?: string): boolean {
   return ["button", "a", "summary"].includes(tag) || ["button", "link", "tab", "menuitem", "option"].includes(role ?? "");
 }
 
@@ -218,11 +254,13 @@ function toSlug(value: string): string {
 }
 
 function escapeCssValue(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
-}
-
-function cssEscape(value: string): string {
-  return value.replace(/[^a-zA-Z0-9_-]/g, "\\$&");
+  return Array.from(value).map((character) => {
+    const code = character.codePointAt(0) ?? 0;
+    if (character === "\\" || character === "'") return `\\${character}`;
+    if (code === 0) return "\\fffd ";
+    if (code < 0x20 || code === 0x7f) return `\\${code.toString(16)} `;
+    return character;
+  }).join("");
 }
 
 function generateFingerprint(route: string, selector: string, label: string, type: string): string {
@@ -238,6 +276,16 @@ function uniqueCandidates(candidates: SelectorCandidate[]): SelectorCandidate[] 
   return candidates.filter((candidate) => {
     if (seen.has(candidate.selector)) return false;
     seen.add(candidate.selector);
+    return true;
+  });
+}
+
+function uniqueLocators(locators: TargetLocator[]): TargetLocator[] {
+  const seen = new Set<string>();
+  return locators.filter((locator) => {
+    const key = JSON.stringify(locator);
+    if (seen.has(key)) return false;
+    seen.add(key);
     return true;
   });
 }

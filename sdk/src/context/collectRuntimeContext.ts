@@ -1,4 +1,17 @@
-import type { RuntimeElementContext, SDKConfig, SDKRuntimeContext } from "../types/index.js";
+import type { RuntimeElementContext, SDKConfig, SDKRuntimeContext, TargetLocator } from "../types/index.js";
+
+let hoveredElement: Element | null = null;
+
+export function installRuntimeContextTracking(): () => void {
+  const trackHoveredElement = (event: PointerEvent) => {
+    hoveredElement = event.target instanceof Element ? event.target : null;
+  };
+  document.addEventListener("pointerover", trackHoveredElement, { capture: true });
+  return () => {
+    document.removeEventListener("pointerover", trackHoveredElement, { capture: true });
+    hoveredElement = null;
+  };
+}
 
 export function collectRuntimeContext(config: SDKConfig, sessionId: string): SDKRuntimeContext {
   const currentUrl = config.privacy?.includeUrlQuery
@@ -11,6 +24,7 @@ export function collectRuntimeContext(config: SDKConfig, sessionId: string): SDK
     currentRoute: window.location.pathname,
     pageTitle: config.privacy?.includePageTitle ? document.title : undefined,
     focusedElement: inspectElement(document.activeElement, config),
+    hoveredElement: inspectElement(hoveredElement, config),
     visibleElements: collectVisibleElements(config),
     userMetadata: config.privacy?.includeUserMetadata ? config.user?.metadata : undefined
   };
@@ -38,16 +52,21 @@ function collectVisibleElements(config: SDKConfig): RuntimeElementContext[] {
     "[role='tab']",
     "[tabindex]:not([tabindex='-1'])"
   ].join(",")));
-  return nodes
+  const inspected = nodes
     .filter((node) => {
       if (node instanceof HTMLElement && isSdkOwnedElement(node)) return false;
       if (node instanceof HTMLElement && isRedactedElement(node, config)) return false;
       const rect = (node as HTMLElement).getBoundingClientRect();
       return rect.width > 0 && rect.height > 0 && rect.bottom >= 0 && rect.right >= 0 && rect.top <= window.innerHeight && rect.left <= window.innerWidth;
     })
-    .slice(0, 50)
     .map((node) => inspectElement(node, config))
     .filter(Boolean) as RuntimeElementContext[];
+  const focused = inspectElement(document.activeElement, config);
+  const hovered = inspectElement(hoveredElement, config);
+  return inspected
+    .sort((left, right) => elementPriority(right, focused, hovered) - elementPriority(left, focused, hovered))
+    .filter(uniqueElementContext)
+    .slice(0, 40);
 }
 
 function inspectElement(node: Element | null, config: SDKConfig): RuntimeElementContext | undefined {
@@ -56,14 +75,16 @@ function inspectElement(node: Element | null, config: SDKConfig): RuntimeElement
   if (isRedactedElement(node, config)) return undefined;
   const rect = node.getBoundingClientRect();
   const redactText = config.privacy?.redactText !== false || isSensitiveInput(node);
-  const selector = selectorForElement(node);
+  const locators = locatorsForElement(node, redactText);
+  const selector = locators.find((locator): locator is Extract<TargetLocator, { strategy: "css" }> => locator.strategy === "css")?.selector;
   return {
     tagName: node.tagName,
     role: node.getAttribute("role") ?? undefined,
     label: redactText ? undefined : readableLabel(node),
     text: redactText ? undefined : readableText(node),
     selector,
-    elementId: node.getAttribute("data-ai-id") ?? (node.id || undefined),
+    locators,
+    elementId: node.getAttribute("data-ai-id") ?? node.getAttribute("data-testid") ?? (node.id || undefined),
     boundingBox: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
   };
 }
@@ -103,13 +124,25 @@ function readableText(node: HTMLElement): string | undefined {
   return firstNonEmpty(node.innerText, node.textContent);
 }
 
-function selectorForElement(node: HTMLElement): string | undefined {
+function locatorsForElement(node: HTMLElement, redactText: boolean): TargetLocator[] {
+  const locators: TargetLocator[] = [];
   const dataAiId = node.getAttribute("data-ai-id");
-  if (dataAiId) return `[data-ai-id='${cssEscape(dataAiId)}']`;
+  if (dataAiId) locators.push({ strategy: "css", selector: `[data-ai-id='${cssString(dataAiId)}']` });
   const testId = node.getAttribute("data-testid");
-  if (testId) return `[data-testid='${cssEscape(testId)}']`;
-  if (node.id) return `#${cssEscape(node.id)}`;
-  return undefined;
+  if (testId) locators.push({ strategy: "css", selector: `[data-testid='${cssString(testId)}']` });
+  if (node.id) locators.push({ strategy: "css", selector: `[id='${cssString(node.id)}']` });
+  const name = node.getAttribute("name");
+  if (name) locators.push({ strategy: "css", selector: `${node.tagName.toLowerCase()}[name='${cssString(name)}']` });
+
+  const role = explicitOrImplicitRole(node);
+  const label = redactText ? undefined : readableLabel(node);
+  if (role) locators.push({ strategy: "role", role, name: label });
+  if (label && (node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement || node instanceof HTMLSelectElement)) {
+    locators.push({ strategy: "label", label });
+  }
+  const text = redactText ? undefined : readableText(node);
+  if (text && isTextTarget(node, role)) locators.push({ strategy: "text", text, tagName: node.tagName.toLowerCase() });
+  return uniqueLocators(locators);
 }
 
 function firstNonEmpty(...values: Array<string | null | undefined>): string | undefined {
@@ -124,6 +157,73 @@ function cssEscape(value: string): string {
   return typeof CSS !== "undefined" && typeof CSS.escape === "function"
     ? CSS.escape(value)
     : value.replace(/["'\\]/g, "\\$&");
+}
+
+function cssString(value: string): string {
+  return Array.from(value).map((character) => {
+    const code = character.codePointAt(0) ?? 0;
+    if (character === "\\" || character === "'") return `\\${character}`;
+    if (code === 0) return "\\fffd ";
+    if (code < 0x20 || code === 0x7f) return `\\${code.toString(16)} `;
+    return character;
+  }).join("");
+}
+
+function explicitOrImplicitRole(node: HTMLElement): string | undefined {
+  const explicit = node.getAttribute("role")?.trim();
+  if (explicit) return explicit;
+  if (node instanceof HTMLButtonElement || node.tagName === "SUMMARY") return "button";
+  if (node instanceof HTMLAnchorElement && node.hasAttribute("href")) return "link";
+  if (node instanceof HTMLTextAreaElement) return "textbox";
+  if (node instanceof HTMLSelectElement) return "combobox";
+  if (node instanceof HTMLInputElement) {
+    if (node.type === "checkbox") return "checkbox";
+    if (node.type === "radio") return "radio";
+    if (node.type !== "hidden") return "textbox";
+  }
+  return undefined;
+}
+
+function isTextTarget(node: HTMLElement, role?: string): boolean {
+  return node instanceof HTMLButtonElement
+    || node instanceof HTMLAnchorElement
+    || node.tagName === "SUMMARY"
+    || ["button", "link", "tab", "menuitem", "option"].includes(role ?? "");
+}
+
+function elementPriority(element: RuntimeElementContext, focused?: RuntimeElementContext, hovered?: RuntimeElementContext): number {
+  let score = 0;
+  if (sameElementContext(element, hovered)) score += 100;
+  if (sameElementContext(element, focused)) score += 80;
+  if (element.locators?.some((locator) => locator.strategy === "css")) score += 20;
+  if (element.label || element.text) score += 10;
+  const box = element.boundingBox;
+  if (box) {
+    const centerDistance = Math.abs(box.x + box.width / 2 - window.innerWidth / 2)
+      + Math.abs(box.y + box.height / 2 - window.innerHeight / 2);
+    score += Math.max(0, 8 - centerDistance / 250);
+  }
+  return score;
+}
+
+function sameElementContext(left?: RuntimeElementContext, right?: RuntimeElementContext): boolean {
+  if (!left || !right) return false;
+  if (left.selector && right.selector) return left.selector === right.selector;
+  return left.elementId === right.elementId && left.tagName === right.tagName;
+}
+
+function uniqueElementContext(value: RuntimeElementContext, index: number, values: RuntimeElementContext[]): boolean {
+  return values.findIndex((candidate) => sameElementContext(candidate, value)) === index;
+}
+
+function uniqueLocators(locators: TargetLocator[]): TargetLocator[] {
+  const seen = new Set<string>();
+  return locators.filter((locator) => {
+    const key = JSON.stringify(locator);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function isRedactedElement(node: HTMLElement, config: SDKConfig): boolean {

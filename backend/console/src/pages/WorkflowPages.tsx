@@ -769,6 +769,7 @@ function targetFromElement(element: UiElement) {
     label: element.label,
     selector: element.selector,
     fallbackSelectors: element.fallbackSelectors,
+    locators: element.locators,
     route: element.route,
     pageName: element.pageName,
     uiMapVersionId: element.uiMapVersionId,

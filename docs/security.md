@@ -65,7 +65,7 @@ In production, scan targets that resolve to private or reserved network addresse
 
 Automated route discovery stays on the configured app origin and filters obvious destructive, logout, and binary routes, but operators should still start with explicit routes and review scan results before publishing workflows.
 
-Workflow approval records the current UI map version. Every target must match that map's route, element type, selector, unique selector count, and fingerprint. Completing a newer UI map invalidates approved and published workflows until an admin re-selects changed targets and approves them again. Unmatched recorded actions remain non-executable `review_required` steps.
+Workflow approval records the current UI map version. Every target must match that map's route, element type, structured locator set, unique selector count, and fingerprint. Completing a newer UI map invalidates approved and published workflows until an admin re-selects changed targets and approves them again. At runtime the reviewed map target must reconcile to a unique, visible, enabled, unobstructed live DOM element. Coordinates are used only for pointing. Unmatched recorded actions remain non-executable `review_required` steps.
 
 ## Uploads
 

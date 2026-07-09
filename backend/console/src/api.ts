@@ -116,6 +116,7 @@ export type UiElement = {
   selector: string;
   selectorType: string;
   fallbackSelectors: string[];
+  locators: TargetLocator[];
   tags: string[];
   selectorQuality: "strong" | "medium" | "weak";
   selectorWarnings: string[];
@@ -275,12 +276,19 @@ export type WorkflowTarget = {
   label?: string;
   selector: string;
   fallbackSelectors?: string[];
+  locators: TargetLocator[];
   route?: string;
   pageName?: string;
   uiMapVersionId?: string;
   fingerprint?: string;
   elementType?: string;
 };
+
+export type TargetLocator =
+  | { strategy: "css"; selector: string }
+  | { strategy: "role"; role: string; name?: string }
+  | { strategy: "label"; label: string }
+  | { strategy: "text"; text: string; tagName?: string };
 
 export type WorkflowStepSource = {
   extractedStepId?: string;
@@ -352,14 +360,18 @@ export type RuntimeElementContext = {
   label?: string;
   text?: string;
   selector?: string;
+  locators?: TargetLocator[];
   elementId?: string;
+  mappedElementId?: string;
+  uiMapVersionId?: string;
+  fingerprint?: string;
   boundingBox?: { x: number; y: number; width: number; height: number };
 };
 
 export type RuntimeResolveResponse =
   | { type: "workflow"; workflow: Workflow; message: string }
   | { type: "control"; action: "cancel" | "pause" | "resume"; message: string }
-  | { type: "element_action"; action: "click" | "focus"; target: RuntimeElementContext; executionPolicy: "auto" | "requires_confirmation"; message: string }
+  | { type: "element_action"; action: "click" | "focus"; target: RuntimeElementContext; executionPolicy: "requires_confirmation"; message: string }
   | { type: "answer"; message: string; target?: RuntimeElementContext }
   | { type: "no_match"; message: string; target?: RuntimeElementContext };
 

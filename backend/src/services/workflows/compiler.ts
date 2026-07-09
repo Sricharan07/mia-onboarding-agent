@@ -132,6 +132,9 @@ function toWorkflowTarget(record: UIElementRecord): WorkflowTarget {
     label: record.label,
     selector: record.selector,
     fallbackSelectors: record.fallbackSelectors,
+    locators: record.locators ?? [record.selector, ...record.fallbackSelectors]
+      .filter((selector) => !selector.includes(":has-text("))
+      .map((selector) => ({ strategy: "css" as const, selector })),
     route: record.route,
     pageName: record.pageName,
     uiMapVersionId: record.uiMapVersionId,
