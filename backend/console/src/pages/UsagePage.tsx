@@ -1,7 +1,8 @@
 import { Activity, Code2, Gauge, RefreshCw, Workflow as WorkflowIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { AppRecord, BackendApi, UsageSummary, UsageTimeseriesPoint } from "../api";
-import { EmptyTableRow, MetricCard, PageIntro, Panel, StatusPill } from "../components/console";
+import { EmptyTableRow, InlineAlert, MetricCard, PageIntro, Panel, StatusPill } from "../components/console";
+import type { LoadState } from "../types";
 import { errorMessage } from "../utils/format";
 
 const emptyUsage: UsageSummary = {
@@ -13,18 +14,30 @@ const emptyUsage: UsageSummary = {
 export function UsagePage({ app, api, showToast }: { app: AppRecord | null; api: BackendApi; showToast: (message: string) => void }) {
   const [summary, setSummary] = useState<UsageSummary>(emptyUsage);
   const [timeseries, setTimeseries] = useState<UsageTimeseriesPoint[]>([]);
+  const [loadState, setLoadState] = useState<LoadState>("loading");
+  const [loadError, setLoadError] = useState("");
+  const loadGeneration = useRef(0);
 
   const load = async () => {
+    const generation = ++loadGeneration.current;
+    setLoadState("loading");
+    setLoadError("");
     try {
       const filters = app ? { appId: app.id } : {};
       const [nextSummary, nextTimeseries] = await Promise.all([
         api.usage(filters),
         api.usageTimeseries({ ...filters, bucket: "day" })
       ]);
+      if (generation !== loadGeneration.current) return;
       setSummary(nextSummary);
       setTimeseries(nextTimeseries.items);
+      setLoadState("ready");
     } catch (cause) {
-      showToast(errorMessage(cause, "Unable to load usage metrics"));
+      if (generation !== loadGeneration.current) return;
+      const message = errorMessage(cause, "Unable to load usage metrics");
+      setLoadError(message);
+      setLoadState("error");
+      showToast(message);
     }
   };
 
@@ -38,10 +51,12 @@ export function UsagePage({ app, api, showToast }: { app: AppRecord | null; api:
       <PageIntro
         title="Usage and operational signal"
         description="Track whether Mia is being used, whether workflows run, and whether provider calls are healthy for the selected app."
-        action={<button className="button secondary small" type="button" onClick={() => void load()}><RefreshCw size={14} />Refresh</button>}
+        action={<button className="button secondary small" type="button" disabled={loadState === "loading"} onClick={() => void load()}><RefreshCw className={loadState === "loading" ? "is-spinning" : ""} size={14} />{loadState === "loading" ? "Loading" : "Refresh"}</button>}
       >
         <StatusPill tone={summary.totals.errors > 0 ? "red" : "green"} label={`${summary.totals.errors} errors`} />
       </PageIntro>
+      {loadState === "loading" && <InlineAlert tone="gray" title="Loading usage" message="Fetching execution events, workflow runs, provider calls, and daily totals." />}
+      {loadState === "error" && <InlineAlert tone="red" title="Usage unavailable" message={loadError} />}
       <section className="metric-grid">
         <MetricCard label="SDK events" value={String(summary.totals.sdkEvents)} detail="Execution log events" icon={Activity} />
         <MetricCard label="Workflow runs" value={String(summary.totals.workflowRuns)} detail="Workflow-prefixed events" icon={WorkflowIcon} />
@@ -52,7 +67,7 @@ export function UsagePage({ app, api, showToast }: { app: AppRecord | null; api:
       <section className="two-column">
         <Panel title="Event mix">
           <div className="usage-bar-list">
-            {summary.eventCounts.length === 0 && <div className="empty-state">No execution events yet.</div>}
+            {loadState === "ready" && summary.eventCounts.length === 0 && <div className="empty-state">No execution events yet.</div>}
             {summary.eventCounts.map((item) => (
               <UsageBar key={item.eventType} label={item.eventType} value={item.count} max={Math.max(...summary.eventCounts.map((event) => event.count), 1)} />
             ))}
@@ -61,7 +76,7 @@ export function UsagePage({ app, api, showToast }: { app: AppRecord | null; api:
 
         <Panel title="Provider calls">
           <div className="usage-bar-list">
-            {summary.providerCounts.length === 0 && <div className="empty-state">No AI provider logs yet.</div>}
+            {loadState === "ready" && summary.providerCounts.length === 0 && <div className="empty-state">No AI provider logs yet.</div>}
             {summary.providerCounts.map((item) => (
               <UsageBar key={item.provider} label={item.provider} value={item.count} max={Math.max(...summary.providerCounts.map((provider) => provider.count), 1)} />
             ))}
@@ -81,7 +96,7 @@ export function UsagePage({ app, api, showToast }: { app: AppRecord | null; api:
             </tr>
           </thead>
           <tbody>
-            {timeseries.length === 0 && <EmptyTableRow colSpan={5} message="No timeseries data yet." />}
+            {timeseries.length === 0 && <EmptyTableRow colSpan={5} message={loadState === "loading" ? "Loading daily usage." : loadState === "error" ? "Daily usage could not be loaded." : "No timeseries data yet."} />}
             {timeseries.map((point) => (
               <tr key={point.bucket}>
                 <td>{point.bucket}</td>

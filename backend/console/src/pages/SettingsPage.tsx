@@ -1,8 +1,8 @@
 import { AlertTriangle, Archive, Database, Download, KeyRound, RefreshCw, Save, ShieldCheck, Trash2, Users } from "lucide-react";
 import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import type { AppRecord, AppUiScanConfig, BackendApi, ConsoleAuthUser, ConsoleSession, SystemReadiness, TelemetryMode, UiScanAuthMode } from "../api";
-import { InlineAlert, PageIntro, Panel, ServiceRow, StatusPill } from "../components/console";
-import type { RouteId } from "../types";
+import { EmptyTableRow, InlineAlert, PageIntro, Panel, ServiceRow, StatusPill } from "../components/console";
+import type { LoadState, RouteId } from "../types";
 import { errorMessage, formatDate } from "../utils/format";
 
 type SettingsTab = "backend" | "app" | "scan" | "privacy" | "admins" | "danger";
@@ -70,6 +70,7 @@ export function SettingsPage({
   const [archiveConfirm, setArchiveConfirm] = useState("");
   const [users, setUsers] = useState<ConsoleAuthUser[]>([]);
   const [sessions, setSessions] = useState<ConsoleSession[]>([]);
+  const [adminsLoadState, setAdminsLoadState] = useState<LoadState>("idle");
   const [newAdminName, setNewAdminName] = useState("");
   const [newAdminEmail, setNewAdminEmail] = useState("");
   const [newAdminPassword, setNewAdminPassword] = useState("");
@@ -262,11 +263,15 @@ export function SettingsPage({
   };
 
   const loadAdmins = async () => {
+    setAdminsLoadState("loading");
     try {
       const [nextUsers, nextSessions] = await Promise.all([api.listConsoleUsers(), api.listConsoleSessions()]);
       setUsers(nextUsers.items);
       setSessions(nextSessions.items);
+      setAdminsLoadState("ready");
+      setNotice(null);
     } catch (cause) {
+      setAdminsLoadState("error");
       reportNotice(cause, "Unable to load console admins");
     }
   };
@@ -632,7 +637,7 @@ export function SettingsPage({
               </div>
             </Panel>
 
-            <Panel title="Current admins" action={<button className="button secondary small" type="button" onClick={() => void loadAdmins()}><RefreshCw size={14} />Refresh</button>}>
+            <Panel title="Current admins" action={<button className="button secondary small" type="button" disabled={adminsLoadState === "loading"} onClick={() => void loadAdmins()}><RefreshCw className={adminsLoadState === "loading" ? "is-spinning" : ""} size={14} />Refresh</button>}>
               <div className="table-frame">
                 <table>
                   <thead>
@@ -645,6 +650,7 @@ export function SettingsPage({
                     </tr>
                   </thead>
                   <tbody>
+                    {users.length === 0 && <EmptyTableRow colSpan={5} message={adminsLoadState === "loading" ? "Loading console admins." : adminsLoadState === "error" ? "Console admins could not be loaded." : "No console admins found."} />}
                     {users.map((user) => (
                       <tr key={user.id}>
                         <td>{user.name}</td>
@@ -685,7 +691,7 @@ export function SettingsPage({
             </div>
           </Panel>
 
-          <Panel title="Console sessions" action={<StatusPill tone={sessions.length ? "green" : "gray"} label={`${sessions.length} sessions`} />}>
+          <Panel title="Console sessions" action={<StatusPill tone={adminsLoadState === "error" ? "red" : sessions.length ? "green" : "gray"} label={adminsLoadState === "loading" ? "loading" : `${sessions.length} sessions`} />}>
             <div className="table-frame bounded-table">
               <table>
                 <thead>
@@ -699,6 +705,7 @@ export function SettingsPage({
                   </tr>
                 </thead>
                 <tbody>
+                  {sessions.length === 0 && <EmptyTableRow colSpan={6} message={adminsLoadState === "loading" ? "Loading console sessions." : adminsLoadState === "error" ? "Console sessions could not be loaded." : "No console sessions found."} />}
                   {sessions.map((session) => (
                     <tr key={session.id}>
                       <td>{session.user.email}</td>

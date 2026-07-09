@@ -265,12 +265,7 @@ function buildActivationSteps({
     && key.scopes.includes("runtime:tokens:create"));
   const runtimeSeen = logs.some((log) => log.eventType === "session_started" || log.eventType.startsWith("workflow_") || log.eventType.startsWith("sdk_"));
   const miaResolved = logs.some((log) => log.eventType === "runtime_resolution" || log.eventType === "voice_resolution");
-  const miaPointedOrActed = logs.some((log) => {
-    if (log.eventType === "element_action_completed") return true;
-    if (log.eventType !== "runtime_resolution" && log.eventType !== "voice_resolution") return false;
-    const payload = log.payload as { target?: unknown };
-    return Boolean(payload.target);
-  });
+  const miaPointedOrActed = logs.some((log) => log.eventType === "element_pointed" || log.eventType.startsWith("element_action_"));
   const workflowReady = app.uiScanConfig.runtimeMode === "qa_only" || workflows.some((workflow) => workflow.status === "published");
   const steps = [
     {
@@ -311,8 +306,8 @@ function buildActivationSteps({
     },
     {
       id: "sdk-key",
-      title: "SDK key",
-      detail: sdkKeyReady ? "A runtime/logging key exists for this app." : "Create an app-bound key with runtime and log scopes.",
+      title: "Server integration key",
+      detail: sdkKeyReady ? "An app-bound runtime-token issuer exists." : "Create an app-bound key that can mint runtime tokens from the host backend.",
       done: sdkKeyReady,
       icon: KeyRound,
       actionLabel: sdkKeyReady ? "View keys" : "Create key",
@@ -329,8 +324,8 @@ function buildActivationSteps({
     },
     {
       id: "mia-test",
-      title: "Mia answered and pointed",
-      detail: miaResolved && miaPointedOrActed ? "Mia resolved a prompt with a target." : "Run a Test Mia prompt and confirm she can answer or point at a real element.",
+      title: "Live pointing or action proof",
+      detail: miaResolved && miaPointedOrActed ? "The host SDK resolved a prompt and moved or acted on the live page." : "Open the host app and produce a live point or confirmed action; resolver previews do not satisfy this gate.",
       done: miaResolved && miaPointedOrActed,
       icon: CheckCircle2,
       actionLabel: miaResolved && miaPointedOrActed ? "Retest Mia" : "Test Mia",
@@ -368,7 +363,8 @@ function isRuntimeEvent(eventType: string): boolean {
   return eventType === "session_started"
     || eventType === "runtime_resolution"
     || eventType === "voice_resolution"
-    || eventType === "element_action_completed"
+    || eventType === "element_pointed"
+    || eventType.startsWith("element_action_")
     || eventType.startsWith("voice_")
     || eventType.startsWith("workflow_");
 }

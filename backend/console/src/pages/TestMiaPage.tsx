@@ -1,6 +1,6 @@
-import { CheckCircle2, CircleAlert, MessageSquareText, MousePointer2, Play, RefreshCw, Workflow as WorkflowIcon } from "lucide-react";
+import { CheckCircle2, CircleAlert, ExternalLink, MessageSquareText, MousePointer2, Play, RefreshCw, Workflow as WorkflowIcon } from "lucide-react";
 import type { ReactNode } from "react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { AppRecord, BackendApi, ExecutionLog, RuntimeResolveResponse, UiElement, UiPage, WorkflowSummary } from "../api";
 import { InlineAlert, PageIntro, Panel, StatusBadge, StatusPill, SummaryItem } from "../components/console";
 import type { RouteId } from "../types";
@@ -29,7 +29,10 @@ export function TestMiaPage({
   onOpenRoute: (route: RouteId) => void;
   showToast: (message: string) => void;
 }) {
-  const firstTarget = useMemo(() => firstReadableElement(elements), [elements]);
+  const [selectedPageId, setSelectedPageId] = useState(pages[0]?.id ?? "");
+  const page = pages.find((item) => item.id === selectedPageId) ?? pages[0];
+  const pageElements = useMemo(() => elements.filter((element) => element.pageId === page?.id), [elements, page?.id]);
+  const firstTarget = useMemo(() => firstReadableElement(pageElements), [pageElements]);
   const [prompt, setPrompt] = useState("What can I do on this page?");
   const [result, setResult] = useState<RuntimeResolveResponse | null>(null);
   const [pending, setPending] = useState(false);
@@ -37,10 +40,17 @@ export function TestMiaPage({
 
   const publishedWorkflows = workflows.filter((workflow) => workflow.status === "published");
   const workflowModeReady = app?.uiScanConfig.runtimeMode === "qa_only" || publishedWorkflows.length > 0;
-  const runtimeLogs = logs.filter((log) => log.eventType === "session_started" || log.eventType.startsWith("voice_") || log.eventType.startsWith("workflow_") || log.eventType === "element_action_completed");
+  const runtimeLogs = logs.filter((log) => isRuntimeProofEvent(log.eventType));
   const latestRuntimeLog = runtimeLogs[0];
   const pointReady = elements.some((element) => element.selectorQuality !== "weak");
   const runtimeReady = runtimeLogs.some((log) => log.eventType === "session_started");
+  const resolverSeen = runtimeLogs.some((log) => log.eventType === "runtime_resolution" || log.eventType === "voice_resolution");
+  const pointed = runtimeLogs.some((log) => log.eventType === "element_pointed");
+  const actionAttempted = runtimeLogs.some((log) => log.eventType.startsWith("element_action_"));
+
+  useEffect(() => {
+    if (!pages.some((item) => item.id === selectedPageId)) setSelectedPageId(pages[0]?.id ?? "");
+  }, [pages, selectedPageId]);
 
   const runTest = async (nextPrompt = prompt) => {
     if (!app) {
@@ -53,11 +63,11 @@ export function TestMiaPage({
         appId: app.id,
         sessionId: `console_test_${crypto.randomUUID()}`,
         utterance: nextPrompt,
-        context: buildConsoleRuntimeContext(app, pages, elements)
+        context: buildConsoleRuntimeContext(app, page, pageElements)
       });
       setResult(response);
-      setNotice({ tone: response.type === "no_match" ? "yellow" : "green", title: "Test complete", message: resultSummary(response) });
-      showToast("Mia test completed");
+      setNotice({ tone: response.type === "no_match" ? "yellow" : "green", title: "Preview complete", message: resultSummary(response) });
+      showToast("Resolver preview completed");
     } catch (cause) {
       const message = errorMessage(cause, "Unable to test Mia.");
       setNotice({ tone: "red", title: "Test failed", message });
@@ -82,26 +92,38 @@ export function TestMiaPage({
     <div className="page-grid">
       <PageIntro
         title="Test Mia before users see her"
-        description="Run the same resolver the SDK uses, verify that she can answer from mapped context, and confirm whether workflows are intentionally enabled or Q&A-only."
-        action={<StatusPill tone={workflowModeReady && pointReady ? "green" : "yellow"} label={workflowModeReady && pointReady ? "ready to test" : "needs proof"} />}
+        description="Preview resolver behavior from one mapped page, then verify the separate live SDK evidence produced by a real host-app session."
+        action={
+          <div className="button-cluster">
+            <StatusPill tone={workflowModeReady && pointReady ? "green" : "yellow"} label={workflowModeReady && pointReady ? "ready to preview" : "needs setup"} />
+            <a className="button secondary small" href={app.baseUrl} target="_blank" rel="noreferrer">Open host app<ExternalLink size={14} /></a>
+          </div>
+        }
       />
       {notice && <InlineAlert tone={notice.tone} title={notice.title} message={notice.message} />}
 
       <section className="mode-grid">
         <ReadinessMode title="Q&A" ready={runtimeReady || elements.length > 0} icon={<MessageSquareText size={16} />} detail={runtimeReady ? "SDK runtime events have reached the backend." : "Available as a console dry-run from the UI map."} />
-        <ReadinessMode title="Point and click" ready={pointReady} icon={<MousePointer2 size={16} />} detail={pointReady ? "Mapped elements include usable selectors." : "Review the UI map until selectors are strong or medium."} />
+        <ReadinessMode title="Resolver targets" ready={pointReady} icon={<MousePointer2 size={16} />} detail={pointReady ? "Mapped elements include usable locators for a preview." : "Review the UI map until selectors are strong or medium."} />
         <ReadinessMode title="Runtime mode" ready={workflowModeReady} icon={<WorkflowIcon size={16} />} detail={app.uiScanConfig.runtimeMode === "qa_only" ? "This app is intentionally Q&A and pointing only." : publishedWorkflows.length > 0 ? `${publishedWorkflows.length} workflow(s) published.` : "Publish a reviewed workflow or mark this app Q&A-only."} />
-        <ReadinessMode title="Runtime proof" ready={Boolean(latestRuntimeLog)} icon={<CheckCircle2 size={16} />} detail={latestRuntimeLog ? `Last event: ${humanizeEventType(latestRuntimeLog.eventType)} at ${formatDate(latestRuntimeLog.createdAt)}` : "Open the host app with the SDK installed."} />
+        <ReadinessMode title="Live SDK proof" ready={runtimeReady && resolverSeen && (pointed || actionAttempted)} icon={<CheckCircle2 size={16} />} detail={latestRuntimeLog ? `Last event: ${humanizeEventType(latestRuntimeLog.eventType)} at ${formatDate(latestRuntimeLog.createdAt)}` : "Open the host app with the SDK installed."} />
       </section>
 
       <section className="two-column test-mia-layout">
-        <Panel title="Run a Mia resolution test" action={<StatusPill tone={result ? "green" : "gray"} label={result?.type ?? "not tested"} />}>
+        <Panel title="Run a UI map resolver preview" action={<StatusPill tone={result ? "green" : "gray"} label={result?.type ?? "not tested"} />}>
           <div className="form-grid single">
+            <label>
+              Mapped page
+              <select value={page?.id ?? ""} onChange={(event) => setSelectedPageId(event.target.value)}>
+                {pages.map((item) => <option value={item.id} key={item.id}>{item.route} - {item.name}</option>)}
+              </select>
+            </label>
             <label>
               User prompt
               <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={3} />
             </label>
           </div>
+          <InlineAlert tone="gray" title="Preview only" message="This checks backend resolution with mapped context. It does not move a cursor, request confirmation, or execute against the live host DOM." />
           <div className="button-cluster">
             {buildPromptSuggestions(firstTarget).map((suggestion) => (
               <button className="button secondary small" type="button" key={suggestion} onClick={() => {
@@ -134,7 +156,7 @@ export function TestMiaPage({
               {"target" in result && result.target && (
                 <>
                   <SummaryItem label="Target" value={targetName(result.target)} />
-                  <SummaryItem label="Selector" value={result.target.selector ? <code>{result.target.selector}</code> : "Bounding box only"} />
+                  <SummaryItem label="Live locator" value={result.target.selector ? <code>{result.target.selector}</code> : "No executable locator"} />
                 </>
               )}
               {result.type === "element_action" && (
@@ -152,10 +174,13 @@ export function TestMiaPage({
       </section>
 
       <section className="two-column">
-        <Panel title="SDK runtime proof">
+        <Panel title="Live SDK runtime proof">
           <div className="service-grid">
-            <div className="service-row"><span>Runtime events</span><StatusPill tone={runtimeReady ? "green" : "yellow"} label={runtimeReady ? "received" : "not seen"} /></div>
-            <div className="service-row"><span>Visible elements in dry-run context</span><strong>{Math.min(elements.length, 40)}</strong></div>
+            <div className="service-row"><span>SDK initialized</span><StatusPill tone={runtimeReady ? "green" : "yellow"} label={runtimeReady ? "verified" : "not seen"} /></div>
+            <div className="service-row"><span>Live resolver request</span><StatusPill tone={resolverSeen ? "green" : "yellow"} label={resolverSeen ? "verified" : "not seen"} /></div>
+            <div className="service-row"><span>Cursor pointed on host page</span><StatusPill tone={pointed ? "green" : "yellow"} label={pointed ? "verified" : "not seen"} /></div>
+            <div className="service-row"><span>Action result</span><StatusPill tone={actionAttempted ? "green" : "gray"} label={actionAttempted ? "recorded" : "not tested"} /></div>
+            <div className="service-row"><span>Elements in selected preview page</span><strong>{Math.min(pageElements.length, 40)}</strong></div>
             <div className="service-row"><span>Runtime mode</span><strong>{app.uiScanConfig.runtimeMode === "qa_only" ? "Q&A only" : "Workflows"}</strong></div>
             <div className="service-row"><span>Published workflows</span><strong>{publishedWorkflows.length}</strong></div>
             <div className="service-row"><span>Latest runtime event</span><strong>{latestRuntimeLog ? humanizeEventType(latestRuntimeLog.eventType) : "None"}</strong></div>
@@ -210,8 +235,7 @@ function buildPromptSuggestions(target: UiElement | undefined): string[] {
   return ["What can I do on this page?", `Point me to ${name}`, `Click ${name}`];
 }
 
-function buildConsoleRuntimeContext(app: AppRecord, pages: UiPage[], elements: UiElement[]) {
-  const page = pages[0];
+function buildConsoleRuntimeContext(app: AppRecord, page: UiPage | undefined, elements: UiElement[]) {
   return {
     currentUrl: page?.url ?? app.baseUrl,
     currentRoute: page?.route ?? "/",
@@ -222,6 +246,7 @@ function buildConsoleRuntimeContext(app: AppRecord, pages: UiPage[], elements: U
       label: element.label,
       text: element.description,
       selector: element.selector,
+      locators: element.locators,
       elementId: element.elementId,
       boundingBox: { x: 24, y: 24 + index * 38, width: 180, height: 32 }
     }))
@@ -248,7 +273,17 @@ function targetName(target: { label?: string; text?: string; elementId?: string;
 
 function resultSummary(result: RuntimeResolveResponse): string {
   if (result.type === "workflow") return `Mia selected workflow: ${result.workflow.name}.`;
-  if (result.type === "element_action") return `Mia resolved a ${result.action} action for ${targetName(result.target)}.`;
+  if (result.type === "element_action") return `Mia would request confirmation before ${result.action} on ${targetName(result.target)}.`;
   if ("target" in result && result.target) return `Mia found ${targetName(result.target)}.`;
   return result.message;
+}
+
+function isRuntimeProofEvent(eventType: string): boolean {
+  return eventType === "session_started"
+    || eventType === "runtime_resolution"
+    || eventType === "element_pointed"
+    || eventType.startsWith("voice_")
+    || eventType.startsWith("workflow_")
+    || eventType.startsWith("element_action_")
+    || eventType.startsWith("screen_share_");
 }

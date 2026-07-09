@@ -188,6 +188,13 @@ export class WorkflowExecutor {
     await wait(reduceMotion ? 0 : 260, this.abortController.signal);
     const center = getElementCenter(element);
     this.options.cursor.navigateTo(center.x, center.y, step.label ?? step.target.label ?? step.target.elementId);
+    await this.log("element_pointed", step, {
+      target: {
+        elementId: step.target.elementId,
+        label: step.target.label,
+        locator: resolution.locator
+      }
+    });
     await wait(reduceMotion ? 0 : 560, this.abortController.signal);
     const cleanup = highlight(element);
 

@@ -2712,6 +2712,37 @@ button.selector-fix-card.is-selected {
   }
 }
 
+.is-spinning {
+  animation: spin 1s linear infinite;
+}
+
+.console-load-state {
+  min-height: 260px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+  padding: 28px;
+  text-align: left;
+}
+
+.console-load-state div {
+  max-width: 560px;
+}
+
+.console-load-state h2,
+.console-load-state p {
+  margin: 0;
+}
+
+.console-load-state p {
+  margin-top: 4px;
+  color: var(--text-muted);
+}
+
 .test-mia-layout {
   grid-template-columns: minmax(0, 0.9fr) minmax(340px, 1.1fr);
 }

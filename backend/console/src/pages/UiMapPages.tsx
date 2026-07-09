@@ -97,7 +97,7 @@ export function UiMapPage({
   const failedPages = pages.filter((page) => page.status === "failed").length;
   const expectedPageCount = latestUiMap?.pageCount ?? 0;
   const displayedPageCount = pages.length || expectedPageCount;
-  const pagesStillLoading = pages.length === 0 && expectedPageCount > 0;
+  const pageDataMismatch = pages.length === 0 && expectedPageCount > 0 && latestUiMap?.status === "completed";
 
   useEffect(() => {
     if (!app) return;
@@ -492,6 +492,7 @@ export function UiMapPage({
           </label>
           <StatusPill tone={failedPages ? "red" : displayedPageCount ? "green" : "gray"} label={failedPages ? `${failedPages} failed` : `${displayedPageCount} page(s)`} />
         </div>
+        {pageDataMismatch && <InlineAlert tone="red" title="Page data missing" message="The completed map reports captured pages, but page records were not returned. Refresh once, then rerun the scan if the mismatch remains." />}
         <table>
           <thead>
             <tr>
@@ -508,7 +509,7 @@ export function UiMapPage({
             {filteredPages.length === 0 && (
               <EmptyTableRow
                 colSpan={7}
-                message={pagesStillLoading ? "Loading scanned pages and selector details." : "No UI map pages match the current search."}
+                message={pageDataMismatch ? "Captured page records are unavailable." : "No UI map pages match the current search."}
               />
             )}
             {filteredPages.map((page) => (

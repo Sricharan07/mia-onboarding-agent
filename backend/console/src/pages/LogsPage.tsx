@@ -9,7 +9,7 @@ type RuntimeSessionGroup = {
   logs: ExecutionLog[];
   startedAt: string;
   lastAt: string;
-  status: "success" | "error" | "active" | "stopped";
+  status: "success" | "error" | "attention" | "active" | "stopped";
   mode: "voice" | "workflow" | "text" | "runtime";
 };
 
@@ -43,7 +43,7 @@ export function LogsPage({ logs }: { logs: ExecutionLog[] }) {
                   <strong>{sessionLabel(session)}</strong>
                   <span>{session.logs.length} events - last {formatDate(session.lastAt)}</span>
                 </span>
-                <StatusPill tone={session.status === "error" ? "red" : session.status === "stopped" ? "gray" : "green"} label={session.status} />
+                <StatusPill tone={session.status === "error" ? "red" : session.status === "attention" ? "yellow" : session.status === "stopped" ? "gray" : "green"} label={session.status} />
               </button>
             ))}
           </div>
@@ -116,6 +116,8 @@ function groupRuntimeSessions(logs: ExecutionLog[]): RuntimeSessionGroup[] {
             : "runtime";
       const status: RuntimeSessionGroup["status"] = sorted.some((log) => log.eventType.includes("error") || log.eventType.includes("failed"))
         ? "error"
+        : sorted.some((log) => log.eventType.includes("unverified"))
+          ? "attention"
         : sorted.some((log) => log.eventType === "voice_stopped")
           ? "stopped"
           : sorted.some((log) => log.eventType.includes("completed"))
@@ -145,8 +147,9 @@ function sessionIcon(session: RuntimeSessionGroup) {
 }
 
 function timelineIcon(log: ExecutionLog) {
-  if (log.eventType.includes("error") || log.eventType.includes("failed")) return <AlertTriangle size={14} />;
+  if (log.eventType.includes("error") || log.eventType.includes("failed") || log.eventType.includes("unverified")) return <AlertTriangle size={14} />;
   if (log.eventType.includes("completed")) return <CheckCircle2 size={14} />;
+  if (log.eventType === "element_pointed") return <MousePointer2 size={14} />;
   if (log.eventType.startsWith("voice_")) return <Mic size={14} />;
   return <Activity size={14} />;
 }

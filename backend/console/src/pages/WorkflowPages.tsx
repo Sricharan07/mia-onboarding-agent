@@ -1,8 +1,9 @@
 import { Check, FileVideo, Plus, Play, RefreshCw, Save, Upload, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { AppRecord, BackendApi, ExecutionPolicy, UiElement, Workflow, WorkflowJob, WorkflowReviewReport, WorkflowStep, WorkflowSummary } from "../api";
 import { ActionEmptyState, InlineAlert, PageIntro, Panel, StatusBadge, StatusPill, SummaryItem } from "../components/console";
 import { describeStep, errorMessage, formatDate } from "../utils/format";
+import type { LoadState } from "../types";
 
 type Notice = { tone: "red" | "green" | "yellow" | "gray"; title: string; message: string };
 
@@ -115,6 +116,7 @@ export function UploadWorkflowPage({
 
 export function WorkflowReviewPage({
   workflow,
+  loadState,
   workflows,
   api,
   refresh,
@@ -126,6 +128,7 @@ export function WorkflowReviewPage({
   showToast
 }: {
   workflow: Workflow | null;
+  loadState: LoadState;
   workflows: WorkflowSummary[];
   api: BackendApi;
   refresh: (preferredAppId?: string) => Promise<void>;
@@ -142,6 +145,8 @@ export function WorkflowReviewPage({
   const [notes, setNotes] = useState("");
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [reviewReport, setReviewReport] = useState<WorkflowReviewReport | null>(null);
+  const [reviewLoadState, setReviewLoadState] = useState<LoadState>("idle");
+  const reviewLoadGeneration = useRef(0);
   const [rawOpen, setRawOpen] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
 
@@ -151,14 +156,31 @@ export function WorkflowReviewPage({
     setTriggerPhrases(workflow?.triggerPhrases.join("\n") ?? "");
   }, [workflow]);
 
+  const loadReviewReport = async (workflowId: string) => {
+    const generation = ++reviewLoadGeneration.current;
+    setReviewLoadState("loading");
+    setReviewReport(null);
+    try {
+      const report = await api.getWorkflowReviewReport(workflowId);
+      if (generation !== reviewLoadGeneration.current) return false;
+      setReviewReport(report);
+      setReviewLoadState("ready");
+      return true;
+    } catch (cause) {
+      if (generation !== reviewLoadGeneration.current) return false;
+      setReviewLoadState("error");
+      reportNotice(cause, "Unable to load workflow review report");
+      return false;
+    }
+  };
+
   useEffect(() => {
     if (!workflow) {
       setReviewReport(null);
+      setReviewLoadState("idle");
       return;
     }
-    void api.getWorkflowReviewReport(workflow.workflowId)
-      .then(setReviewReport)
-      .catch((cause) => reportNotice(cause, "Unable to load workflow review report"));
+    void loadReviewReport(workflow.workflowId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, workflow?.workflowId]);
 
@@ -171,12 +193,16 @@ export function WorkflowReviewPage({
         <PageIntro
           title="Review the workflow before users can run it"
           description="Generated workflows stay in draft form until an admin confirms the trigger phrases, target elements, execution policy, and safety report."
-          action={<StatusPill tone="gray" label="No draft selected" />}
+          action={<StatusPill tone={loadState === "error" ? "red" : "gray"} label={loadState === "loading" ? "loading draft" : loadState === "error" ? "load failed" : "No draft selected"} />}
         />
         <ActionEmptyState
-          title="No workflow draft is ready for review"
-          message="Upload a walkthrough recording first. Once processing creates a draft, this page becomes the approval workspace."
-          action={<button className="button primary" type="button" onClick={onUpload}><Upload size={16} />Upload recording</button>}
+          title={loadState === "loading" ? "Loading workflow draft" : loadState === "error" ? "Workflow draft unavailable" : "No workflow draft is ready for review"}
+          message={loadState === "loading"
+            ? "Fetching the workflow steps and review metadata."
+            : loadState === "error"
+              ? "Return to workflows and retry opening the draft after resolving the backend error."
+              : "Upload a walkthrough recording first. Once processing creates a draft, this page becomes the approval workspace."}
+          action={loadState === "idle" ? <button className="button primary" type="button" onClick={onUpload}><Upload size={16} />Upload recording</button> : undefined}
         />
       </div>
     );
@@ -248,8 +274,8 @@ export function WorkflowReviewPage({
   const reloadEditedWorkflow = async (message: string) => {
     await refresh(workflow.appId);
     await selectWorkflow(workflow.workflowId);
-    setReviewReport(await api.getWorkflowReviewReport(workflow.workflowId));
-    setNotice(null);
+    const reportLoaded = await loadReviewReport(workflow.workflowId);
+    if (reportLoaded) setNotice(null);
     showToast(message);
   };
 
@@ -404,7 +430,14 @@ export function WorkflowReviewPage({
         <aside className="review-side">
           <Panel title="Safety report" action={<StatusPill tone={reviewReport?.publishable ? "green" : "red"} label={reviewReport?.publishable ? "clear" : "blocked"} />}>
             <div className="review-issue-list">
-              {!reviewReport && <div className="empty-state">Loading review report.</div>}
+              {reviewLoadState === "loading" && <div className="empty-state">Loading review report.</div>}
+              {reviewLoadState === "error" && (
+                <ActionEmptyState
+                  title="Safety report unavailable"
+                  message="The workflow cannot be approved until the current safety report loads successfully."
+                  action={<button className="button secondary small" type="button" onClick={() => void loadReviewReport(workflow.workflowId)}><RefreshCw size={14} />Retry</button>}
+                />
+              )}
               {reviewReport?.issues.length === 0 && <div className="empty-state">No blockers or warnings found.</div>}
               {reviewReport?.issues.map((issue) => (
                 <div className="review-issue" key={issue.id}>

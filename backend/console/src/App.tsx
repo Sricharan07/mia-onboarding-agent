@@ -1,5 +1,5 @@
-import { Command, EllipsisVertical, LogOut, PanelLeft, RefreshCw, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Command, EllipsisVertical, LoaderCircle, LogOut, PanelLeft, RefreshCw, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BackendApi,
   type ApiKeyRecord,
@@ -59,7 +59,10 @@ function App() {
   const [workflowSummaries, setWorkflowSummaries] = useState<WorkflowSummary[]>([]);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState("");
   const [selectedWorkflow, setSelectedWorkflow] = useState<Workflow | null>(null);
+  const [selectedWorkflowLoadState, setSelectedWorkflowLoadState] = useState<LoadState>("idle");
   const [logs, setLogs] = useState<ExecutionLog[]>([]);
+  const refreshGeneration = useRef(0);
+  const workflowSelectionGeneration = useRef(0);
 
   const api = useMemo(() => new BackendApi(backendUrl, { sessionToken }), [backendUrl, sessionToken]);
   const selectedApp = apps.find((app) => app.id === selectedAppId) ?? null;
@@ -89,26 +92,31 @@ function App() {
   };
 
   const refresh = async (preferredAppId = selectedAppId) => {
+    const generation = ++refreshGeneration.current;
+    workflowSelectionGeneration.current += 1;
     setLoadState("loading");
     setError("");
     try {
       const [nextHealth, nextReadiness, appResponse, apiKeyResponse] = await Promise.all([api.health(), api.readiness(), api.listApps(), api.listApiKeys()]);
-      setHealth(nextHealth);
-      setReadiness(nextReadiness);
-      setApps(appResponse.items);
-      setApiKeys(apiKeyResponse.items);
-      const nextAppId = preferredAppId || appResponse.items[0]?.id || "";
-      setSelectedAppId(nextAppId);
+      const nextAppId = appResponse.items.some((app) => app.id === preferredAppId)
+        ? preferredAppId
+        : appResponse.items[0]?.id || "";
 
       if (!nextAppId) {
+        if (generation !== refreshGeneration.current) return;
+        setHealth(nextHealth);
+        setReadiness(nextReadiness);
+        setApps(appResponse.items);
+        setApiKeys(apiKeyResponse.items);
+        setSelectedAppId("");
         setUiMapVersions([]);
         setPages([]);
         setElementsByPage({});
         setJobs([]);
         setWorkflowSummaries([]);
         setSelectedWorkflow(null);
+        setSelectedWorkflowLoadState("idle");
         setLogs([]);
-        setApiKeys(apiKeyResponse.items);
         setLoadState("ready");
         return;
       }
@@ -120,36 +128,41 @@ function App() {
         api.listLogs({ appId: nextAppId })
       ]);
 
-      setUiMapVersions(versionsResponse.items);
-      setJobs(jobsResponse.items);
-      setWorkflowSummaries(workflowResponse.items);
-      setLogs(logsResponse.items);
-
       const latestVersion = versionsResponse.items.find((version) => version.status === "completed") ?? versionsResponse.items[0];
+      let nextPages: UiPage[] = [];
+      let nextElementsByPage: Record<string, UiElement[]> = {};
       if (latestVersion) {
         const pageResponse = await api.listPages(latestVersion.id);
         const elementEntries = await Promise.all(
           pageResponse.items.map(async (page) => [page.id, (await api.listElements(page.id)).items] as const)
         );
-        setPages(pageResponse.items);
-        setSelectedPageId((current) => pageResponse.items.some((page) => page.id === current) ? current : pageResponse.items[0]?.id || "");
-        setElementsByPage(Object.fromEntries(elementEntries));
-      } else {
-        setPages([]);
-        setElementsByPage({});
-        setSelectedPageId("");
+        nextPages = pageResponse.items;
+        nextElementsByPage = Object.fromEntries(elementEntries);
       }
 
       const selectedWorkflowStillExists = workflowResponse.items.some((workflow) => workflow.workflowId === selectedWorkflowId);
       const nextWorkflowId = selectedWorkflowStillExists ? selectedWorkflowId : workflowResponse.items[0]?.workflowId || "";
+      const nextWorkflow = nextWorkflowId ? await api.getWorkflow(nextWorkflowId) : null;
+      if (generation !== refreshGeneration.current) return;
+
+      setHealth(nextHealth);
+      setReadiness(nextReadiness);
+      setApps(appResponse.items);
+      setApiKeys(apiKeyResponse.items);
+      setSelectedAppId(nextAppId);
+      setUiMapVersions(versionsResponse.items);
+      setJobs(jobsResponse.items);
+      setWorkflowSummaries(workflowResponse.items);
+      setLogs(logsResponse.items);
+      setPages(nextPages);
+      setElementsByPage(nextElementsByPage);
+      setSelectedPageId((current) => nextPages.some((page) => page.id === current) ? current : nextPages[0]?.id || "");
       setSelectedWorkflowId(nextWorkflowId);
-      if (nextWorkflowId) {
-        setSelectedWorkflow(await api.getWorkflow(nextWorkflowId));
-      } else {
-        setSelectedWorkflow(null);
-      }
+      setSelectedWorkflow(nextWorkflow);
+      setSelectedWorkflowLoadState(nextWorkflow ? "ready" : "idle");
       setLoadState("ready");
     } catch (cause) {
+      if (generation !== refreshGeneration.current) return;
       setHealth(null);
       setReadiness(null);
       setLoadState("error");
@@ -213,15 +226,32 @@ function App() {
   const selectApp = async (appId: string) => {
     setSelectedAppId(appId);
     setSelectedWorkflowId("");
+    setUiMapVersions([]);
+    setPages([]);
+    setElementsByPage({});
+    setSelectedPageId("");
+    setJobs([]);
+    setWorkflowSummaries([]);
+    setSelectedWorkflow(null);
+    setSelectedWorkflowLoadState("idle");
+    setLogs([]);
     setSidebarOpen(false);
     await refresh(appId);
   };
 
   const selectWorkflow = async (workflowId: string) => {
+    const generation = ++workflowSelectionGeneration.current;
     setSelectedWorkflowId(workflowId);
+    setSelectedWorkflow(null);
+    setSelectedWorkflowLoadState("loading");
     try {
-      setSelectedWorkflow(await api.getWorkflow(workflowId));
+      const workflow = await api.getWorkflow(workflowId);
+      if (generation !== workflowSelectionGeneration.current) return;
+      setSelectedWorkflow(workflow);
+      setSelectedWorkflowLoadState("ready");
     } catch (cause) {
+      if (generation !== workflowSelectionGeneration.current) return;
+      setSelectedWorkflowLoadState("error");
       reportError(cause, "Unable to load workflow.");
     }
   };
@@ -371,10 +401,13 @@ function App() {
                 </select>
               </label>
             )}
-            <StatusPill tone={health?.ok ? "green" : "red"} label={health?.ok ? "Backend healthy" : "Backend offline"} />
-            <button className="button secondary" type="button" onClick={() => void refresh()}>
-              <RefreshCw size={15} />
-              Refresh
+            <StatusPill
+              tone={loadState === "loading" && !health ? "gray" : health?.ok ? "green" : "red"}
+              label={loadState === "loading" && !health ? "Checking backend" : health?.ok ? "Backend healthy" : "Backend offline"}
+            />
+            <button className="button secondary" type="button" disabled={loadState === "loading"} onClick={() => void refresh()}>
+              <RefreshCw className={loadState === "loading" ? "is-spinning" : ""} size={15} />
+              {loadState === "loading" ? "Refreshing" : "Refresh"}
             </button>
             <button className="button secondary" type="button" onClick={() => void logout()}>
               <LogOut size={15} />
@@ -383,9 +416,15 @@ function App() {
           </div>
         </header>
 
-        {error && <InlineAlert tone="red" title="Backend error" message={error} />}
-        {loadState === "loading" && <InlineAlert tone="gray" title="Loading" message="Fetching the latest backend data." />}
+        {error && apps.length > 0 && <InlineAlert tone="red" title="Backend error" message={error} />}
+        {loadState === "loading" && apps.length > 0 && <InlineAlert tone="gray" title="Refreshing" message="Fetching the latest backend data for the selected app." />}
 
+        {loadState === "loading" && apps.length === 0 ? (
+          <ConsoleLoadState />
+        ) : loadState === "error" && apps.length === 0 ? (
+          <ConsoleLoadState error={error} onRetry={() => void refresh()} />
+        ) : (
+          <>
         {activeRoute === "overview" && (
           <OverviewPage
             app={selectedApp}
@@ -453,6 +492,7 @@ function App() {
         {activeRoute === "workflow-review" && (
           <WorkflowReviewPage
             workflow={selectedWorkflow}
+            loadState={selectedWorkflowLoadState}
             workflows={workflowSummaries}
             api={api}
             refresh={refresh}
@@ -502,11 +542,26 @@ function App() {
             showToast={showToast}
           />
         )}
+          </>
+        )}
       </main>
 
       <button className="sidebar-backdrop" type="button" aria-label="Close sidebar" onClick={() => setSidebarOpen(false)} />
       {toast && <div className="toast" role="status" aria-live="polite">{toast}</div>}
     </div>
+  );
+}
+
+function ConsoleLoadState({ error, onRetry }: { error?: string; onRetry?: () => void }) {
+  return (
+    <section className="console-load-state" role={error ? "alert" : "status"} aria-live="polite">
+      {!error && <LoaderCircle className="is-spinning" size={22} />}
+      <div>
+        <h2>{error ? "Console data could not be loaded" : "Loading console data"}</h2>
+        <p>{error ?? "Fetching apps, provider readiness, UI maps, workflows, and runtime evidence."}</p>
+      </div>
+      {onRetry && <button className="button primary" type="button" onClick={onRetry}>Retry</button>}
+    </section>
   );
 }
 

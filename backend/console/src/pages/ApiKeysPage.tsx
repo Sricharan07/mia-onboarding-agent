@@ -1,8 +1,9 @@
-import { AlertTriangle, Copy, KeyRound, Plus, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { AlertTriangle, Copy, KeyRound, Plus, RefreshCw, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import type { ApiKeyRecord, ApiKeyScope, AppRecord, BackendApi, CreatedApiKey } from "../api";
 import { EmptyTableRow, InlineAlert, PageIntro, Panel, StatusPill } from "../components/console";
 import { errorMessage, formatDate } from "../utils/format";
+import type { LoadState } from "../types";
 
 type Notice = { tone: "red" | "green" | "yellow" | "gray"; title: string; message: string };
 type KeyMode = "integration" | "admin";
@@ -35,12 +36,21 @@ export function ApiKeysPage({
   const [createdKey, setCreatedKey] = useState<CreatedApiKey | null>(null);
   const [pendingKeyId, setPendingKeyId] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [loadState, setLoadState] = useState<LoadState>("loading");
+  const loadGeneration = useRef(0);
   const visibleKeys = keys.filter((key) => keyMode === "admin" ? key.scopes.includes("admin") : !key.scopes.includes("admin"));
 
   const load = async () => {
+    const generation = ++loadGeneration.current;
+    setLoadState("loading");
     try {
-      setKeys((await api.listApiKeys()).items);
+      const nextKeys = (await api.listApiKeys()).items;
+      if (generation !== loadGeneration.current) return;
+      setKeys(nextKeys);
+      setLoadState("ready");
     } catch (cause) {
+      if (generation !== loadGeneration.current) return;
+      setLoadState("error");
       reportNotice(cause, "Unable to load API keys");
     }
   };
@@ -115,7 +125,7 @@ export function ApiKeysPage({
         description={keyMode === "admin"
           ? "Create server-side keys for trusted backend automation. Admin keys are never safe for browser code."
           : "Create app-bound server credentials that mint short-lived browser runtime tokens for approved origins."}
-        action={<StatusPill tone={visibleKeys.some((key) => !key.revokedAt) ? "green" : "gray"} label={`${visibleKeys.length} keys`} />}
+        action={<StatusPill tone={loadState === "error" ? "red" : visibleKeys.some((key) => !key.revokedAt) ? "green" : "gray"} label={loadState === "loading" ? "loading" : `${visibleKeys.length} keys`} />}
       />
       {notice && <InlineAlert tone={notice.tone} title={notice.title} message={notice.message} />}
       <div className="segmented-tabs" role="tablist" aria-label="API key type">
@@ -261,7 +271,12 @@ export function ApiKeysPage({
         </Panel>
       )}
 
-      <Panel title={keyMode === "admin" ? "Admin keys" : "Integration keys"} action={<KeyRound size={16} />}>
+      <Panel title={keyMode === "admin" ? "Admin keys" : "Integration keys"} action={
+        <button className="button secondary small" type="button" disabled={loadState === "loading"} onClick={() => void load()}>
+          <RefreshCw className={loadState === "loading" ? "is-spinning" : ""} size={14} />
+          Refresh
+        </button>
+      }>
         <div className="table-frame">
           <table>
             <thead>
@@ -279,7 +294,11 @@ export function ApiKeysPage({
             </thead>
             <tbody>
               {visibleKeys.length === 0 && (
-                <EmptyTableRow colSpan={9} message={keyMode === "admin" ? "No admin keys created yet." : "No integration keys created yet."} />
+                <EmptyTableRow colSpan={9} message={loadState === "loading"
+                  ? "Loading API keys."
+                  : loadState === "error"
+                    ? "API keys could not be loaded. Review the error above and retry."
+                    : keyMode === "admin" ? "No admin keys created yet." : "No integration keys created yet."} />
               )}
               {visibleKeys.map((key) => (
                 <tr key={key.id}>

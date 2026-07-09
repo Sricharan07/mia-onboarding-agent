@@ -432,6 +432,7 @@ class AIOnboardingAgentInstance {
     const box = target?.boundingBox;
     if (!box || box.width <= 0 || box.height <= 0) return false;
     this.cursor?.navigateTo(box.x + box.width / 2, box.y + box.height / 2, targetLabel(target));
+    this.logExecutionEvent("element_pointed", { target: targetLogPayload(target) });
     return true;
   }
 
