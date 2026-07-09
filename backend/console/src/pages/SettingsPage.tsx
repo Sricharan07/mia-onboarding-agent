@@ -1,6 +1,6 @@
-import { AlertTriangle, Archive, Database, KeyRound, RefreshCw, Save, ShieldCheck, Users } from "lucide-react";
+import { AlertTriangle, Archive, Database, Download, KeyRound, RefreshCw, Save, ShieldCheck, Trash2, Users } from "lucide-react";
 import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
-import type { AppRecord, AppUiScanConfig, BackendApi, ConsoleAuthUser, ConsoleSession, SystemReadiness, UiScanAuthMode } from "../api";
+import type { AppRecord, AppUiScanConfig, BackendApi, ConsoleAuthUser, ConsoleSession, SystemReadiness, TelemetryMode, UiScanAuthMode } from "../api";
 import { InlineAlert, PageIntro, Panel, ServiceRow, StatusPill } from "../components/console";
 import type { RouteId } from "../types";
 import { errorMessage, formatDate } from "../utils/format";
@@ -63,6 +63,9 @@ export function SettingsPage({
   const [redactedSelectors, setRedactedSelectors] = useState(selectedApp?.uiScanConfig.redactedSelectors.join("\n") ?? "");
   const [routeDiscoveryEnabled, setRouteDiscoveryEnabled] = useState(selectedApp?.uiScanConfig.routeDiscovery.enabled ?? false);
   const [routeDiscoveryMaxRoutes, setRouteDiscoveryMaxRoutes] = useState(String(selectedApp?.uiScanConfig.routeDiscovery.maxRoutes ?? 25));
+  const [telemetryMode, setTelemetryMode] = useState<TelemetryMode>(selectedApp?.privacyPolicy.telemetryMode ?? "events_only");
+  const [retentionDays, setRetentionDays] = useState(String(selectedApp?.privacyPolicy.retentionDays ?? 30));
+  const [deleteUserId, setDeleteUserId] = useState("");
   const [pending, setPending] = useState("");
   const [archiveConfirm, setArchiveConfirm] = useState("");
   const [users, setUsers] = useState<ConsoleAuthUser[]>([]);
@@ -100,6 +103,9 @@ export function SettingsPage({
     setRedactedSelectors(selectedApp.uiScanConfig.redactedSelectors.join("\n"));
     setRouteDiscoveryEnabled(selectedApp.uiScanConfig.routeDiscovery.enabled);
     setRouteDiscoveryMaxRoutes(String(selectedApp.uiScanConfig.routeDiscovery.maxRoutes));
+    setTelemetryMode(selectedApp.privacyPolicy.telemetryMode);
+    setRetentionDays(String(selectedApp.privacyPolicy.retentionDays));
+    setDeleteUserId("");
     setArchiveConfirm("");
   }, [selectedApp]);
 
@@ -156,6 +162,10 @@ export function SettingsPage({
         name: name.trim(),
         slug: slug.trim(),
         baseUrl: baseUrl.trim(),
+        privacyPolicy: {
+          telemetryMode,
+          retentionDays: Math.min(3650, Math.max(1, Number.parseInt(retentionDays, 10) || 30))
+        },
         uiScanConfig: {
           runtimeMode,
           routes: selectedApp?.uiScanConfig.routes.length ? selectedApp.uiScanConfig.routes : ["/"],
@@ -184,6 +194,52 @@ export function SettingsPage({
       showToast("App and scan profile saved");
     } catch (cause) {
       reportNotice(cause, "Unable to save app");
+    } finally {
+      setPending("");
+    }
+  };
+
+  const exportData = async () => {
+    if (!selectedApp) return;
+    setPending("export-data");
+    try {
+      const data = await api.exportAppData(selectedApp.id);
+      const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${selectedApp.slug}-mia-data-${new Date().toISOString().slice(0, 10)}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+      showToast("App data exported");
+    } catch (cause) {
+      reportNotice(cause, "Unable to export app data");
+    } finally {
+      setPending("");
+    }
+  };
+
+  const purgeExpiredData = async () => {
+    if (!selectedApp) return;
+    setPending("purge-data");
+    try {
+      const result = await api.purgeAppData(selectedApp.id);
+      showToast(`Purged ${Object.values(result).reduce((sum, count) => sum + count, 0)} expired records`);
+    } catch (cause) {
+      reportNotice(cause, "Unable to purge expired data");
+    } finally {
+      setPending("");
+    }
+  };
+
+  const deleteUserData = async () => {
+    if (!selectedApp || !deleteUserId.trim()) return;
+    setPending("delete-user-data");
+    try {
+      const result = await api.deleteAppUserData(selectedApp.id, deleteUserId.trim());
+      setDeleteUserId("");
+      showToast(`Deleted ${Object.values(result).reduce((sum, count) => sum + count, 0)} user records`);
+    } catch (cause) {
+      reportNotice(cause, "Unable to delete user data");
     } finally {
       setPending("");
     }
@@ -489,6 +545,18 @@ export function SettingsPage({
           <Panel title="Scan safety and privacy">
           <div className="form-grid">
             <label>
+              Runtime telemetry
+              <select value={telemetryMode} onChange={(event) => setTelemetryMode(event.target.value as TelemetryMode)}>
+                <option value="events_only">Events only</option>
+                <option value="redacted">Redacted diagnostics</option>
+                <option value="full">Full diagnostics with user consent</option>
+              </select>
+            </label>
+            <label>
+              Retention days
+              <input value={retentionDays} onChange={(event) => setRetentionDays(event.target.value)} inputMode="numeric" min="1" max="3650" />
+            </label>
+            <label>
               Ignored selectors
               <textarea value={ignoredSelectors} onChange={(event) => setIgnoredSelectors(event.target.value)} rows={4} placeholder={"[data-private]\n.billing-card"} />
             </label>
@@ -512,6 +580,28 @@ export function SettingsPage({
               {pending === "save-app" ? "Saving" : "Save privacy settings"}
             </button>
           </div>
+          </Panel>
+          <Panel title="Runtime data controls">
+            <div className="form-grid single">
+              <label>
+                User ID
+                <input value={deleteUserId} onChange={(event) => setDeleteUserId(event.target.value)} placeholder="user_123" />
+              </label>
+            </div>
+            <div className="panel-actions">
+              <button className="button secondary" type="button" disabled={!selectedApp || pending === "export-data"} onClick={() => void exportData()}>
+                <Download size={16} />
+                Export app data
+              </button>
+              <button className="button secondary" type="button" disabled={!selectedApp || pending === "purge-data"} onClick={() => void purgeExpiredData()}>
+                <Trash2 size={16} />
+                Purge expired
+              </button>
+              <button className="button danger" type="button" disabled={!selectedApp || !deleteUserId.trim() || pending === "delete-user-data"} onClick={() => void deleteUserData()}>
+                <Trash2 size={16} />
+                Delete user data
+              </button>
+            </div>
           </Panel>
         </section>
       )}

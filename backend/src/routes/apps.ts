@@ -1,12 +1,17 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { AppDependencies } from "../app.js";
+import { telemetryModeSchema } from "../schemas/domain.js";
 import { requireApiKeyAppAccess, requireApiKeyScope } from "./auth.js";
 
 const appInputSchema = z.object({
   name: z.string().min(1),
   slug: z.string().trim().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Use lowercase letters, numbers, and single hyphens between words."),
   baseUrl: z.string().url(),
+  privacyPolicy: z.object({
+    telemetryMode: telemetryModeSchema,
+    retentionDays: z.number().int().positive().max(3650)
+  }).optional(),
   uiScanConfig: z.object({
     runtimeMode: z.enum(["qa_only", "workflow"]).optional(),
     routes: z.array(z.string().trim().min(1)).optional(),

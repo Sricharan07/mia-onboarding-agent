@@ -65,6 +65,57 @@ test("workflow compiler honors requested upload metadata", async () => {
   assert.deepEqual(compiled.triggerPhrases, ["custom onboarding flow"]);
 });
 
+test("workflow compiler never collects secret or payment values", async () => {
+  const target = uiElement({
+    appId: "app_one",
+    uiMapVersionId: "map_one",
+    pageId: "page_one",
+    elementId: "password-field",
+    label: "Account password"
+  });
+  const repositories = {
+    getElementByElementId: () => target
+  } as unknown as Repositories;
+  const semanticSearch = {
+    ...emptySearch,
+    search: async () => [{ id: target.id, score: 0.99, metadata: { elementId: target.elementId } }]
+  } satisfies SemanticSearchAdapter;
+  const compiler = new WorkflowCompiler(repositories, semanticSearch);
+  const compiled = await compiler.compile({
+    appId: "app_one",
+    videoId: "video_one",
+    jobId: "job_one",
+    timeline: {
+      goal: "Sign in",
+      steps: [{
+        id: "password",
+        order: 1,
+        action: "fill",
+        observedElement: "Account password",
+        observedValueType: "password",
+        confidence: 0.99
+      }]
+    }
+  });
+
+  assert.equal(compiled.steps.some((step) => step.type === "ask_user"), false);
+  assert.deepEqual(compiled.steps[0], {
+    id: compiled.steps[0]?.id,
+    type: "focus",
+    target: {
+      elementId: "password-field",
+      label: "Account password",
+      selector: '[data-testid="password-field"]',
+      fallbackSelectors: [],
+      route: "/",
+      pageName: "Home"
+    },
+    executionPolicy: "manual_only",
+    label: "Enter Account password yourself",
+    source: { extractedStepId: "password", matchConfidence: 0.99 }
+  });
+});
+
 test("repository rejects workflow id reuse across apps", () => {
   const dir = mkdtempSync(join(tmpdir(), "mia-workflows-"));
   const db = createDatabase(testConfig(dir));
@@ -334,7 +385,7 @@ test("interactive scan cannot finish without captured UI elements", async () => 
   }
 });
 
-test("runtime session updates preserve omitted current step and values", () => {
+test("runtime session updates preserve omitted current step without persisting values", () => {
   const dir = mkdtempSync(join(tmpdir(), "mia-runtime-session-"));
   const db = createDatabase(testConfig(dir));
   const repositories = new Repositories(db);
@@ -345,15 +396,14 @@ test("runtime session updates preserve omitted current step and values", () => {
     const session = repositories.createRuntimeSession({ appId: "app_one", workflowId: "workflow_one" });
     repositories.updateRuntimeSession(session.runtimeSessionId, {
       status: "running",
-      currentStepId: "step_one",
-      values: { email: "user@example.com" }
+      currentStepId: "step_one"
     });
     repositories.updateRuntimeSession(session.runtimeSessionId, { status: "paused" });
 
-    const row = db.prepare("SELECT current_step_id as currentStepId, values_json as valuesJson FROM runtime_sessions WHERE id = ?")
-      .get(session.runtimeSessionId) as { currentStepId: string; valuesJson: string };
+    const row = db.prepare("SELECT current_step_id as currentStepId FROM runtime_sessions WHERE id = ?")
+      .get(session.runtimeSessionId) as { currentStepId: string };
     assert.equal(row.currentStepId, "step_one");
-    assert.deepEqual(JSON.parse(row.valuesJson), { email: "user@example.com" });
+    assert.equal(columnNames(db, "runtime_sessions").includes("values_json"), false);
   } finally {
     db.close();
     rmSync(dir, { recursive: true, force: true });
@@ -371,15 +421,13 @@ test("terminal runtime session updates clear current step", () => {
     const session = repositories.createRuntimeSession({ appId: "app_one", workflowId: "workflow_one" });
     repositories.updateRuntimeSession(session.runtimeSessionId, {
       status: "running",
-      currentStepId: "step_one",
-      values: { email: "user@example.com" }
+      currentStepId: "step_one"
     });
-    repositories.updateRuntimeSession(session.runtimeSessionId, { status: "completed", values: { email: "user@example.com" } });
+    repositories.updateRuntimeSession(session.runtimeSessionId, { status: "completed" });
 
-    const row = db.prepare("SELECT current_step_id as currentStepId, values_json as valuesJson FROM runtime_sessions WHERE id = ?")
-      .get(session.runtimeSessionId) as { currentStepId: string | null; valuesJson: string };
+    const row = db.prepare("SELECT current_step_id as currentStepId FROM runtime_sessions WHERE id = ?")
+      .get(session.runtimeSessionId) as { currentStepId: string | null };
     assert.equal(row.currentStepId, null);
-    assert.deepEqual(JSON.parse(row.valuesJson), { email: "user@example.com" });
   } finally {
     db.close();
     rmSync(dir, { recursive: true, force: true });
@@ -833,4 +881,8 @@ function testConfig(dir: string): AppConfig {
     UI_SCAN_HEADLESS: true,
     UI_SCAN_ALLOW_PRIVATE_NETWORKS: false
   };
+}
+
+function columnNames(db: ReturnType<typeof createDatabase>, table: string): string[] {
+  return (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((row) => row.name);
 }

@@ -6,6 +6,7 @@ export type AiLogContext = {
 };
 
 export type AiRequestLogInput = {
+  appId?: string;
   provider: string;
   purpose: string;
   inputSummary: string;

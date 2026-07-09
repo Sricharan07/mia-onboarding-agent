@@ -12,7 +12,8 @@ const currentMigrations = [
   { id: 1, name: "initial_schema" },
   { id: 2, name: "schema_hardening_columns" },
   { id: 3, name: "foreign_key_constraints" },
-  { id: 4, name: "runtime_access_tokens_and_quotas" }
+  { id: 4, name: "runtime_access_tokens_and_quotas" },
+  { id: 5, name: "privacy_controls_and_data_minimization" }
 ];
 
 test("database migrations are recorded and idempotent", () => {
@@ -24,7 +25,8 @@ test("database migrations are recorded and idempotent", () => {
       first.prepare("SELECT id, name FROM schema_migrations ORDER BY id").all(),
       currentMigrations
     );
-    assert.equal(Number(first.pragma("user_version", { simple: true })), 4);
+    assert.equal(Number(first.pragma("user_version", { simple: true })), 5);
+    assert.equal(columnNames(first, "runtime_sessions").includes("values_json"), false);
     first.close();
 
     const second = createDatabase(testConfig(dir));
@@ -74,7 +76,7 @@ test("database hardening columns migrate when only the initial migration was rec
     db.exec(`
       DROP INDEX IF EXISTS idx_ui_elements_fingerprint;
       ALTER TABLE ui_elements DROP COLUMN fingerprint;
-      DELETE FROM schema_migrations WHERE id IN (2, 3, 4);
+      DELETE FROM schema_migrations WHERE id IN (2, 3, 4, 5);
       PRAGMA user_version = 1;
     `);
 
@@ -85,7 +87,7 @@ test("database hardening columns migrate when only the initial migration was rec
       db.prepare("SELECT id, name FROM schema_migrations ORDER BY id").all(),
       currentMigrations
     );
-    assert.equal(Number(db.pragma("user_version", { simple: true })), 4);
+    assert.equal(Number(db.pragma("user_version", { simple: true })), 5);
   } finally {
     db.close();
     rmSync(dir, { recursive: true, force: true });
@@ -114,7 +116,7 @@ test("foreign key migration rebuilds legacy tables without constraints", () => {
       INSERT INTO api_keys (id, name, prefix, key_hash, scopes_json, app_id, allowed_origins_json, created_at, last_used_at, revoked_at)
       SELECT id, name, prefix, key_hash, scopes_json, app_id, allowed_origins_json, created_at, last_used_at, revoked_at FROM api_keys_without_fk;
       DROP TABLE api_keys_without_fk;
-      DELETE FROM schema_migrations WHERE id IN (3, 4);
+      DELETE FROM schema_migrations WHERE id IN (3, 4, 5);
       PRAGMA user_version = 2;
     `);
     assert.equal(foreignKeyCount(db, "api_keys"), 0);

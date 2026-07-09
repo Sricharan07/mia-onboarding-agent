@@ -1,7 +1,7 @@
 import type { Db } from "./database.js";
 import { createId, nowIso, slugToId } from "../utils/id.js";
 import { AppError, NotFoundError } from "../utils/errors.js";
-import type { AppRecord, AppUiScanConfig, UIElementRecord, UiScanAuthMode, Workflow, WorkflowStep } from "../schemas/domain.js";
+import type { AppRecord, AppUiScanConfig, TelemetryMode, UIElementRecord, UiScanAuthMode, Workflow, WorkflowStep } from "../schemas/domain.js";
 import { decryptSecret, encryptSecret, hasSecretEncryptionKey, isEncryptedSecret } from "../services/security/secretCrypto.js";
 
 type Row = Record<string, unknown>;
@@ -139,7 +139,13 @@ export class Repositories {
       .map((row) => mapApp(row, this.secretEncryptionKey));
   }
 
-  upsertApp(input: { name: string; slug: string; baseUrl: string; uiScanConfig?: AppUiScanConfigInput }): AppRecord {
+  upsertApp(input: {
+    name: string;
+    slug: string;
+    baseUrl: string;
+    uiScanConfig?: AppUiScanConfigInput;
+    privacyPolicy?: { telemetryMode: TelemetryMode; retentionDays: number };
+  }): AppRecord {
     const existing = this.db.prepare("SELECT * FROM apps WHERE slug = ?").get(input.slug) as Row | undefined;
     if (existing?.archived_at) {
       throw new AppError("APP_ARCHIVED", "Archived apps cannot be updated. Create a new app slug instead.", 409);
@@ -150,14 +156,29 @@ export class Repositories {
     const nextScanConfig = mergeUiScanConfig(currentScanConfig, input.uiScanConfig, this.secretEncryptionKey);
 
     this.db.prepare(`
-      INSERT INTO apps (id, name, slug, base_url, ui_scan_config_json, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO apps (
+        id, name, slug, base_url, ui_scan_config_json,
+        telemetry_mode, telemetry_retention_days, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(slug) DO UPDATE SET
         name = excluded.name,
         base_url = excluded.base_url,
         ui_scan_config_json = excluded.ui_scan_config_json,
+        telemetry_mode = excluded.telemetry_mode,
+        telemetry_retention_days = excluded.telemetry_retention_days,
         updated_at = excluded.updated_at
-    `).run(id, input.name, input.slug, input.baseUrl, JSON.stringify(serializeUiScanConfig(nextScanConfig, this.secretEncryptionKey)), existing?.created_at ?? now, now);
+    `).run(
+      id,
+      input.name,
+      input.slug,
+      input.baseUrl,
+      JSON.stringify(serializeUiScanConfig(nextScanConfig, this.secretEncryptionKey)),
+      input.privacyPolicy?.telemetryMode ?? existing?.telemetry_mode ?? "events_only",
+      input.privacyPolicy?.retentionDays ?? existing?.telemetry_retention_days ?? 30,
+      existing?.created_at ?? now,
+      now
+    );
 
     return this.getApp(id);
   }
@@ -727,23 +748,21 @@ export class Repositories {
   createRuntimeSession(input: { appId: string; workflowId: string; clientSessionId?: string; userId?: string }): { runtimeSessionId: string; status: string } {
     const id = createId("workflow_runtime");
     this.db.prepare(`
-      INSERT INTO runtime_sessions (id, app_id, workflow_id, client_session_id, user_id, status, values_json, started_at)
-      VALUES (?, ?, ?, ?, ?, 'pending', '{}', ?)
+      INSERT INTO runtime_sessions (id, app_id, workflow_id, client_session_id, user_id, status, started_at)
+      VALUES (?, ?, ?, ?, ?, 'pending', ?)
     `).run(id, input.appId, input.workflowId, input.clientSessionId ?? null, input.userId ?? null, nowIso());
     return { runtimeSessionId: id, status: "pending" };
   }
 
-  updateRuntimeSession(id: string, input: { status: string; currentStepId?: string; values?: Record<string, unknown>; error?: string }): void {
-    const valuesJson = input.values === undefined ? null : JSON.stringify(input.values);
+  updateRuntimeSession(id: string, input: { status: string; currentStepId?: string; error?: string }): void {
     const result = this.db.prepare(`
       UPDATE runtime_sessions
       SET status = ?,
           current_step_id = CASE WHEN ? IN ('completed', 'cancelled', 'failed') THEN NULL ELSE COALESCE(?, current_step_id) END,
-          values_json = COALESCE(?, values_json),
           completed_at = CASE WHEN ? IN ('completed', 'cancelled', 'failed') THEN ? ELSE completed_at END,
           error = ?
       WHERE id = ?
-    `).run(input.status, input.status, input.currentStepId ?? null, valuesJson, input.status, nowIso(), input.error ?? null, id);
+    `).run(input.status, input.status, input.currentStepId ?? null, input.status, nowIso(), input.error ?? null, id);
 
     if (result.changes === 0) {
       throw new NotFoundError(`Runtime session not found: ${id}`);
@@ -759,11 +778,33 @@ export class Repositories {
     return row;
   }
 
-  insertExecutionLog(input: { appId?: string; sessionId?: string; workflowId?: string; stepId?: string; eventType: string; payload: unknown }): void {
+  insertExecutionLog(input: {
+    appId: string;
+    userId?: string;
+    sessionId?: string;
+    workflowId?: string;
+    stepId?: string;
+    eventType: string;
+    telemetryLevel: TelemetryMode;
+    payload: unknown;
+  }): void {
     this.db.prepare(`
-      INSERT INTO execution_logs (id, app_id, session_id, workflow_id, step_id, event_type, payload_json, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(createId("log"), input.appId ?? null, input.sessionId ?? null, input.workflowId ?? null, input.stepId ?? null, input.eventType, JSON.stringify(input.payload ?? {}), nowIso());
+      INSERT INTO execution_logs (
+        id, app_id, user_id, session_id, workflow_id, step_id,
+        event_type, telemetry_level, payload_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      createId("log"),
+      input.appId,
+      input.userId ?? null,
+      input.sessionId ?? null,
+      input.workflowId ?? null,
+      input.stepId ?? null,
+      input.eventType,
+      input.telemetryLevel,
+      JSON.stringify(input.payload ?? {}),
+      nowIso()
+    );
   }
 
   listExecutionLogs(filters: { appId?: string; workflowId?: string; sessionId?: string }): unknown[] {
@@ -779,21 +820,87 @@ export class Repositories {
     return this.db.prepare(`
       SELECT id,
              app_id as appId,
+             user_id as userId,
              session_id as sessionId,
              workflow_id as workflowId,
              step_id as stepId,
              event_type as eventType,
+             telemetry_level as telemetryLevel,
              created_at as createdAt,
              payload_json as payload
       FROM execution_logs ${where} ORDER BY created_at DESC LIMIT 200
     `).all(...params).map((row) => ({ ...(row as Row), payload: JSON.parse(String((row as Row).payload)) }));
   }
 
-  insertAiLog(input: { provider: string; purpose: string; inputSummary: string; outputSummary?: string; latencyMs?: number; error?: string }): void {
+  insertAiLog(input: { appId?: string; provider: string; purpose: string; inputSummary: string; outputSummary?: string; latencyMs?: number; error?: string }): void {
     this.db.prepare(`
-      INSERT INTO ai_request_logs (id, provider, purpose, input_summary, output_summary, latency_ms, error, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(createId("ai_log"), input.provider, input.purpose, input.inputSummary, input.outputSummary ?? null, input.latencyMs ?? null, input.error ?? null, nowIso());
+      INSERT INTO ai_request_logs (id, app_id, provider, purpose, input_summary, output_summary, latency_ms, error, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(createId("ai_log"), input.appId ?? null, input.provider, input.purpose, input.inputSummary, input.outputSummary ?? null, input.latencyMs ?? null, input.error ?? null, nowIso());
+  }
+
+  purgeExpiredData(appId?: string): { executionLogs: number; runtimeSessions: number; aiRequestLogs: number; runtimeTokens: number } {
+    const apps = appId
+      ? [this.getApp(appId)]
+      : (this.db.prepare("SELECT * FROM apps").all() as Row[]).map((row) => mapApp(row, this.secretEncryptionKey));
+    const totals = { executionLogs: 0, runtimeSessions: 0, aiRequestLogs: 0, runtimeTokens: 0 };
+    const purge = this.db.transaction(() => {
+      for (const app of apps) {
+        const cutoff = new Date(Date.now() - app.privacyPolicy.retentionDays * 86_400_000).toISOString();
+        totals.executionLogs += this.db.prepare("DELETE FROM execution_logs WHERE app_id = ? AND created_at < ?").run(app.id, cutoff).changes;
+        totals.runtimeSessions += this.db.prepare(`
+          DELETE FROM runtime_sessions
+          WHERE app_id = ? AND completed_at IS NOT NULL AND completed_at < ?
+        `).run(app.id, cutoff).changes;
+        totals.aiRequestLogs += this.db.prepare("DELETE FROM ai_request_logs WHERE app_id = ? AND created_at < ?").run(app.id, cutoff).changes;
+        totals.runtimeTokens += this.db.prepare(`
+          DELETE FROM runtime_access_tokens
+          WHERE app_id = ? AND (expires_at < ? OR (revoked_at IS NOT NULL AND revoked_at < ?))
+        `).run(app.id, cutoff, cutoff).changes;
+      }
+    });
+    purge();
+    return totals;
+  }
+
+  exportAppData(appId: string): Record<string, unknown> {
+    const app = this.getApp(appId);
+    const runtimeSessions = this.db.prepare(`
+      SELECT id, app_id as appId, workflow_id as workflowId, client_session_id as clientSessionId,
+             user_id as userId, status, current_step_id as currentStepId, started_at as startedAt,
+             completed_at as completedAt, error
+      FROM runtime_sessions WHERE app_id = ? ORDER BY started_at DESC
+    `).all(appId);
+    const aiRequestLogs = this.db.prepare(`
+      SELECT id, app_id as appId, provider, purpose, input_summary as inputSummary,
+             output_summary as outputSummary, latency_ms as latencyMs, error, created_at as createdAt
+      FROM ai_request_logs WHERE app_id = ? ORDER BY created_at DESC
+    `).all(appId);
+    const executionLogs = (this.db.prepare(`
+      SELECT id, app_id as appId, user_id as userId, session_id as sessionId,
+             workflow_id as workflowId, step_id as stepId, event_type as eventType,
+             telemetry_level as telemetryLevel, payload_json as payload, created_at as createdAt
+      FROM execution_logs WHERE app_id = ? ORDER BY created_at DESC
+    `).all(appId) as Row[]).map((row) => ({ ...row, payload: JSON.parse(String(row.payload)) }));
+    return {
+      exportedAt: nowIso(),
+      app,
+      runtimeSessions,
+      executionLogs,
+      aiRequestLogs
+    };
+  }
+
+  deleteUserData(appId: string, userId: string): { executionLogs: number; runtimeSessions: number; runtimeTokens: number } {
+    this.getApp(appId);
+    const totals = { executionLogs: 0, runtimeSessions: 0, runtimeTokens: 0 };
+    const remove = this.db.transaction(() => {
+      totals.executionLogs = this.db.prepare("DELETE FROM execution_logs WHERE app_id = ? AND user_id = ?").run(appId, userId).changes;
+      totals.runtimeSessions = this.db.prepare("DELETE FROM runtime_sessions WHERE app_id = ? AND user_id = ?").run(appId, userId).changes;
+      totals.runtimeTokens = this.db.prepare("DELETE FROM runtime_access_tokens WHERE app_id = ? AND user_id = ?").run(appId, userId).changes;
+    });
+    remove();
+    return totals;
   }
 
   createApiKey(input: { name: string; prefix: string; keyHash: string; scopes: ApiKeyScope[]; appId?: string | null; allowedOrigins?: string[] }): ApiKeyRecord {
@@ -1143,10 +1250,22 @@ function mapApp(row: Row, secretEncryptionKey?: string): AppRecord {
     slug: String(row.slug),
     baseUrl: String(row.base_url),
     uiScanConfig: sanitizeUiScanConfig(scanConfig),
+    privacyPolicy: {
+      telemetryMode: normalizeTelemetryMode(row.telemetry_mode),
+      retentionDays: validPositiveInteger(row.telemetry_retention_days) ? Number(row.telemetry_retention_days) : 30
+    },
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
     archivedAt: row.archived_at ? String(row.archived_at) : null
   };
+}
+
+function normalizeTelemetryMode(value: unknown): TelemetryMode {
+  return value === "redacted" || value === "full" ? value : "events_only";
+}
+
+function validPositiveInteger(value: unknown): boolean {
+  return Number.isInteger(Number(value)) && Number(value) > 0;
 }
 
 function mapUiMapVersionSummary(row: Row): UiMapVersionSummary {
@@ -1469,8 +1588,8 @@ function buildAiWhere(filters: { appId?: string; from?: string; to?: string }): 
   const clauses: string[] = [];
   const params: unknown[] = [];
   if (filters.appId) {
-    clauses.push("(input_summary LIKE ? OR output_summary LIKE ?)");
-    params.push(`%${filters.appId}%`, `%${filters.appId}%`);
+    clauses.push("app_id = ?");
+    params.push(filters.appId);
   }
   if (filters.from) {
     clauses.push("created_at >= ?");

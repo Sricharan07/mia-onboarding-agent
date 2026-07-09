@@ -26,6 +26,11 @@ const migrations: Migration[] = [
     id: 4,
     name: "runtime_access_tokens_and_quotas",
     up: migrateRuntimeAccessTokensAndQuotas
+  },
+  {
+    id: 5,
+    name: "privacy_controls_and_data_minimization",
+    up: migratePrivacyControlsAndDataMinimization
   }
 ];
 
@@ -306,6 +311,49 @@ function migrateRuntimeAccessTokensAndQuotas(db: Db): void {
       ON runtime_access_tokens(app_id, expires_at, revoked_at);
     CREATE INDEX IF NOT EXISTS idx_rate_limit_buckets_reset_at
       ON rate_limit_buckets(reset_at);
+  `);
+}
+
+function migratePrivacyControlsAndDataMinimization(db: Db): void {
+  ensureColumn(db, "apps", "telemetry_mode", "TEXT NOT NULL DEFAULT 'events_only'");
+  ensureColumn(db, "apps", "telemetry_retention_days", "INTEGER NOT NULL DEFAULT 30");
+  ensureColumn(db, "execution_logs", "user_id", "TEXT");
+  ensureColumn(db, "execution_logs", "telemetry_level", "TEXT NOT NULL DEFAULT 'events_only'");
+  ensureColumn(db, "ai_request_logs", "app_id", "TEXT");
+
+  if (columnExists(db, "runtime_sessions", "values_json")) {
+    db.exec(`
+      ALTER TABLE runtime_sessions RENAME TO runtime_sessions_with_values;
+      CREATE TABLE runtime_sessions (
+        id TEXT PRIMARY KEY,
+        app_id TEXT NOT NULL,
+        workflow_id TEXT NOT NULL,
+        client_session_id TEXT,
+        user_id TEXT,
+        status TEXT NOT NULL,
+        current_step_id TEXT,
+        started_at TEXT NOT NULL,
+        completed_at TEXT,
+        error TEXT,
+        FOREIGN KEY (app_id) REFERENCES apps(id),
+        FOREIGN KEY (workflow_id) REFERENCES workflows(workflow_id)
+      );
+      INSERT INTO runtime_sessions (
+        id, app_id, workflow_id, client_session_id, user_id, status,
+        current_step_id, started_at, completed_at, error
+      )
+      SELECT
+        id, app_id, workflow_id, client_session_id, user_id, status,
+        current_step_id, started_at, completed_at, error
+      FROM runtime_sessions_with_values;
+      DROP TABLE runtime_sessions_with_values;
+    `);
+  }
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_execution_logs_user ON execution_logs(app_id, user_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_runtime_sessions_user ON runtime_sessions(app_id, user_id, started_at);
+    CREATE INDEX IF NOT EXISTS idx_ai_request_logs_app ON ai_request_logs(app_id, created_at);
   `);
 }
 
@@ -633,6 +681,11 @@ function ensureColumn(db: Db, table: string, column: string, definition: string)
   const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
   if (rows.some((row) => row.name === column)) return;
   db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`).run();
+}
+
+function columnExists(db: Db, table: string, column: string): boolean {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  return rows.some((row) => row.name === column);
 }
 
 function assertUniqueMigrationIds(): void {

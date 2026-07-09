@@ -35,6 +35,12 @@ class AIOnboardingAgentInstance {
   private recentRuntimeResolution?: { key: string; at: number };
 
   init(config: SDKConfig): void {
+    if (config.privacy?.telemetry?.mode === "full" && !config.privacy.telemetry.hasConsent) {
+      throw new Error("Full Mia telemetry requires privacy.telemetry.hasConsent.");
+    }
+    if (config.enableScreenShare && !config.privacy?.redactScreenFrame && !config.privacy?.allowUnredactedScreenShare) {
+      throw new Error("Screen sharing requires privacy.redactScreenFrame or explicit allowUnredactedScreenShare consent.");
+    }
     this.destroy();
     this.sessionId = `sdk_session_${crypto.randomUUID()}`;
     this.config = config;

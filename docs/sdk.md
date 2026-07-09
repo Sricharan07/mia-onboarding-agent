@@ -80,6 +80,8 @@ Calling `init` again destroys the previous SDK instance before creating a fresh 
 
 Visible DOM text is redacted by default before runtime context leaves the browser. Use selectors for sensitive DOM areas, and use `redactScreenFrame` for screen regions that should not be sent to voice/screen streaming. Set `redactText: false` only when the host app has reviewed the data that may leave the browser.
 
+URL query strings, page titles, and user metadata are omitted by default. Runtime telemetry defaults to event names without payloads. `redacted` telemetry removes text, URLs, selectors, user fields, and recognized secrets in the browser and again on the backend. `full` telemetry requires both an app policy that allows it and an explicit `hasConsent` callback.
+
 ```ts
 AIOnboardingAgent.init({
   appId: "app_example",
@@ -88,6 +90,7 @@ AIOnboardingAgent.init({
   privacy: {
     redactText: true,
     redactedSelectors: ["[data-private]", ".billing-card"],
+    telemetry: { mode: "events_only" },
     redactScreenFrame: (canvas, context) => {
       context.clearRect(0, 0, 220, 80);
     }
@@ -96,6 +99,8 @@ AIOnboardingAgent.init({
 ```
 
 Prefer deterministic app selectors such as `data-private` or `data-mia-redact` for stable redaction.
+
+Workflow values are kept only in SDK memory for the active workflow and are cleared on completion, cancellation, or failure. Passwords, payment fields, tokens, and similar secrets are never collected by Mia; the workflow points to those fields and asks the user to complete them manually.
 
 ## UI Options
 
@@ -115,7 +120,7 @@ AIOnboardingAgent.init({
 });
 ```
 
-After installing the SDK, use Console -> Test Mia for a resolver dry-run and Console -> Logs to confirm real host-app sessions, prompts, targets, voice transcripts, and element actions.
+After installing the SDK, use Console -> Test Mia for a resolver preview and Console -> Logs to confirm real host-app sessions, runtime events, and element actions. Transcript content appears only under consented full telemetry.
 
 ## Voice
 
@@ -138,7 +143,9 @@ Mia uses Gemini Live voice `Aoede` by default. Override `voice.voiceName` only a
 
 Mia is DOM-first. Runtime pointing, simple visible-element actions such as click/focus, workflow execution, and screen-aware answers use collected DOM context, stable selectors, and element bounding boxes. Set `enableScreenShare: true` only when Mia must understand visual content the DOM cannot describe well, such as canvas charts, images, videos, PDFs, or custom-rendered surfaces. The browser asks the user before any screen frames are streamed.
 
-The SDK writes voice transcripts, final assistant speech, runtime resolution results, and voice errors to execution logs. Use those logs to diagnose what Mia heard, what she said, and whether she routed a request through the backend.
+Screen sharing also requires `privacy.redactScreenFrame` or an explicit `privacy.allowUnredactedScreenShare: true` decision. Enabling the feature flag alone is not consent to stream an unredacted screen.
+
+The SDK emits voice and runtime events under the configured telemetry policy. Transcript content is stored only when full diagnostics are enabled by the app and the user-consent callback returns true.
 
 ## Common Integration Issues
 

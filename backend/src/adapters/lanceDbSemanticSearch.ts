@@ -197,6 +197,7 @@ export class LanceDbSemanticSearchAdapter implements SemanticSearchAdapter {
   private writeLog(context: { appId?: string; purpose: string }, count: number, started: number, outputSummary?: string, error?: unknown): void {
     try {
       this.logAiRequest?.({
+        appId: context.appId,
         provider: "openai",
         purpose: context.purpose,
         inputSummary: `appId=${context.appId ?? "unknown"}; model=${this.config.OPENAI_EMBEDDING_MODEL}; texts=${count}; dimensions=${this.config.OPENAI_EMBEDDING_DIMENSIONS}`,

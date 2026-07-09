@@ -1,15 +1,18 @@
 import type { RuntimeElementContext, SDKConfig, SDKRuntimeContext } from "../types/index.js";
 
 export function collectRuntimeContext(config: SDKConfig, sessionId: string): SDKRuntimeContext {
+  const currentUrl = config.privacy?.includeUrlQuery
+    ? window.location.href
+    : `${window.location.origin}${window.location.pathname}`;
   return {
     appId: config.appId,
     sessionId,
-    currentUrl: window.location.href,
+    currentUrl,
     currentRoute: window.location.pathname,
-    pageTitle: document.title,
+    pageTitle: config.privacy?.includePageTitle ? document.title : undefined,
     focusedElement: inspectElement(document.activeElement, config),
     visibleElements: collectVisibleElements(config),
-    userMetadata: config.user?.metadata
+    userMetadata: config.privacy?.includeUserMetadata ? config.user?.metadata : undefined
   };
 }
 

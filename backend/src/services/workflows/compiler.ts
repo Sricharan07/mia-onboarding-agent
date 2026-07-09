@@ -83,16 +83,26 @@ export class WorkflowCompiler {
     if (step.action === "fill") {
       const field = createFieldName(step.observedElement ?? target.label ?? target.elementId);
       const inputType = step.observedValueType && step.observedValueType !== "unknown" ? step.observedValueType : "text";
-      const fillPolicy = sensitiveInputTypes.has(inputType) ? "manual_only" : executionPolicy;
+      const sensitivity = classifyFieldSensitivity(inputType, step, target);
+      if (sensitivity === "secret" || sensitivity === "payment") {
+        return [{
+          id: createId("step"),
+          type: "focus",
+          target,
+          executionPolicy: "manual_only",
+          label: `Enter ${target.label ?? target.elementId} yourself`,
+          source
+        }];
+      }
       return [
-        { id: createId("step"), type: "ask_user", field, prompt: `What value should I enter for ${target.label ?? target.elementId}?`, inputType },
-        { id: createId("step"), type: "fill", target, valueFrom: field, executionPolicy: fillPolicy, source }
+        { id: createId("step"), type: "ask_user", field, prompt: `What value should I enter for ${target.label ?? target.elementId}?`, inputType, sensitivity },
+        { id: createId("step"), type: "fill", target, valueFrom: field, executionPolicy, source }
       ];
     }
 
     const field = createFieldName(step.observedElement ?? target.label ?? target.elementId);
     return [
-      { id: createId("step"), type: "ask_user", field, prompt: `Which option should I select for ${target.label ?? target.elementId}?`, inputType: "text" },
+      { id: createId("step"), type: "ask_user", field, prompt: `Which option should I select for ${target.label ?? target.elementId}?`, inputType: "text", sensitivity: "standard" },
       { id: createId("step"), type: "select", target, valueFrom: field, executionPolicy, source }
     ];
   }
@@ -126,8 +136,9 @@ function toWorkflowTarget(record: UIElementRecord): WorkflowTarget {
   };
 }
 
-const sensitiveInputTypes = new Set(["password", "credit_card", "api_key", "secret", "token", "ssn", "bank_account"]);
 const dangerousActionPattern = /\b(delete|remove|archive|submit|send|pay|purchase|checkout|invite|publish|approve|revoke|disable|deactivate|confirm|transfer|refund|cancel)\b/i;
+const secretFieldPattern = /\b(password|passcode|api[ _-]?key|secret|token|ssn|social security|bank account|routing number)\b/i;
+const paymentFieldPattern = /\b(card|credit|debit|cvv|cvc|expiry|payment|billing)\b/i;
 
 function createReviewStep(step: ExtractedActionStep, message: string): WorkflowStep {
   return {
@@ -140,6 +151,14 @@ function createReviewStep(step: ExtractedActionStep, message: string): WorkflowS
 
 function createFieldName(label: string): string {
   return label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "field";
+}
+
+function classifyFieldSensitivity(inputType: string, step: ExtractedActionStep, target: WorkflowTarget): "standard" | "personal" | "secret" | "payment" {
+  const context = [step.observedElement, step.visualContext, target.label, target.elementId].filter(Boolean).join(" ");
+  if (paymentFieldPattern.test(context)) return "payment";
+  if (inputType === "password" || secretFieldPattern.test(context)) return "secret";
+  if (inputType === "email" || /\b(email|phone|address|name|birthday|date of birth)\b/i.test(context)) return "personal";
+  return "standard";
 }
 
 function isDangerousAction(step: ExtractedActionStep, target: WorkflowTarget): boolean {

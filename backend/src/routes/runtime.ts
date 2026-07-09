@@ -50,9 +50,8 @@ export async function registerRuntimeRoutes(app: FastifyInstance, dependencies: 
     const body = z.object({
       status: z.enum(["pending", "running", "paused", "completed", "cancelled", "failed"]),
       currentStepId: z.string().optional(),
-      values: z.record(z.string(), z.unknown()).optional(),
       error: z.string().optional()
-    }).parse(request.body);
+    }).strict().parse(request.body);
     const session = dependencies.repositories.getRuntimeSession(params.runtimeSessionId);
     requireRuntimeTokenAppAccess(request, dependencies, session.appId, "runtime:workflow");
     if (request.runtimeToken && session.userId !== request.runtimeToken.userId) {

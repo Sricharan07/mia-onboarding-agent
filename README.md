@@ -267,6 +267,7 @@ AIOnboardingAgent.init({
   privacy: {
     redactText: true,
     redactedSelectors: ["[data-private]", ".billing-card"],
+    telemetry: { mode: "events_only" },
     redactScreenFrame: (canvas, context) => {
       context.clearRect(0, 0, 220, 80);
     }
@@ -275,6 +276,8 @@ AIOnboardingAgent.init({
 ```
 
 For a demo or reviewed internal app where Mia should point at visible UI by spoken request, set `privacy.redactText: false` or provide stable readable selectors. Use a dedicated demo or test account for authenticated UI ingestion.
+
+URL query strings, page titles, user metadata, and telemetry payloads are excluded by default. Workflow values stay in browser memory and are cleared at the end of a run; Mia never collects password, payment, token, or similar secret fields. Retention, export, and user deletion controls are under Console -> Settings -> Privacy.
 
 ## Docker
 

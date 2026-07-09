@@ -31,15 +31,31 @@ export class BackendClient {
     });
   }
 
-  async updateWorkflowSession(input: { runtimeSessionId: string; status: string; currentStepId?: string; values?: Record<string, unknown>; error?: string }): Promise<void> {
+  async updateWorkflowSession(input: { runtimeSessionId: string; status: string; currentStepId?: string; error?: string }): Promise<void> {
     await this.patch(`/api/v1/runtime/workflow-sessions/${input.runtimeSessionId}`, input);
   }
 
   async logExecution(input: { sessionId: string; workflowId?: string; stepId?: string; eventType: string; payload?: unknown }): Promise<void> {
+    const telemetry = this.telemetryRequest();
     await this.post("/api/v1/logs/execution", {
       appId: this.config.appId,
-      ...input
+      ...input,
+      payload: prepareTelemetryPayload(input.payload, telemetry),
+      telemetry
     });
+  }
+
+  private telemetryRequest(): { mode: "events_only" | "redacted" | "full"; consent?: boolean } {
+    const telemetry = this.config.privacy?.telemetry;
+    const mode = telemetry?.mode ?? "events_only";
+    if (mode !== "full") return { mode };
+    let consent = false;
+    try {
+      consent = telemetry?.hasConsent?.() === true;
+    } catch {
+      consent = false;
+    }
+    return { mode, consent };
   }
 
   async createGeminiLiveToken(input: { clientSessionId: string }): Promise<GeminiLiveTokenResponse> {
@@ -119,6 +135,30 @@ function isRefreshableRuntimeTokenError(code: string | undefined): boolean {
     || code === "RUNTIME_TOKEN_EXHAUSTED"
     || code === "RUNTIME_TOKEN_REVOKED"
     || code === "RUNTIME_TOKEN_UNAVAILABLE";
+}
+
+const secretTelemetryKey = /(?:password|passcode|secret|token|authorization|api.?key|cookie|session.?key|cvv|cvc|card.?number|bank.?account|routing.?number|ssn)/i;
+const redactedTelemetryKey = /(?:text|message|prompt|utterance|transcript|value|email|phone|address|name|user|url|route|title|selector|screen|frame|image|audio)/i;
+const secretTelemetryValue = /(?:bearer\s+[a-z0-9._~+/=-]+|(?:password|passcode|secret|token|api.?key|cvv|cvc|ssn)\s*[:=]\s*\S+|\b(?:\d[ -]*?){13,19}\b)/i;
+
+function prepareTelemetryPayload(payload: unknown, telemetry: { mode: "events_only" | "redacted" | "full"; consent?: boolean }): unknown {
+  if (telemetry.mode === "events_only" || (telemetry.mode === "full" && telemetry.consent !== true)) return {};
+  return sanitizeTelemetryValue(payload, telemetry.mode, 0);
+}
+
+function sanitizeTelemetryValue(value: unknown, mode: "redacted" | "full", depth: number, key = ""): unknown {
+  if (secretTelemetryKey.test(key)) return "[redacted]";
+  if (mode === "redacted" && redactedTelemetryKey.test(key)) return "[redacted]";
+  if (depth >= 6) return "[truncated]";
+  if (value === null || typeof value === "boolean" || typeof value === "number") return value;
+  if (typeof value === "string") return secretTelemetryValue.test(value) ? "[redacted]" : value.slice(0, mode === "full" ? 2_000 : 200);
+  if (Array.isArray(value)) return value.slice(0, 100).map((item) => sanitizeTelemetryValue(item, mode, depth + 1));
+  if (typeof value !== "object") return String(value).slice(0, 200);
+  const result: Record<string, unknown> = {};
+  for (const [entryKey, entryValue] of Object.entries(value).slice(0, 100)) {
+    result[entryKey] = sanitizeTelemetryValue(entryValue, mode, depth + 1, entryKey);
+  }
+  return result;
 }
 
 async function fetchWithBackendError(url: string, init: RequestInit, backendUrl: string): Promise<Response> {

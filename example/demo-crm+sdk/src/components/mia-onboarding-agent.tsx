@@ -50,6 +50,7 @@ export function MiaOnboardingAgent() {
       },
       privacy: {
         redactText: false,
+        allowUnredactedScreenShare: process.env.NEXT_PUBLIC_MIA_ALLOW_UNREDACTED_SCREEN === "true",
       },
       voice: {
         voiceName: "Aoede",

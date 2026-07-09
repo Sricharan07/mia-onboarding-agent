@@ -63,6 +63,9 @@ Runtime token capabilities are `runtime:resolve`, `runtime:workflow`, `logs:writ
 - `DELETE /api/v1/api-keys/:keyId`
 - `POST /api/v1/runtime/tokens`
 - `DELETE /api/v1/runtime/tokens/:tokenId`
+- `GET /api/v1/apps/:appId/data-export`
+- `DELETE /api/v1/apps/:appId/user-data/:userId`
+- `POST /api/v1/apps/:appId/data-retention/purge`
 
 App records include base URL and optional UI scan profile settings. API key creation returns the raw key once; store it immediately.
 

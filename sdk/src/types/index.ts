@@ -25,6 +25,14 @@ export type SDKConfig = {
     redactText?: boolean;
     redactedSelectors?: string[];
     redactScreenFrame?: (canvas: HTMLCanvasElement, context: CanvasRenderingContext2D) => void;
+    includeUrlQuery?: boolean;
+    includePageTitle?: boolean;
+    includeUserMetadata?: boolean;
+    allowUnredactedScreenShare?: boolean;
+    telemetry?: {
+      mode?: "events_only" | "redacted" | "full";
+      hasConsent?: () => boolean;
+    };
   };
   user?: {
     id?: string;
@@ -83,7 +91,7 @@ export type WorkflowStep =
   | { id: string; type: "focus"; target: WorkflowTarget; executionPolicy: ExecutionPolicy; label?: string }
   | { id: string; type: "fill"; target: WorkflowTarget; valueFrom: string; executionPolicy: ExecutionPolicy; label?: string }
   | { id: string; type: "select"; target: WorkflowTarget; valueFrom: string; executionPolicy: ExecutionPolicy; label?: string }
-  | { id: string; type: "ask_user"; field: string; prompt: string; inputType?: "text" | "email" | "password" | "number" | "date" | "choice"; choices?: string[]; label?: string }
+  | { id: string; type: "ask_user"; field: string; prompt: string; inputType?: "text" | "email" | "password" | "number" | "date" | "choice"; sensitivity?: "standard" | "personal" | "secret" | "payment"; choices?: string[]; label?: string }
   | { id: string; type: "wait_for_element"; target: WorkflowTarget; timeoutMs: number; label?: string }
   | { id: string; type: "confirm"; message: string; confirmLabel?: string; cancelLabel?: string; label?: string }
   | { id: string; type: "complete"; message: string; label?: string };

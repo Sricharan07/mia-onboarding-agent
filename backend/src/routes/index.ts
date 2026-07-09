@@ -15,6 +15,7 @@ import { registerMetricRoutes } from "./metrics.js";
 import { registerSystemRoutes } from "./system.js";
 import { registerSemanticIndexRoutes } from "./semanticIndex.js";
 import { registerRuntimeTokenRoutes } from "./runtimeTokens.js";
+import { registerPrivacyRoutes } from "./privacy.js";
 
 export async function registerRoutes(app: FastifyInstance, dependencies: AppDependencies): Promise<void> {
   registerApiKeyHook(app, dependencies);
@@ -33,6 +34,7 @@ export async function registerRoutes(app: FastifyInstance, dependencies: AppDepe
   await registerMetricRoutes(app, dependencies);
   await registerSemanticIndexRoutes(app, dependencies);
   await registerAppRoutes(app, dependencies);
+  await registerPrivacyRoutes(app, dependencies);
   await registerUiMapRoutes(app, dependencies);
   await registerWorkflowRoutes(app, dependencies);
   await registerRuntimeTokenRoutes(app, dependencies);

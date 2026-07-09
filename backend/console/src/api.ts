@@ -30,6 +30,7 @@ export type SystemReadiness = {
 };
 
 export type UiScanAuthMode = "none" | "login_form" | "manual";
+export type TelemetryMode = "events_only" | "redacted" | "full";
 
 export type AppUiScanConfig = {
   runtimeMode: "qa_only" | "workflow";
@@ -57,6 +58,10 @@ export type AppRecord = {
   slug: string;
   baseUrl: string;
   uiScanConfig: AppUiScanConfig;
+  privacyPolicy: {
+    telemetryMode: TelemetryMode;
+    retentionDays: number;
+  };
   createdAt: string;
   updatedAt: string;
   archivedAt?: string | null;
@@ -224,6 +229,7 @@ export type WorkflowStep =
       field: string;
       prompt: string;
       inputType?: string;
+      sensitivity?: "standard" | "personal" | "secret" | "payment";
       choices?: string[];
       label?: string;
       description?: string;
@@ -320,6 +326,8 @@ export type ExecutionLog = {
   workflowId?: string | null;
   stepId?: string | null;
   eventType: string;
+  userId?: string | null;
+  telemetryLevel?: TelemetryMode;
   createdAt: string;
   payload: unknown;
 };
@@ -470,6 +478,7 @@ export class BackendApi {
     name: string;
     slug: string;
     baseUrl: string;
+    privacyPolicy?: { telemetryMode: TelemetryMode; retentionDays: number };
     uiScanConfig?: Partial<Omit<AppUiScanConfig, "passwordConfigured">> & { password?: string; clearPassword?: boolean };
   }): Promise<AppRecord> {
     return this.request("/api/v1/apps", { method: "POST", body: input });
@@ -477,6 +486,18 @@ export class BackendApi {
 
   archiveApp(appId: string): Promise<AppRecord> {
     return this.request(`/api/v1/apps/${encodeURIComponent(appId)}/archive`, { method: "POST", body: {} });
+  }
+
+  exportAppData(appId: string): Promise<Record<string, unknown>> {
+    return this.request(`/api/v1/apps/${encodeURIComponent(appId)}/data-export`);
+  }
+
+  purgeAppData(appId: string): Promise<{ executionLogs: number; runtimeSessions: number; aiRequestLogs: number; runtimeTokens: number }> {
+    return this.request(`/api/v1/apps/${encodeURIComponent(appId)}/data-retention/purge`, { method: "POST", body: {} });
+  }
+
+  deleteAppUserData(appId: string, userId: string): Promise<{ executionLogs: number; runtimeSessions: number; runtimeTokens: number }> {
+    return this.request(`/api/v1/apps/${encodeURIComponent(appId)}/user-data/${encodeURIComponent(userId)}`, { method: "DELETE" });
   }
 
   preflightUiMap(appId: string, routes: string[], authMode: UiScanAuthMode = "none"): Promise<UiMapPreflightReport> {

@@ -41,8 +41,7 @@ export class WorkflowExecutor {
     if (!this.cancelled) {
       await this.options.backendClient.updateWorkflowSession({
         runtimeSessionId: this.runtimeSessionId,
-        status: "running",
-        values: this.values
+        status: "running"
       });
     }
 
@@ -57,11 +56,14 @@ export class WorkflowExecutor {
     this.options.cursor.startBubbleFade();
     this.options.cursor.returnToCursor();
     this.options.onWorkflowEvent?.({ type: this.cancelled ? "workflow_cancelled" : "workflow_completed", workflowId: this.options.workflow.workflowId });
-    await this.options.backendClient.updateWorkflowSession({
-      runtimeSessionId: this.runtimeSessionId,
-      status: this.cancelled ? "cancelled" : "completed",
-      values: this.values
-    });
+    try {
+      await this.options.backendClient.updateWorkflowSession({
+        runtimeSessionId: this.runtimeSessionId,
+        status: this.cancelled ? "cancelled" : "completed"
+      });
+    } finally {
+      this.clearValues();
+    }
   }
 
   async pause(): Promise<void> {
@@ -90,7 +92,11 @@ export class WorkflowExecutor {
     resume?.();
     this.options.cursor.cancelNavigation();
     this.options.cursor.setBubbleText("Workflow cancelled");
-    await this.updateRuntimeStatus("cancelled");
+    try {
+      await this.updateRuntimeStatus("cancelled");
+    } finally {
+      this.clearValues();
+    }
   }
 
   private async runStep(step: WorkflowStep): Promise<void> {
@@ -115,13 +121,16 @@ export class WorkflowExecutor {
       this.options.onWorkflowEvent?.({ type: "step_failed", workflowId: this.options.workflow.workflowId, stepId: step.id, message });
       await this.log("step_failed", step, { error: error instanceof Error ? error.message : String(error) });
       if (this.runtimeSessionId) {
-        await this.options.backendClient.updateWorkflowSession({
-          runtimeSessionId: this.runtimeSessionId,
-          status: "failed",
-          currentStepId: step.id,
-          values: this.values,
-          error: error instanceof Error ? error.message : String(error)
-        });
+        try {
+          await this.options.backendClient.updateWorkflowSession({
+            runtimeSessionId: this.runtimeSessionId,
+            status: "failed",
+            currentStepId: step.id,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        } finally {
+          this.clearValues();
+        }
       }
       throw error;
     }
@@ -250,9 +259,15 @@ export class WorkflowExecutor {
     await this.options.backendClient.updateWorkflowSession({
       runtimeSessionId: this.runtimeSessionId,
       status,
-      currentStepId: this.currentStepId,
-      values: this.values
+      currentStepId: this.currentStepId
     });
+  }
+
+  private clearValues(): void {
+    for (const key of Object.keys(this.values)) {
+      this.values[key] = "";
+      delete this.values[key];
+    }
   }
 
   private async navigate(route: string): Promise<void> {

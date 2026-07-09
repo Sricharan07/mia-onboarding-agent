@@ -9,6 +9,10 @@ export const jobStatusSchema = z.enum(["uploaded", "analyzing", "mapped", "needs
 export const uiScanAuthModeSchema = z.enum(["none", "login_form", "manual"]);
 export type UiScanAuthMode = z.infer<typeof uiScanAuthModeSchema>;
 export const appRuntimeModeSchema = z.enum(["qa_only", "workflow"]);
+export const telemetryModeSchema = z.enum(["events_only", "redacted", "full"]);
+export type TelemetryMode = z.infer<typeof telemetryModeSchema>;
+export const fieldSensitivitySchema = z.enum(["standard", "personal", "secret", "payment"]);
+export type FieldSensitivity = z.infer<typeof fieldSensitivitySchema>;
 
 export const appUiScanConfigSchema = z.object({
   runtimeMode: appRuntimeModeSchema.default("workflow"),
@@ -37,6 +41,10 @@ export const appSchema = z.object({
   slug: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
   baseUrl: z.string().url(),
   uiScanConfig: appUiScanConfigSchema,
+  privacyPolicy: z.object({
+    telemetryMode: telemetryModeSchema,
+    retentionDays: z.number().int().positive().max(3650)
+  }),
   createdAt: z.string(),
   updatedAt: z.string(),
   archivedAt: z.string().nullable().optional()
@@ -119,6 +127,7 @@ export const workflowStepSchema = z.discriminatedUnion("type", [
     field: z.string().min(1),
     prompt: z.string().min(1),
     inputType: z.enum(["text", "email", "password", "number", "date", "choice"]).optional(),
+    sensitivity: fieldSensitivitySchema.optional(),
     choices: z.array(z.string()).optional()
   }),
   workflowStepBase.extend({
@@ -176,6 +185,13 @@ export const workflowSchema = z.object({
 
     if (step.type === "ask_user") {
       askFields.add(step.field);
+      if (step.inputType === "password" || step.sensitivity === "secret" || step.sensitivity === "payment") {
+        ctx.addIssue({
+          code: "custom",
+          path: ["steps", index],
+          message: "Secret and payment values must be entered manually and cannot be collected by Mia."
+        });
+      }
     }
 
     if ((step.type === "fill" || step.type === "select") && !askFields.has(step.valueFrom)) {

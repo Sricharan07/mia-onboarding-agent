@@ -100,6 +100,7 @@ export class GeminiModelGatewayAdapter implements ModelGatewayAdapter {
   private writeLog(context: AiLogContext | undefined, fallbackPurpose: string, model: string | undefined, started: number, outputSummary?: string, error?: unknown): void {
     try {
       this.logAiRequest?.({
+        appId: context?.appId,
         provider: "gemini",
         purpose: context?.purpose ?? fallbackPurpose,
         inputSummary: `appId=${context?.appId ?? "unknown"}; model=${model ?? "unknown"}`,

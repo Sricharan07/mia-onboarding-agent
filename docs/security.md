@@ -80,6 +80,10 @@ Use both backend scan profile redaction and SDK runtime redaction:
 
 Avoid collecting secrets, payment details, health data, or other regulated data unless your deployment and policies explicitly cover that data.
 
+Workflow input values are never persisted in runtime sessions. Secret and payment fields are manual-only and are not collected by the SDK. Execution telemetry defaults to event names only; redacted and full modes are configured per app, and full payloads require explicit SDK consent. Recognized credentials and payment identifiers are redacted in every mode.
+
+Each app has a telemetry retention period. The backend sweeps expired execution logs, completed runtime sessions, AI request metadata, and expired runtime tokens. Console admins can run the purge immediately, export app data, or delete records for a specific user ID from Settings -> Privacy.
+
 ## Vulnerability Reports
 
 Report vulnerabilities privately. See [Security Policy](../SECURITY.md).

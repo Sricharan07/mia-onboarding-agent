@@ -87,7 +87,8 @@ AIOnboardingAgent.init({
   },
   privacy: {
     redactedSelectors: ["[data-private]", ".billing-card"],
-    redactText: true
+    redactText: true,
+    telemetry: { mode: "events_only" }
   }
 });
 ```
@@ -107,7 +108,9 @@ Mia uses Gemini Live voice `Aoede` by default. Override `voice.voiceName` only a
 
 Mia is DOM-first. Runtime pointing, simple visible-element actions such as click/focus, and workflows use collected DOM context, stable selectors, and element bounding boxes. Set `enableScreenShare: true` only for visual content the DOM cannot describe well, such as canvas charts, images, videos, PDFs, or custom-rendered surfaces.
 
-Voice user transcripts, final assistant transcripts, runtime resolutions, and voice errors are written to execution logs so operators can debug what Mia heard and said.
+URL query strings, page titles, user metadata, and telemetry payloads are omitted by default. Workflow values remain in memory only, and Mia never collects secret or payment fields. Screen sharing requires a redaction callback or an explicit unredacted-screen decision.
+
+Voice and runtime events follow the app telemetry policy. Transcript content is retained only when full diagnostics are allowed and the SDK consent callback returns true.
 
 If voice fails, check the backend readiness endpoint with an admin credential and confirm runtime tokens include `voice:live`. If Mia talks but does not point or act, use Console -> Test Mia for a resolver dry-run and Console -> Logs to confirm real host-app targets and element actions.
 

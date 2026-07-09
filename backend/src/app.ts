@@ -30,6 +30,7 @@ import { UsageService } from "./services/metrics/usageService.js";
 import { ReadinessService } from "./services/system/readinessService.js";
 import { GeminiLiveTokenService } from "./services/gemini/geminiLiveTokenService.js";
 import { RateLimitService } from "./services/security/rateLimitService.js";
+import { TelemetryService } from "./services/privacy/telemetryService.js";
 import { registerRoutes } from "./routes/index.js";
 
 export type AppDependencies = ReturnType<typeof createDependencies>;
@@ -47,7 +48,17 @@ export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
   await app.register(multipart, { limits: { fileSize: config.WORKFLOW_VIDEO_MAX_BYTES } });
 
   const dependencies = createDependencies(config);
+  dependencies.repositories.purgeExpiredData();
+  const retentionTimer = setInterval(() => {
+    try {
+      dependencies.repositories.purgeExpiredData();
+    } catch (error) {
+      app.log.error(error, "Data retention sweep failed");
+    }
+  }, config.DATA_RETENTION_SWEEP_INTERVAL_MS ?? 60 * 60 * 1_000);
+  retentionTimer.unref();
   app.addHook("onClose", async () => {
+    clearInterval(retentionTimer);
     await dependencies.services.interactiveUiMap.closeAll();
   });
   registerErrorHandler(app);
@@ -107,7 +118,8 @@ function createDependencies(config: AppConfig) {
       usage: new UsageService(repositories),
       readiness: new ReadinessService(config, repositories),
       geminiLiveTokens: new GeminiLiveTokenService(config),
-      rateLimit: new RateLimitService(config, repositories)
+      rateLimit: new RateLimitService(config, repositories),
+      telemetry: new TelemetryService(repositories)
     }
   };
 }

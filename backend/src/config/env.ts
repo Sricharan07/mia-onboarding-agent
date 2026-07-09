@@ -34,6 +34,7 @@ const envSchema = z.object({
   RUNTIME_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(180),
   APP_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(1_200),
   APP_VOICE_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(120),
+  DATA_RETENTION_SWEEP_INTERVAL_MS: z.coerce.number().int().positive().default(60 * 60 * 1_000),
   WORKFLOW_VIDEO_MAX_BYTES: z.coerce.number().int().positive().default(50 * 1024 * 1024),
   GEMINI_LIVE_TOKEN_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(30),
   GEMINI_API_KEY: z.string().optional(),
