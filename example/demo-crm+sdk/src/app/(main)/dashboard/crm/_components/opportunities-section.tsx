@@ -102,7 +102,7 @@ export function OpportunitiesSection({
   }, [currentPage, pageCount]);
 
   return (
-    <section>
+    <section aria-label="Recent Opportunities" data-ai-id="crm.opportunities.section">
       <Card>
         <CardHeader>
           <CardTitle className="leading-none">Recent Opportunities</CardTitle>

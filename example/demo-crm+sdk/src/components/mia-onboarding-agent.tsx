@@ -11,12 +11,6 @@ declare global {
 }
 
 export function MiaOnboardingAgent() {
-  const askMia = (text: string) => {
-    void AIOnboardingAgent.ask(text).catch((error) => {
-      console.error("Mia demo prompt failed", error);
-    });
-  };
-
   useEffect(() => {
     if (window.__miaOnboardingAgentInitialized) return;
 
@@ -69,32 +63,5 @@ export function MiaOnboardingAgent() {
     };
   }, []);
 
-  return (
-    <aside
-      className="fixed right-4 bottom-24 z-40 hidden w-72 rounded-lg border bg-background/95 p-3 shadow-sm backdrop-blur md:block"
-      data-mia-demo-proof
-      data-mia-ignore
-    >
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <strong className="font-semibold text-sm">Try Mia</strong>
-        <span className="rounded-md border px-2 py-1 text-muted-foreground text-xs">Live SDK</span>
-      </div>
-      <div className="grid gap-2">
-        {[
-          "Where is the Recent Opportunities table?",
-          "Click the Stage filter",
-          "What does lead-to-deal rate mean?",
-        ].map((prompt) => (
-          <button
-            className="rounded-md border px-2.5 py-2 text-left font-medium text-xs transition-colors hover:bg-muted"
-            type="button"
-            key={prompt}
-            onClick={() => askMia(prompt)}
-          >
-            {prompt}
-          </button>
-        ))}
-      </div>
-    </aside>
-  );
+  return null;
 }

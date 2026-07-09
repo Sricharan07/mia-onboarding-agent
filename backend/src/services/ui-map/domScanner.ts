@@ -8,19 +8,35 @@ const interactiveSelector = [
   "textarea",
   "select",
   "summary",
+  "[data-ai-id]",
+  "[data-testid]",
   "[role='button']",
+  "[role='checkbox']",
+  "[role='combobox']",
   "[role='link']",
   "[role='tab']",
   "[role='menuitem']",
+  "[role='menuitemcheckbox']",
+  "[role='menuitemradio']",
   "[role='option']",
-  "[role='combobox']",
+  "[role='switch']",
   "[contenteditable='true']"
 ].join(",");
+
+const sdkOwnedSelectors = [
+  "[data-mia-prompt-ui='true']",
+  "[data-mia-shadow-cursor='true']",
+  "[data-mia-ignore]",
+  ".mia-root",
+  ".mia-cursor",
+  ".mia-bubble",
+  ".mia-nav-bubble"
+];
 
 export async function scanVisibleElements(page: Page, options: { ignoredSelectors?: string[]; redactedSelectors?: string[] } = {}): Promise<RawElement[]> {
   const scanOptions = JSON.stringify({
     interactiveSelector,
-    ignoredSelectors: options.ignoredSelectors ?? [],
+    ignoredSelectors: [...sdkOwnedSelectors, ...(options.ignoredSelectors ?? [])],
     redactedSelectors: options.redactedSelectors ?? []
   });
 
