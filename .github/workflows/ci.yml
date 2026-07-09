@@ -70,8 +70,8 @@ jobs:
             -p 4000:4000 \
             -e PORT=4000 \
             -e CORS_ORIGIN=http://localhost:3000 \
-            -e BOOTSTRAP_ADMIN_TOKEN=ci-bootstrap-token \
-            -e MIA_SECRET_ENCRYPTION_KEY=ci-secret-key \
+            -e BOOTSTRAP_ADMIN_TOKEN=ci-bootstrap-token-0000000000000001 \
+            -e MIA_SECRET_ENCRYPTION_KEY=ci-secret-encryption-key-0000000001 \
             mia-onboarding-agent:ci
 
       - name: Check health endpoint
