@@ -371,7 +371,7 @@ export function SettingsPage({
           <div className="form-grid single">
             <label>
               Backend URL
-              <input value={urlDraft} onChange={(event) => setUrlDraft(event.target.value)} />
+              <input type="url" value={urlDraft} onChange={(event) => setUrlDraft(event.target.value)} />
             </label>
           </div>
           <div className="panel-actions">
@@ -415,7 +415,7 @@ export function SettingsPage({
               </label>
               <label>
                 Target app base URL
-                <input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} />
+                <input type="url" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} />
               </label>
               <label>
                 Runtime mode
@@ -529,7 +529,7 @@ export function SettingsPage({
                 </label>
                 <label>
                   Post-login wait ms
-                  <input value={postLoginWaitMs} onChange={(event) => setPostLoginWaitMs(event.target.value)} inputMode="numeric" />
+                  <input type="number" value={postLoginWaitMs} onChange={(event) => setPostLoginWaitMs(event.target.value)} min="0" step="100" />
                 </label>
               </>
             )}
@@ -559,7 +559,7 @@ export function SettingsPage({
             </label>
             <label>
               Retention days
-              <input value={retentionDays} onChange={(event) => setRetentionDays(event.target.value)} inputMode="numeric" min="1" max="3650" />
+              <input type="number" value={retentionDays} onChange={(event) => setRetentionDays(event.target.value)} min="1" max="3650" />
             </label>
             <label>
               Ignored selectors
@@ -575,7 +575,7 @@ export function SettingsPage({
             </label>
             <label>
               Max discovered routes
-              <input value={routeDiscoveryMaxRoutes} onChange={(event) => setRouteDiscoveryMaxRoutes(event.target.value)} inputMode="numeric" />
+              <input type="number" value={routeDiscoveryMaxRoutes} onChange={(event) => setRouteDiscoveryMaxRoutes(event.target.value)} min="1" max="200" />
             </label>
           </div>
           <InlineAlert tone="gray" title="Capture boundary" message="UI scans store routes, visible UI text, selectors, and descriptions. Add private regions here before scanning production-like data." />

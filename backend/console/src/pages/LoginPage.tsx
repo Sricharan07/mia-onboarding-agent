@@ -102,7 +102,6 @@ export function LoginPage({
           </span>
           <span>Mia Console</span>
         </div>
-        <div className="login-grid-pattern" />
         <blockquote>
           <p>Review UI maps, approve workflow steps, publish onboarding flows, and manage SDK access from one console.</p>
           <footer>Self-hosted admin console</footer>
@@ -118,7 +117,7 @@ export function LoginPage({
             <div className="brand-subtitle">{draftSetupRequired ? "Create admin account" : "Admin sign in"}</div>
           </div>
         </div>
-        <form className="login-form" onSubmit={(event) => void submit(event)}>
+        <form className="login-form" onSubmit={(event) => void submit(event)} aria-busy={pending} aria-describedby={error ? "login-error" : undefined}>
           <div>
             <h1>{draftSetupRequired ? "Create the first admin" : "Sign in to console"}</h1>
             <p>
@@ -133,13 +132,17 @@ export function LoginPage({
             <span className="input-with-icon">
               <Server size={15} />
               <input
+                id="backend-url"
                 value={urlDraft}
                 onBlur={() => {
                   const nextBackendUrl = urlDraft.trim();
                   if (nextBackendUrl) void checkSetupRequired(nextBackendUrl).catch((cause) => setError(errorMessage(cause, "Unable to check backend auth status.")));
                 }}
                 onChange={(event) => setUrlDraft(event.target.value)}
+                type="url"
                 autoComplete="url"
+                required
+                disabled={pending}
               />
             </span>
           </label>
@@ -149,7 +152,7 @@ export function LoginPage({
               Name
               <span className="input-with-icon">
                 <UserPlus size={15} />
-                <input value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" />
+                <input id="admin-name" value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" required disabled={pending} />
               </span>
             </label>
           )}
@@ -158,7 +161,7 @@ export function LoginPage({
             Email
             <span className="input-with-icon">
               <Mail size={15} />
-              <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" autoComplete="email" />
+              <input id="admin-email" value={email} onChange={(event) => setEmail(event.target.value)} type="email" autoComplete="email" required disabled={pending} />
             </span>
           </label>
 
@@ -171,25 +174,28 @@ export function LoginPage({
                 onChange={(event) => setPassword(event.target.value)}
                 type="password"
                 autoComplete={draftSetupRequired ? "new-password" : "current-password"}
+                minLength={draftSetupRequired ? 12 : undefined}
+                required
+                disabled={pending}
               />
             </span>
           </label>
 
           {draftSetupRequired && (
-              <label>
-                Bootstrap token
-                <span className="input-with-icon">
-                  <Lock size={15} />
-                  <input value={bootstrapToken} onChange={(event) => setBootstrapToken(event.target.value)} type="password" autoComplete="off" />
-                </span>
-                <span className="field-help">Use the backend environment value named BOOTSTRAP_ADMIN_TOKEN. It only works before the first admin exists.</span>
-              </label>
+            <label>
+              Bootstrap token
+              <span className="input-with-icon">
+                <Lock size={15} />
+                <input id="bootstrap-token" value={bootstrapToken} onChange={(event) => setBootstrapToken(event.target.value)} type="password" autoComplete="off" required disabled={pending} />
+              </span>
+              <span className="field-help">Use the backend environment value named BOOTSTRAP_ADMIN_TOKEN. It only works before the first admin exists.</span>
+            </label>
           )}
 
-          {error && <div className="error-line">{error}</div>}
+          {error && <div id="login-error" className="error-line" role="alert">{error}</div>}
           <button className="button primary full" type="submit" disabled={pending}>
             {draftSetupRequired ? <UserPlus size={16} /> : <Lock size={16} />}
-            {pending ? "Please wait" : draftSetupRequired ? "Create admin" : "Sign in"}
+            {pending ? draftSetupRequired ? "Creating admin" : "Signing in" : draftSetupRequired ? "Create admin" : "Sign in"}
           </button>
           {draftSetupRequired && <div className="login-hint">After setup, sign in with this admin email and password. Do not use the bootstrap token as a normal password.</div>}
         </form>

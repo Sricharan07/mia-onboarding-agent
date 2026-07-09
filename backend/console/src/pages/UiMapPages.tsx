@@ -488,6 +488,7 @@ export function UiMapPage({
         <div className="table-toolbar">
           <label className="search-field">
             <Search size={15} />
+            <span className="visually-hidden">Search scanned pages</span>
             <input value={pageSearch} onChange={(event) => setPageSearch(event.target.value)} placeholder="Search route, page, or status" />
           </label>
           <StatusPill tone={failedPages ? "red" : displayedPageCount ? "green" : "gray"} label={failedPages ? `${failedPages} failed` : `${displayedPageCount} page(s)`} />
@@ -682,6 +683,7 @@ export function UiMapDetailPage({
         <div className="element-review-toolbar">
           <label className="search-field">
             <Search size={15} />
+            <span className="visually-hidden">Search mapped elements</span>
             <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search label, selector, warning, or state" />
           </label>
           <label>

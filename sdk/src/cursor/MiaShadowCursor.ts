@@ -312,13 +312,20 @@ export class MiaShadowCursor {
 
   private attachListeners(): void {
     document.addEventListener("mousemove", this.onMouseMove, true);
+    document.addEventListener("visibilitychange", this.onVisibilityChange);
     window.addEventListener("resize", this.onResize);
   }
 
   private detachListeners(): void {
     document.removeEventListener("mousemove", this.onMouseMove, true);
+    document.removeEventListener("visibilitychange", this.onVisibilityChange);
     window.removeEventListener("resize", this.onResize);
   }
+
+  private readonly onVisibilityChange = (): void => {
+    if (document.hidden) this.stopRenderLoop();
+    else this.startRenderLoop();
+  };
 
   private readonly onMouseMove = (event: MouseEvent): void => {
     this.cursor.x = event.clientX;
@@ -358,6 +365,8 @@ export class MiaShadowCursor {
   }
 
   private readonly onRenderFrame = (ts: number): void => {
+    this.renderRaf = null;
+    if (document.hidden) return;
     const dt = clamp((ts - this.lastFrameTs) / 1000, 0.001, 0.05);
     this.lastFrameTs = ts;
     this.render(dt, ts / 1000);

@@ -1,5 +1,5 @@
 import { AlertTriangle, Copy, KeyRound, Plus, RefreshCw, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { ApiKeyRecord, ApiKeyScope, AppRecord, BackendApi, CreatedApiKey } from "../api";
 import { EmptyTableRow, InlineAlert, PageIntro, Panel, StatusPill } from "../components/console";
 import { errorMessage, formatDate } from "../utils/format";
@@ -34,6 +34,7 @@ export function ApiKeysPage({
   const [appId, setAppId] = useState(selectedAppId);
   const [allowedOrigins, setAllowedOrigins] = useState(() => defaultOrigin(apps.find((app) => app.id === selectedAppId)));
   const [createdKey, setCreatedKey] = useState<CreatedApiKey | null>(null);
+  const [creating, setCreating] = useState(false);
   const [pendingKeyId, setPendingKeyId] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [loadState, setLoadState] = useState<LoadState>("loading");
@@ -70,6 +71,24 @@ export function ApiKeysPage({
     setScopes((current) => current.includes(scope) ? current.filter((item) => item !== scope) : [...current, scope]);
   };
 
+  const selectKeyMode = (mode: KeyMode) => {
+    setKeyMode(mode);
+    setName(mode === "integration" ? "SDK token issuer" : "Backend admin key");
+    setScopes(mode === "integration" ? ["runtime:tokens:create"] : ["admin"]);
+    setCreatedKey(null);
+  };
+
+  const handleKeyModeKeyDown = (event: KeyboardEvent<HTMLButtonElement>, mode: KeyMode) => {
+    let nextMode: KeyMode | undefined;
+    if (event.key === "ArrowRight" || event.key === "ArrowLeft") nextMode = mode === "integration" ? "admin" : "integration";
+    if (event.key === "Home") nextMode = "integration";
+    if (event.key === "End") nextMode = "admin";
+    if (!nextMode) return;
+    event.preventDefault();
+    selectKeyMode(nextMode);
+    window.requestAnimationFrame(() => document.getElementById(`api-key-${nextMode}-tab`)?.focus());
+  };
+
   const create = async () => {
     const nextScopes: ApiKeyScope[] = keyMode === "admin" ? ["admin"] : scopes;
     if (keyMode === "integration" && (!appId || parseOrigins(allowedOrigins).length === 0)) {
@@ -78,6 +97,7 @@ export function ApiKeysPage({
       showToast(message);
       return;
     }
+    setCreating(true);
     try {
       const next = await api.createApiKey({
         name,
@@ -90,6 +110,8 @@ export function ApiKeysPage({
       showToast("API key created");
     } catch (cause) {
       reportNotice(cause, "Unable to create API key");
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -109,13 +131,17 @@ export function ApiKeysPage({
 
   const copyKey = async () => {
     if (!createdKey) return;
-    await navigator.clipboard?.writeText(createdKey.key);
-    showToast("API key copied");
+    await copyText(createdKey.key, "API key copied");
   };
 
   const copyText = async (text: string, confirmation: string) => {
-    await navigator.clipboard?.writeText(text);
-    showToast(confirmation);
+    try {
+      if (!navigator.clipboard) throw new Error("Clipboard access is unavailable in this browser context.");
+      await navigator.clipboard.writeText(text);
+      showToast(confirmation);
+    } catch (cause) {
+      reportNotice(cause, "Unable to copy text");
+    }
   };
 
   return (
@@ -129,24 +155,15 @@ export function ApiKeysPage({
       />
       {notice && <InlineAlert tone={notice.tone} title={notice.title} message={notice.message} />}
       <div className="segmented-tabs" role="tablist" aria-label="API key type">
-        <button className={keyMode === "integration" ? "is-active" : ""} type="button" role="tab" aria-selected={keyMode === "integration"} onClick={() => {
-          setKeyMode("integration");
-          setName("SDK token issuer");
-          setScopes(["runtime:tokens:create"]);
-          setCreatedKey(null);
-        }}>
+        <button id="api-key-integration-tab" className={keyMode === "integration" ? "is-active" : ""} type="button" role="tab" aria-selected={keyMode === "integration"} aria-controls="api-key-mode-panel" tabIndex={keyMode === "integration" ? 0 : -1} disabled={creating} onKeyDown={(event) => handleKeyModeKeyDown(event, "integration")} onClick={() => selectKeyMode("integration")}>
           Integration keys
         </button>
-        <button className={keyMode === "admin" ? "is-active" : ""} type="button" role="tab" aria-selected={keyMode === "admin"} onClick={() => {
-          setKeyMode("admin");
-          setName("Backend admin key");
-          setScopes(["admin"]);
-          setCreatedKey(null);
-        }}>
+        <button id="api-key-admin-tab" className={keyMode === "admin" ? "is-active" : ""} type="button" role="tab" aria-selected={keyMode === "admin"} aria-controls="api-key-mode-panel" tabIndex={keyMode === "admin" ? 0 : -1} disabled={creating} onKeyDown={(event) => handleKeyModeKeyDown(event, "admin")} onClick={() => selectKeyMode("admin")}>
           Admin keys
         </button>
       </div>
 
+      <div id="api-key-mode-panel" role="tabpanel" aria-labelledby={`api-key-${keyMode}-tab`} className="api-key-mode-panel">
       <Panel title="Create API key" action={<StatusPill tone="green" label="Hashed at rest" />}>
         {keyMode === "admin" && (
           <InlineAlert tone="red" title="Admin key" message="Admin keys can control this backend. Never put an admin key in browser code, demos, screenshots, or client-side environment variables." />
@@ -222,9 +239,9 @@ export function ApiKeysPage({
           )}
         </div>
         <div className="panel-actions">
-          <button className="button primary" type="button" onClick={() => void create()}>
+          <button className="button primary" type="button" disabled={creating} onClick={() => void create()}>
             <Plus size={16} />
-            {keyMode === "admin" ? "Create admin key" : "Create integration key"}
+            {creating ? "Creating key" : keyMode === "admin" ? "Create admin key" : "Create integration key"}
           </button>
         </div>
       </Panel>
@@ -241,7 +258,7 @@ export function ApiKeysPage({
               Copy key
             </button>
           </div>
-          <pre className="json-viewer">{createdKey.key}</pre>
+          <pre className="json-viewer" aria-label="New API key">{createdKey.key}</pre>
           {selectedAppForKey(apps, createdKey.appId) && (
             <div className="sdk-handoff">
               <div className="inline-header compact">
@@ -330,6 +347,7 @@ export function ApiKeysPage({
           </table>
         </div>
       </Panel>
+      </div>
     </div>
   );
 

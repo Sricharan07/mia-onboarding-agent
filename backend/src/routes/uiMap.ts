@@ -56,6 +56,24 @@ export async function registerUiMapRoutes(app: FastifyInstance, dependencies: Ap
     return { items: dependencies.repositories.listPages(params.uiMapVersionId) };
   });
 
+  app.get("/api/v1/ui-map/:uiMapVersionId/elements", {
+    preHandler: (request, reply) => requireApiKeyScope(request, reply, dependencies, ["ui-map:read"])
+  }, async (request) => {
+    const params = z.object({ uiMapVersionId: z.string() }).parse(request.params);
+    const query = z.object({
+      limit: z.coerce.number().int().positive().max(2_000).default(1_000),
+      offset: z.coerce.number().int().nonnegative().default(0)
+    }).parse(request.query);
+    const version = dependencies.repositories.getUiMapVersion(params.uiMapVersionId);
+    requireApiKeyAppAccess(request, dependencies, String(version.app_id));
+    return {
+      items: dependencies.repositories.listUiElementsForVersion(params.uiMapVersionId, query.limit, query.offset),
+      total: dependencies.repositories.countUiElementsForVersion(params.uiMapVersionId),
+      limit: query.limit,
+      offset: query.offset
+    };
+  });
+
   app.get("/api/v1/pages/:pageId/elements", {
     preHandler: (request, reply) => requireApiKeyScope(request, reply, dependencies, ["ui-map:read"])
   }, async (request) => {

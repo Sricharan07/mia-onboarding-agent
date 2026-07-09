@@ -211,6 +211,47 @@ test("repository exposes UI elements from the latest completed UI map only", asy
   }
 });
 
+test("repository paginates all elements in a UI map version deterministically", () => {
+  const dir = mkdtempSync(join(tmpdir(), "mia-ui-pagination-"));
+  const db = createDatabase(testConfig(dir));
+  const repositories = new Repositories(db);
+
+  try {
+    const app = repositories.upsertApp({ name: "Paged map", slug: "paged-map", baseUrl: "http://localhost:3000" });
+    const version = repositories.createUiMapVersion(app.id);
+    const pageId = repositories.createPage({
+      appId: app.id,
+      uiMapVersionId: version.id,
+      name: "Home",
+      route: "/",
+      url: "http://localhost:3000/",
+      status: "mapped"
+    });
+    for (const label of ["Alpha", "Beta", "Gamma"]) {
+      repositories.saveUiElement(uiElement({
+        appId: app.id,
+        uiMapVersionId: version.id,
+        pageId,
+        elementId: `${label.toLowerCase()}-button`,
+        label
+      }));
+    }
+
+    assert.equal(repositories.countUiElementsForVersion(version.id), 3);
+    assert.deepEqual(
+      repositories.listUiElementsForVersion(version.id, 2, 0).map((element) => element.label),
+      ["Alpha", "Beta"]
+    );
+    assert.deepEqual(
+      repositories.listUiElementsForVersion(version.id, 2, 2).map((element) => element.label),
+      ["Gamma"]
+    );
+  } finally {
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("repository summarizes UI map scan progress and selector quality", async () => {
   const dir = mkdtempSync(join(tmpdir(), "mia-ui-summary-"));
   const db = createDatabase(testConfig(dir));

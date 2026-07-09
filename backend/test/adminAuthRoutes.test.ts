@@ -7,7 +7,7 @@ import { buildApp } from "../src/app.js";
 import type { AppConfig } from "../src/config/env.js";
 import { createDatabase } from "../src/db/database.js";
 import { Repositories } from "../src/db/repositories.js";
-import type { Workflow } from "../src/schemas/domain.js";
+import type { UIElementRecord, Workflow } from "../src/schemas/domain.js";
 import { AppError } from "../src/utils/errors.js";
 
 test("admin routes require an admin API key after bootstrap", async () => {
@@ -667,6 +667,118 @@ test("non-admin read API keys can only read their bound app", async () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("UI map element pagination returns complete ordered pages within app scope", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mia-ui-map-route-"));
+  const config = testConfig(dir);
+  const db = createDatabase(config);
+  const repositories = new Repositories(db);
+  const firstApp = repositories.upsertApp({ name: "First map", slug: "first-map", baseUrl: "http://localhost:3000" });
+  const secondApp = repositories.upsertApp({ name: "Second map", slug: "second-map", baseUrl: "http://localhost:4000" });
+  const firstVersion = seedUiMap(repositories, firstApp.id, ["Alpha", "Beta", "Gamma"]);
+  const secondVersion = seedUiMap(repositories, secondApp.id, ["Private"]);
+  db.close();
+
+  const app = await buildApp(config);
+  try {
+    const bootstrap = await app.inject({
+      method: "POST",
+      url: "/api/v1/api-keys",
+      headers: { "x-bootstrap-admin-token": "bootstrap-secret" },
+      payload: { name: "admin", scopes: ["admin"] }
+    });
+    const adminKey = bootstrap.json<{ key: string }>().key;
+    const scopedKeyResponse = await app.inject({
+      method: "POST",
+      url: "/api/v1/api-keys",
+      headers: { authorization: `Bearer ${adminKey}` },
+      payload: {
+        name: "UI map reader",
+        scopes: ["ui-map:read"],
+        appId: firstApp.id,
+        allowedOrigins: ["http://localhost:3000"]
+      }
+    });
+    const scopedKey = scopedKeyResponse.json<{ key: string }>().key;
+    const headers = { authorization: `Bearer ${scopedKey}`, origin: "http://localhost:3000" };
+
+    const firstPage = await app.inject({
+      method: "GET",
+      url: `/api/v1/ui-map/${firstVersion}/elements?limit=2&offset=0`,
+      headers
+    });
+    assert.equal(firstPage.statusCode, 200);
+    const firstBody = firstPage.json<{ items: UIElementRecord[]; total: number; limit: number; offset: number }>();
+    assert.equal(firstBody.total, 3);
+    assert.deepEqual(firstBody.items.map((element) => element.label), ["Alpha", "Beta"]);
+    assert.deepEqual({ limit: firstBody.limit, offset: firstBody.offset }, { limit: 2, offset: 0 });
+
+    const lastPage = await app.inject({
+      method: "GET",
+      url: `/api/v1/ui-map/${firstVersion}/elements?limit=2&offset=2`,
+      headers
+    });
+    assert.deepEqual(lastPage.json<{ items: UIElementRecord[] }>().items.map((element) => element.label), ["Gamma"]);
+
+    const forbidden = await app.inject({
+      method: "GET",
+      url: `/api/v1/ui-map/${secondVersion}/elements`,
+      headers
+    });
+    assert.equal(forbidden.statusCode, 403);
+  } finally {
+    await app.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+function seedUiMap(repositories: Repositories, appId: string, labels: string[]): string {
+  const version = repositories.createUiMapVersion(appId);
+  const pageId = repositories.createPage({
+    appId,
+    uiMapVersionId: version.id,
+    name: "Home",
+    route: "/",
+    url: "http://localhost/",
+    status: "mapped"
+  });
+  for (const label of labels) repositories.saveUiElement(uiElement(appId, version.id, pageId, label));
+  repositories.updateUiMapVersion(version.id, "completed");
+  return version.id;
+}
+
+function uiElement(appId: string, uiMapVersionId: string, pageId: string, label: string): UIElementRecord {
+  const elementId = `${label.toLowerCase()}-button`;
+  const now = "2026-01-01T00:00:00.000Z";
+  return {
+    id: `row-${appId}-${elementId}`,
+    elementId,
+    appId,
+    uiMapVersionId,
+    pageId,
+    pageName: "Home",
+    route: "/",
+    elementType: "button",
+    role: "button",
+    label,
+    visibleText: label,
+    accessibleName: label,
+    description: label,
+    selector: `[data-testid="${elementId}"]`,
+    selectorType: "data-testid",
+    fallbackSelectors: [],
+    locators: [{ strategy: "css", selector: `[data-testid="${elementId}"]` }],
+    nearbyText: [],
+    tags: [],
+    selectorQuality: "strong",
+    selectorWarnings: [],
+    stateName: "default",
+    discoveredBy: "route_scan",
+    fingerprint: elementId,
+    createdAt: now,
+    updatedAt: now
+  };
+}
 
 function workflow(input: Partial<Workflow> = {}): Workflow {
   const now = "2026-01-01T00:00:00.000Z";

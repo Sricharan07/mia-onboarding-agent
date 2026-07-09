@@ -120,7 +120,7 @@ export class MiaAssistantPanel {
           <span class="mia-mark" aria-hidden="true">M</span>
           <span class="mia-launcher-copy">
             <strong>Mia</strong>
-            <span data-status-label>${STATUS_LABELS[this.status]}</span>
+            <span data-status-label role="status" aria-live="polite">${STATUS_LABELS[this.status]}</span>
           </span>
           <span class="mia-status-dot ${STATUS_TONES[this.status]}" aria-hidden="true"></span>
         </button>
@@ -154,7 +154,7 @@ export class MiaAssistantPanel {
           <div class="mia-suggestions" aria-label="Suggested prompts"></div>
 
           <div class="mia-controls">
-            ${this.options.enableVoice ? `<button class="mia-control" type="button" data-voice>${this.isVoiceActive() ? "Stop voice" : "Start voice"}</button>` : ""}
+            ${this.options.enableVoice ? `<button class="mia-control" type="button" data-voice aria-pressed="${this.isVoiceActive()}">${this.isVoiceActive() ? "Stop voice" : "Start voice"}</button>` : ""}
             ${this.options.enableScreenShare ? `<button class="mia-control" type="button" data-screen aria-pressed="${this.screenShareActive}">${this.screenShareActive ? "Stop sharing" : "Share screen"}</button>` : ""}
             <button class="mia-control" type="button" data-cancel>Stop Mia</button>
           </div>
@@ -232,11 +232,12 @@ export class MiaAssistantPanel {
     this.open = false;
     const panel = this.shadow.querySelector<HTMLElement>(".mia-panel");
     const launcher = this.shadow.querySelector<HTMLButtonElement>(".mia-launcher");
+    const panelHadFocus = panel?.contains(this.shadow.activeElement) ?? false;
     panel?.setAttribute("hidden", "");
     this.shadow.querySelector(".mia-panel-root")?.setAttribute("data-open", "false");
     launcher?.setAttribute("aria-expanded", "false");
     launcher?.setAttribute("aria-label", "Open Mia");
-    if (restoreFocus) launcher?.focus({ preventScroll: true });
+    if (restoreFocus || panelHadFocus) launcher?.focus({ preventScroll: true });
   }
 
   private renderSuggestions(): void {
@@ -249,6 +250,7 @@ export class MiaAssistantPanel {
       if (!label) continue;
       const button = document.createElement("button");
       button.type = "button";
+      button.dataset.suggestion = "true";
       button.textContent = label;
       button.addEventListener("click", () => void this.runTask(() => this.options.onAsk(label)));
       container.append(button);
@@ -296,9 +298,12 @@ export class MiaAssistantPanel {
     const voice = this.shadow.querySelector<HTMLButtonElement>("[data-voice]");
     const screen = this.shadow.querySelector<HTMLButtonElement>("[data-screen]");
     const send = this.shadow.querySelector<HTMLButtonElement>(".mia-send");
+    const input = this.shadow.querySelector<HTMLInputElement>("#mia-ask-input");
+    const suggestions = this.shadow.querySelectorAll<HTMLButtonElement>("[data-suggestion]");
     const thinking = this.shadow.querySelector<HTMLElement>(".mia-thinking");
     if (voice) {
       voice.textContent = this.isVoiceActive() ? "Stop voice" : "Start voice";
+      voice.setAttribute("aria-pressed", String(this.isVoiceActive()));
       voice.disabled = this.busy || !this.options.enableVoice;
     }
     if (screen) {
@@ -307,6 +312,8 @@ export class MiaAssistantPanel {
       screen.disabled = this.busy || !this.options.enableScreenShare;
     }
     if (send) send.disabled = this.busy;
+    if (input) input.disabled = this.busy;
+    for (const suggestion of suggestions) suggestion.disabled = this.busy;
     if (thinking) thinking.hidden = !this.busy;
   }
 
@@ -338,7 +345,7 @@ function friendlyErrorText(message: string): string {
 const styles = `
 :host {
   all: initial;
-  color-scheme: dark;
+  color-scheme: dark light;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
 }
 
@@ -420,7 +427,7 @@ input {
   opacity: 0.4;
   pointer-events: none;
   transform: translateX(-42%);
-  transition: transform 360ms var(--mia-ease), opacity 180ms ease;
+  transition: transform 240ms var(--mia-ease), opacity 180ms ease;
 }
 
 .mia-launcher {
@@ -436,9 +443,9 @@ input {
   cursor: pointer;
   transform-origin: 100% 100%;
   transition:
-    width 520ms var(--mia-ease),
+    width 240ms var(--mia-ease),
     border-color 180ms ease,
-    border-radius 520ms var(--mia-ease),
+    border-radius 240ms var(--mia-ease),
     transform 220ms var(--mia-ease),
     box-shadow 220ms ease;
 }
@@ -539,9 +546,7 @@ input:focus-visible {
   border-radius: var(--mia-radius);
   padding: 18px;
   transform-origin: calc(100% - 58px) calc(100% + 58px);
-  animation: mia-liquid-open 620ms var(--mia-ease);
-  scrollbar-color: rgba(217, 224, 237, 0.28) transparent;
-  scrollbar-width: thin;
+  animation: mia-liquid-open 280ms var(--mia-ease);
 }
 
 .mia-panel[hidden] {
@@ -848,8 +853,6 @@ button:disabled {
     linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.02)),
     rgba(8, 10, 16, 0.44);
   padding: 14px;
-  scrollbar-color: rgba(217, 224, 237, 0.28) transparent;
-  scrollbar-width: thin;
 }
 
 .mia-empty {
@@ -889,6 +892,132 @@ button:disabled {
 .mia-controls {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (prefers-color-scheme: light) {
+  :host {
+    color-scheme: light;
+  }
+
+  .mia-panel-root {
+    --mia-shell: rgba(255, 255, 255, 0.76);
+    --mia-shell-strong: rgba(255, 255, 255, 0.94);
+    --mia-glass: rgba(15, 23, 42, 0.055);
+    --mia-glass-strong: rgba(15, 23, 42, 0.09);
+    --mia-glass-soft: rgba(15, 23, 42, 0.035);
+    --mia-border: rgba(15, 23, 42, 0.15);
+    --mia-border-strong: rgba(37, 99, 235, 0.5);
+    --mia-text: #111827;
+    --mia-text-2: #344054;
+    --mia-text-3: #5f6b7a;
+    --mia-message-text: #263244;
+    --mia-placeholder: #64748b;
+  }
+
+  .mia-launcher,
+  .mia-panel {
+    background:
+      linear-gradient(142deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.72) 40%, rgba(238, 242, 255, 0.82)),
+      rgba(255, 255, 255, 0.84);
+    box-shadow:
+      0 22px 60px rgba(15, 23, 42, 0.16),
+      inset 0 1px 0 rgba(255, 255, 255, 0.96),
+      inset 0 -1px 0 rgba(15, 23, 42, 0.05);
+  }
+
+  .mia-launcher::before,
+  .mia-panel::before {
+    background:
+      linear-gradient(135deg, rgba(255, 255, 255, 0.86), transparent 38%),
+      linear-gradient(315deg, rgba(59, 130, 246, 0.08), transparent 44%);
+  }
+
+  .mia-launcher::after,
+  .mia-panel::after {
+    background: linear-gradient(112deg, transparent 0%, rgba(255, 255, 255, 0.88) 18%, transparent 38%);
+  }
+
+  .mia-panel-root[data-open="true"] .mia-launcher {
+    border-color: rgba(15, 23, 42, 0.17);
+    background:
+      linear-gradient(142deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.8) 42%, rgba(238, 242, 255, 0.86)),
+      rgba(255, 255, 255, 0.9);
+  }
+
+  .mia-launcher:hover {
+    box-shadow:
+      0 24px 64px rgba(15, 23, 42, 0.18),
+      0 0 0 1px rgba(37, 99, 235, 0.08),
+      inset 0 1px 0 rgba(255, 255, 255, 0.98);
+  }
+
+  .mia-launcher:focus-visible,
+  button:focus-visible,
+  input:focus-visible {
+    outline-color: rgba(37, 99, 235, 0.9);
+  }
+
+  .mia-status-dot {
+    box-shadow:
+      0 0 0 5px rgba(15, 23, 42, 0.06),
+      0 0 18px currentColor;
+  }
+
+  .mia-icon-button,
+  .mia-status-pill,
+  .mia-privacy-pill,
+  .mia-send,
+  .mia-control,
+  .mia-suggestions button,
+  .mia-message {
+    border-color: rgba(15, 23, 42, 0.13);
+  }
+
+  .mia-icon-button,
+  .mia-control,
+  .mia-suggestions button {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(241, 245, 249, 0.82));
+  }
+
+  .mia-icon-button:hover,
+  .mia-control:hover:not(:disabled),
+  .mia-suggestions button:hover:not(:disabled) {
+    border-color: rgba(37, 99, 235, 0.35);
+    background: rgba(239, 246, 255, 0.96);
+  }
+
+  .mia-status-pill.green { border-color: rgba(5, 150, 105, 0.3); background: rgba(5, 150, 105, 0.1); color: #047857; }
+  .mia-status-pill.yellow { border-color: rgba(180, 83, 9, 0.28); background: rgba(245, 158, 11, 0.11); color: #92400e; }
+  .mia-status-pill.red { border-color: rgba(190, 18, 60, 0.28); background: rgba(225, 29, 72, 0.1); color: #9f1239; }
+  .mia-status-pill.gray,
+  .mia-privacy-pill { background: rgba(15, 23, 42, 0.055); color: var(--mia-text-2); }
+
+  .mia-input-row,
+  .mia-transcript {
+    border-color: rgba(15, 23, 42, 0.14);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.84)),
+      rgba(255, 255, 255, 0.88);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.98);
+  }
+
+  .mia-input-row:focus-within {
+    border-color: rgba(37, 99, 235, 0.62);
+    background: rgba(255, 255, 255, 0.96);
+    box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1);
+  }
+
+  .mia-message {
+    background: rgba(248, 250, 252, 0.94);
+  }
+
+  .mia-message.user {
+    background: rgba(79, 70, 229, 0.09);
+  }
+
+  .mia-message.system {
+    background: rgba(245, 158, 11, 0.1);
+  }
 }
 
 @media (max-width: 520px) {

@@ -462,6 +462,17 @@ export class Repositories {
     return Number(row.count);
   }
 
+  listUiElementsForVersion(uiMapVersionId: string, limit: number, offset: number): UIElementRecord[] {
+    const rows = this.db.prepare(`
+      SELECT raw_json
+      FROM ui_elements
+      WHERE ui_map_version_id = ?
+      ORDER BY page_name, label, id
+      LIMIT ? OFFSET ?
+    `).all(uiMapVersionId, limit, offset) as Array<{ raw_json: string }>;
+    return rows.map((row) => JSON.parse(row.raw_json) as UIElementRecord);
+  }
+
   getElementByElementId(appId: string, elementId: string): UIElementRecord | undefined {
     const latestVersion = this.getLatestCompletedUiMapVersion(appId);
     if (!latestVersion) return undefined;

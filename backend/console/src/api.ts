@@ -457,6 +457,7 @@ export type UsageTimeseriesPoint = {
 };
 
 type Items<T> = { items: T[] };
+type PagedItems<T> = Items<T> & { total: number; limit: number; offset: number };
 
 export type BackendApiCredentials = {
   sessionToken?: string;
@@ -570,6 +571,25 @@ export class BackendApi {
 
   listPages(uiMapVersionId: string): Promise<Items<UiPage>> {
     return this.request(`/api/v1/ui-map/${encodeURIComponent(uiMapVersionId)}/pages`);
+  }
+
+  async listAllElements(uiMapVersionId: string): Promise<UiElement[]> {
+    const items: UiElement[] = [];
+    const limit = 1_000;
+    let offset = 0;
+    let total = Number.POSITIVE_INFINITY;
+
+    while (offset < total) {
+      const response = await this.request<PagedItems<UiElement>>(
+        `/api/v1/ui-map/${encodeURIComponent(uiMapVersionId)}/elements?limit=${limit}&offset=${offset}`
+      );
+      total = response.total;
+      items.push(...response.items);
+      if (response.items.length === 0) break;
+      offset += response.items.length;
+    }
+
+    return items;
   }
 
   listElements(pageId: string, filters: { selectorQuality?: string; elementType?: string } = {}): Promise<Items<UiElement>> {

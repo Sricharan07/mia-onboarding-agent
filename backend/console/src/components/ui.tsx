@@ -12,8 +12,8 @@ function CardHeader({ className, ...props }: ComponentProps<"div">) {
   return <div data-slot="card-header" className={cx("card-header", className)} {...props} />;
 }
 
-function CardTitle({ className, ...props }: ComponentProps<"div">) {
-  return <div data-slot="card-title" className={cx("card-title", className)} {...props} />;
+function CardTitle({ className, ...props }: ComponentProps<"h3">) {
+  return <h3 data-slot="card-title" className={cx("card-title", className)} {...props} />;
 }
 
 function CardDescription({ className, ...props }: ComponentProps<"div">) {

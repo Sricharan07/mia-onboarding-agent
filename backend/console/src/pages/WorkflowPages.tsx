@@ -1,4 +1,4 @@
-import { Check, FileVideo, Plus, Play, RefreshCw, Save, Upload, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, FileVideo, Plus, Play, RefreshCw, Save, Trash2, Upload, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { AppRecord, BackendApi, ExecutionPolicy, UiElement, Workflow, WorkflowJob, WorkflowReviewReport, WorkflowStep, WorkflowSummary } from "../api";
 import { ActionEmptyState, InlineAlert, PageIntro, Panel, StatusBadge, StatusPill, SummaryItem } from "../components/console";
@@ -351,7 +351,7 @@ export function WorkflowReviewPage({
       <Panel
         title="Workflow review"
         action={
-          <select value={workflow.workflowId} onChange={(event) => void selectWorkflow(event.target.value)}>
+          <select aria-label="Workflow to review" value={workflow.workflowId} onChange={(event) => void selectWorkflow(event.target.value)}>
             {workflows.map((item) => (
               <option value={item.workflowId} key={item.workflowId}>{item.name}</option>
             ))}
@@ -569,9 +569,9 @@ export function WorkflowStepCard({
         </div>
         <div className="step-actions">
           {"executionPolicy" in step && <StatusBadge status={step.executionPolicy} />}
-          <button className="icon-button" type="button" disabled={disabled} onClick={() => onMove(-1)}>Up</button>
-          <button className="icon-button" type="button" disabled={disabled} onClick={() => onMove(1)}>Down</button>
-          <button className="icon-button danger" type="button" disabled={disabled} onClick={() => onDelete()}>Remove</button>
+          <button className="icon-button compact" type="button" aria-label={`Move step ${order} up`} title="Move up" disabled={disabled} onClick={() => onMove(-1)}><ArrowUp size={15} /></button>
+          <button className="icon-button compact" type="button" aria-label={`Move step ${order} down`} title="Move down" disabled={disabled} onClick={() => onMove(1)}><ArrowDown size={15} /></button>
+          <button className="icon-button compact danger" type="button" aria-label={`Remove step ${order}`} title="Remove step" disabled={disabled} onClick={() => onDelete()}><Trash2 size={15} /></button>
         </div>
       </div>
       <div className="step-columns">

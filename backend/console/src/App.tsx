@@ -1,5 +1,5 @@
-import { Command, EllipsisVertical, LoaderCircle, LogOut, PanelLeft, RefreshCw, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Command, EllipsisVertical, LogOut, PanelLeft, RefreshCw, X } from "lucide-react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BackendApi,
   type ApiKeyRecord,
@@ -18,14 +18,6 @@ import {
 import { InlineAlert, StatusPill } from "./components/console";
 import { navGroups, navRouteFor, routeTitle } from "./navigation";
 import { LoginPage } from "./pages/LoginPage";
-import { LogsPage } from "./pages/LogsPage";
-import { OverviewPage } from "./pages/OverviewPage";
-import { SettingsPage } from "./pages/SettingsPage";
-import { TestMiaPage } from "./pages/TestMiaPage";
-import { UiMapDetailPage, UiMapPage } from "./pages/UiMapPages";
-import { ApiKeysPage } from "./pages/ApiKeysPage";
-import { UsagePage } from "./pages/UsagePage";
-import { UploadWorkflowPage, WorkflowReviewPage, WorkflowsPage } from "./pages/WorkflowPages";
 import type { LoadState, RouteId } from "./types";
 import { errorMessage } from "./utils/format";
 
@@ -33,6 +25,18 @@ const configuredBackendUrl = (import.meta.env.VITE_MIA_BACKEND_URL as string | u
 const storedBackendUrl = window.localStorage.getItem("mia-console-backend-url")?.trim() || undefined;
 const defaultBackendUrl = storedBackendUrl ?? configuredBackendUrl ?? window.location.origin;
 const defaultConsoleSessionToken = window.sessionStorage.getItem("mia-console-session-token") ?? "";
+
+const ApiKeysPage = lazy(() => import("./pages/ApiKeysPage").then((module) => ({ default: module.ApiKeysPage })));
+const LogsPage = lazy(() => import("./pages/LogsPage").then((module) => ({ default: module.LogsPage })));
+const OverviewPage = lazy(() => import("./pages/OverviewPage").then((module) => ({ default: module.OverviewPage })));
+const SettingsPage = lazy(() => import("./pages/SettingsPage").then((module) => ({ default: module.SettingsPage })));
+const TestMiaPage = lazy(() => import("./pages/TestMiaPage").then((module) => ({ default: module.TestMiaPage })));
+const UiMapDetailPage = lazy(() => import("./pages/UiMapPages").then((module) => ({ default: module.UiMapDetailPage })));
+const UiMapPage = lazy(() => import("./pages/UiMapPages").then((module) => ({ default: module.UiMapPage })));
+const UsagePage = lazy(() => import("./pages/UsagePage").then((module) => ({ default: module.UsagePage })));
+const UploadWorkflowPage = lazy(() => import("./pages/WorkflowPages").then((module) => ({ default: module.UploadWorkflowPage })));
+const WorkflowReviewPage = lazy(() => import("./pages/WorkflowPages").then((module) => ({ default: module.WorkflowReviewPage })));
+const WorkflowsPage = lazy(() => import("./pages/WorkflowPages").then((module) => ({ default: module.WorkflowsPage })));
 
 function App() {
   const [authenticated, setAuthenticated] = useState(() => Boolean(defaultConsoleSessionToken));
@@ -63,6 +67,11 @@ function App() {
   const [logs, setLogs] = useState<ExecutionLog[]>([]);
   const refreshGeneration = useRef(0);
   const workflowSelectionGeneration = useRef(0);
+  const toastTimer = useRef<number | undefined>(undefined);
+  const sidebarRef = useRef<HTMLElement>(null);
+  const sidebarTriggerRef = useRef<HTMLButtonElement>(null);
+  const routeHeadingRef = useRef<HTMLHeadingElement>(null);
+  const routeFocusReady = useRef(false);
 
   const api = useMemo(() => new BackendApi(backendUrl, { sessionToken }), [backendUrl, sessionToken]);
   const selectedApp = apps.find((app) => app.id === selectedAppId) ?? null;
@@ -71,10 +80,14 @@ function App() {
   const selectedPage = pages.find((page) => page.id === selectedPageId) ?? pages[0] ?? null;
   const elements = Object.values(elementsByPage).flat();
 
-  const showToast = (message: string) => {
+  const showToast = useCallback((message: string) => {
+    if (toastTimer.current !== undefined) window.clearTimeout(toastTimer.current);
     setToast(message);
-    window.setTimeout(() => setToast(""), 2600);
-  };
+    toastTimer.current = window.setTimeout(() => {
+      setToast("");
+      toastTimer.current = undefined;
+    }, 5000);
+  }, []);
 
   const reportError = (cause: unknown, fallback = "Request failed") => {
     const message = errorMessage(cause, fallback);
@@ -132,12 +145,12 @@ function App() {
       let nextPages: UiPage[] = [];
       let nextElementsByPage: Record<string, UiElement[]> = {};
       if (latestVersion) {
-        const pageResponse = await api.listPages(latestVersion.id);
-        const elementEntries = await Promise.all(
-          pageResponse.items.map(async (page) => [page.id, (await api.listElements(page.id)).items] as const)
-        );
+        const [pageResponse, allElements] = await Promise.all([
+          api.listPages(latestVersion.id),
+          api.listAllElements(latestVersion.id)
+        ]);
         nextPages = pageResponse.items;
-        nextElementsByPage = Object.fromEntries(elementEntries);
+        nextElementsByPage = groupElementsByPage(pageResponse.items, allElements);
       }
 
       const selectedWorkflowStillExists = workflowResponse.items.some((workflow) => workflow.workflowId === selectedWorkflowId);
@@ -222,6 +235,49 @@ function App() {
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authenticated, selectedAppId, jobs, uiMapVersions]);
+
+  useEffect(() => () => {
+    if (toastTimer.current !== undefined) window.clearTimeout(toastTimer.current);
+  }, []);
+
+  useEffect(() => {
+    document.title = authenticated ? `${routeTitle(activeRoute)} | Mia Console` : "Mia Console";
+    if (routeFocusReady.current) {
+      routeHeadingRef.current?.focus({ preventScroll: true });
+    } else {
+      routeFocusReady.current = true;
+    }
+  }, [activeRoute, authenticated]);
+
+  useEffect(() => {
+    if (!sidebarOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const focusFrame = window.requestAnimationFrame(() => {
+      sidebarRef.current?.querySelector<HTMLButtonElement>(".nav-item")?.focus({ preventScroll: true });
+    });
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setSidebarOpen(false);
+      window.requestAnimationFrame(() => sidebarTriggerRef.current?.focus({ preventScroll: true }));
+    };
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener("keydown", handleEscape);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [sidebarOpen]);
+
+  useEffect(() => {
+    const mobileQuery = window.matchMedia("(max-width: 820px)");
+    const closeDesktopDrawer = (event: MediaQueryListEvent) => {
+      if (!event.matches) setSidebarOpen(false);
+    };
+    mobileQuery.addEventListener("change", closeDesktopDrawer);
+    return () => mobileQuery.removeEventListener("change", closeDesktopDrawer);
+  }, []);
 
   const selectApp = async (appId: string) => {
     setSelectedAppId(appId);
@@ -309,7 +365,7 @@ function App() {
   if (!authChecked) {
     return (
       <main className="login-page">
-        <section className="login-card auth-check-card">
+        <section className="login-card auth-check-card" role="status" aria-live="polite" aria-busy="true">
           <div className="login-brand-row">
             <span className="brand-tile">
               <Command size={17} />
@@ -330,7 +386,8 @@ function App() {
 
   return (
     <div className={`app-shell ${sidebarOpen ? "sidebar-is-open" : ""}`}>
-      <aside className="sidebar" aria-label="Console sidebar">
+      <a className="skip-link" href="#main-content">Skip to main content</a>
+      <aside id="console-sidebar" ref={sidebarRef} className="sidebar" aria-label="Console sidebar">
         <button className="brand-row" type="button" onClick={() => setActiveRoute("overview")}>
           <span className="brand-tile">
             <Command size={17} />
@@ -350,6 +407,7 @@ function App() {
                   className={`nav-item ${navRouteFor(activeRoute) === item.id ? "is-active" : ""}`}
                   key={item.id}
                   type="button"
+                  aria-current={navRouteFor(activeRoute) === item.id ? "page" : undefined}
                   onClick={() => {
                     setActiveRoute(item.id);
                     setSidebarOpen(false);
@@ -382,13 +440,13 @@ function App() {
         </div>
       </aside>
 
-      <main className="main-shell">
+      <main id="main-content" className="main-shell" tabIndex={-1} inert={sidebarOpen} aria-hidden={sidebarOpen || undefined}>
         <header className="topbar">
           <div className="topbar-title">
-            <button className="sidebar-trigger" type="button" aria-label={sidebarOpen ? "Close sidebar" : "Open sidebar"} aria-expanded={sidebarOpen} onClick={() => setSidebarOpen((open) => !open)}>
+            <button ref={sidebarTriggerRef} className="sidebar-trigger" type="button" aria-label={sidebarOpen ? "Close sidebar" : "Open sidebar"} aria-controls="console-sidebar" aria-expanded={sidebarOpen} onClick={() => setSidebarOpen((open) => !open)}>
               {sidebarOpen ? <X size={16} /> : <PanelLeft size={16} />}
             </button>
-            <h1>{routeTitle(activeRoute)}</h1>
+            <h1 ref={routeHeadingRef} tabIndex={-1}>{routeTitle(activeRoute)}</h1>
           </div>
           <div className="topbar-actions">
             {selectedApp && (
@@ -424,7 +482,7 @@ function App() {
         ) : loadState === "error" && apps.length === 0 ? (
           <ConsoleLoadState error={error} onRetry={() => void refresh()} />
         ) : (
-          <>
+          <Suspense fallback={<ConsoleRouteLoadState />}>
         {activeRoute === "overview" && (
           <OverviewPage
             app={selectedApp}
@@ -542,27 +600,64 @@ function App() {
             showToast={showToast}
           />
         )}
-          </>
+          </Suspense>
         )}
       </main>
 
-      <button className="sidebar-backdrop" type="button" aria-label="Close sidebar" onClick={() => setSidebarOpen(false)} />
-      {toast && <div className="toast" role="status" aria-live="polite">{toast}</div>}
+      <button className="sidebar-backdrop" type="button" aria-label="Close sidebar" onClick={() => {
+        setSidebarOpen(false);
+        window.requestAnimationFrame(() => sidebarTriggerRef.current?.focus({ preventScroll: true }));
+      }} />
+      {toast && (
+        <div className="toast">
+          <span role="status" aria-live="polite" aria-atomic="true">{toast}</span>
+          <button type="button" aria-label="Dismiss notification" onClick={() => {
+            if (toastTimer.current !== undefined) window.clearTimeout(toastTimer.current);
+            toastTimer.current = undefined;
+            setToast("");
+          }}>
+            <X size={15} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }
 
 function ConsoleLoadState({ error, onRetry }: { error?: string; onRetry?: () => void }) {
   return (
-    <section className="console-load-state" role={error ? "alert" : "status"} aria-live="polite">
-      {!error && <LoaderCircle className="is-spinning" size={22} />}
-      <div>
+    <section className="console-load-state" role={error ? "alert" : "status"} aria-live="polite" aria-busy={!error}>
+      <div className="console-load-copy">
         <h2>{error ? "Console data could not be loaded" : "Loading console data"}</h2>
         <p>{error ?? "Fetching apps, provider readiness, UI maps, workflows, and runtime evidence."}</p>
       </div>
+      {!error && (
+        <div className="console-load-skeleton" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </div>
+      )}
       {onRetry && <button className="button primary" type="button" onClick={onRetry}>Retry</button>}
     </section>
   );
+}
+
+function ConsoleRouteLoadState() {
+  return (
+    <section className="route-load-state" role="status" aria-live="polite" aria-busy="true">
+      <span>Loading page</span>
+      <div aria-hidden="true" />
+    </section>
+  );
+}
+
+function groupElementsByPage(pages: UiPage[], elements: UiElement[]): Record<string, UiElement[]> {
+  const grouped = Object.fromEntries(pages.map((page) => [page.id, [] as UiElement[]]));
+  for (const element of elements) {
+    grouped[element.pageId]?.push(element);
+  }
+  return grouped;
 }
 
 function userInitials(user: ConsoleAuthUser | null): string {
