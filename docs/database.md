@@ -11,6 +11,10 @@ Applied migrations are recorded in the `schema_migrations` table and mirrored to
 | ID | Name |
 | --- | --- |
 | 1 | `initial_schema` |
+| 2 | `schema_hardening_columns` |
+| 3 | `foreign_key_constraints` |
+| 4 | `runtime_access_tokens_and_quotas` |
+| 5 | `privacy_controls_and_data_minimization` |
 
 Migrations must be append-only. Do not edit an already-applied migration; add a new migration with the next integer ID.
 
@@ -26,6 +30,7 @@ docker cp "$(docker compose ps -q mia-backend)":/app/data/sqlite/backup.db ./mia
 Also back up:
 
 - `/app/data/uploads`
+- `/app/data/tts`
 - `/app/data/lancedb`
 - the `.env` values needed to decrypt scan credentials, especially `MIA_SECRET_ENCRYPTION_KEY`
 

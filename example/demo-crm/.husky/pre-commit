@@ -1,4 +1,0 @@
-cd example/demo-crm
-npm run generate:presets
-git add src/lib/preferences/theme.ts
-npm exec -- lint-staged

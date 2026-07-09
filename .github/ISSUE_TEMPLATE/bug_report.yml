@@ -1,39 +1,67 @@
-name: Bug Report
-description: Report a reproducible product or developer-experience issue.
+name: Bug report
+description: Report a reproducible problem in Mia.
 title: "[Bug]: "
 labels:
   - bug
 body:
+  - type: markdown
+    attributes:
+      value: Do not include API keys, runtime tokens, customer data, or security vulnerabilities. Report vulnerabilities through the private link in the issue chooser.
   - type: textarea
     id: summary
     attributes:
-      label: Summary
-      description: What happened, and what did you expect instead?
+      label: What happened?
+      description: Describe the actual behavior and its impact.
     validations:
       required: true
   - type: textarea
-    id: steps
+    id: expected
     attributes:
-      label: Steps to Reproduce
-      description: Include commands, routes, UI actions, SDK calls, or configuration needed to reproduce.
-      placeholder: |
-        1. ...
-        2. ...
-        3. ...
+      label: Expected behavior
     validations:
       required: true
   - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Configure ...
+        2. Open ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected component
+      options:
+        - Backend
+        - Console
+        - Browser SDK
+        - UI mapper
+        - Workflow processing
+        - Voice
+        - Docker or deployment
+        - Demo application
+        - Documentation
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Provide the release version or Git commit SHA.
+    validations:
+      required: true
+  - type: input
     id: environment
     attributes:
       label: Environment
-      description: OS, Node version, browser, Docker version, deployment mode, and package versions.
+      description: Include OS, Node.js version, browser, and deployment method when relevant.
     validations:
       required: true
   - type: textarea
     id: logs
     attributes:
-      label: Logs or Screenshots
-      description: Paste relevant logs with secrets redacted.
-      render: shell
-    validations:
-      required: false
+      label: Redacted logs or screenshots
+      description: Remove secrets, tokens, personal data, and customer content before attaching evidence.

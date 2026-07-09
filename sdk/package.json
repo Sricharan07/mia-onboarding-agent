@@ -31,6 +31,9 @@
     "ai"
   ],
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "homepage": "https://github.com/Sricharan07/mia-onboarding-agent#readme",
   "bugs": {
     "url": "https://github.com/Sricharan07/mia-onboarding-agent/issues"

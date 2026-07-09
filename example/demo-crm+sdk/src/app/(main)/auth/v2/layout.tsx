@@ -24,7 +24,7 @@ export default function Layout({ children }: Readonly<{ children: ReactNode }>) 
             <Separator orientation="vertical" className="mx-3 h-auto!" />
             <div className="flex-1 space-y-1 text-primary-foreground">
               <h2 className="font-medium">Need help?</h2>
-              <p className="text-sm">Contact the HiringBae team for setup help and account access.</p>
+              <p className="text-sm">Contact the demo support team for setup help and account access.</p>
             </div>
           </div>
         </div>

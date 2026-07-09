@@ -458,7 +458,7 @@ test("integration keys mint origin-bound runtime tokens without entering browser
       url: "/api/v1/api-keys",
       headers: { authorization: `Bearer ${adminKey}` },
       payload: {
-        name: "bad SDK key",
+        name: "bad integration key",
         scopes: ["runtime:tokens:create"],
         appId: "app_missing",
         allowedOrigins: ["http://localhost:3000"]
@@ -585,7 +585,7 @@ test("integration keys mint origin-bound runtime tokens without entering browser
       url: "/api/v1/api-keys",
       headers: { authorization: `Bearer ${adminKey}` },
       payload: {
-        name: "archived SDK key",
+        name: "archived integration key",
         scopes: ["runtime:tokens:create"],
         appId,
         allowedOrigins: ["http://localhost:3000"]

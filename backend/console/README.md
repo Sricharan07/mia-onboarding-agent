@@ -38,9 +38,9 @@ Create the first admin with BOOTSTRAP_ADMIN_TOKEN, then sign in with admin email
 - Workflows: list, review metadata, add/edit/delete/reorder steps, approve, publish, archive.
 - Logs: list execution logs.
 - Usage: aggregate metrics and daily timeseries from backend logs.
-- API keys: create, list, and revoke local scoped API keys, including app-bound SDK keys with allowed browser origins.
-- Provider readiness: database/config checks, secret-storage readiness, and no-credit provider reachability where safe.
-- First-run activation: app setup, scan profile, UI map, SDK key, and runtime verification checklist.
+- API keys: create, list, and revoke scoped server credentials, including app-bound integration keys that mint browser runtime tokens for allowed origins.
+- Provider readiness: database access, provider configuration, and encrypted secret-storage checks. The check does not spend provider credits or claim live provider reachability.
+- First-run activation: app setup, scan profile, UI map, server integration key, and live SDK verification checklist.
 - UI map preflight: base URL, every selected route, auth selector, privacy selector, and route-discovery readiness before scan.
 - Console admins: create admins, change password, disable users, and revoke console sessions.
 

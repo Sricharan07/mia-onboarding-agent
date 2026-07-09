@@ -55,7 +55,7 @@ Console sessions are bearer credentials. Treat them like passwords.
 
 The readiness endpoint exposes deployment checks and is admin-only. Use a console admin session token or an admin API key for operational probes.
 
-Rate-limit counters are stored in SQLite and applied per principal, app, and voice workload. Multi-replica deployments must share the same database or enforce equivalent limits at the proxy or edge.
+Rate-limit counters are stored in SQLite and applied per principal, app, and voice workload. The supported deployment runs one backend replica. Do not concurrently mount the SQLite directory into multiple replicas; moving to multiple replicas requires external shared persistence, distributed job coordination, shared object storage, and equivalent edge controls.
 
 ## UI Scanning
 

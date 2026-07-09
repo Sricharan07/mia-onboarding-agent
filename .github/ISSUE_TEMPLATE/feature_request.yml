@@ -1,5 +1,5 @@
-name: Feature Request
-description: Suggest a capability or improvement.
+name: Feature request
+description: Propose a focused improvement to Mia.
 title: "[Feature]: "
 labels:
   - enhancement
@@ -7,21 +7,31 @@ body:
   - type: textarea
     id: problem
     attributes:
-      label: Problem
-      description: What user need or workflow does this solve?
+      label: User problem
+      description: Explain who is blocked and what they cannot accomplish today.
     validations:
       required: true
   - type: textarea
-    id: proposal
+    id: outcome
     attributes:
-      label: Proposed Solution
-      description: Describe the behavior, API, or UI you want.
+      label: Desired outcome
+      description: Describe the user-visible result without prescribing an implementation.
+    validations:
+      required: true
+  - type: dropdown
+    id: audience
+    attributes:
+      label: Primary audience
+      options:
+        - Product user
+        - Mia console operator
+        - SDK integrator
+        - Self-hosted administrator
+        - Contributor
     validations:
       required: true
   - type: textarea
-    id: alternatives
+    id: context
     attributes:
-      label: Alternatives Considered
-      description: What else did you try or consider?
-    validations:
-      required: false
+      label: Additional context
+      description: Add examples, constraints, or alternatives considered.

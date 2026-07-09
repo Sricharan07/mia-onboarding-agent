@@ -266,8 +266,8 @@ export const recentLeadsData = [
   },
   {
     id: "L-1007",
-    name: "Ashwin Kumar",
-    company: "HiringBae",
+    name: "Demo Admin",
+    company: "Mia Demo CRM",
     status: "Won",
     source: "Website",
     lastActivity: "6h ago",

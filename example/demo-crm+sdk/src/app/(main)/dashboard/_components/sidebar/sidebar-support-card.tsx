@@ -5,7 +5,7 @@ export function SidebarSupportCard() {
     <Card size="sm" className="shadow-none group-data-[collapsible=icon]:hidden">
       <CardHeader className="px-4">
         <CardTitle className="text-sm">Looking for something more?</CardTitle>
-        <CardDescription>Contact HiringBae support for dashboard access and onboarding help.</CardDescription>
+        <CardDescription>Contact the demo support team for dashboard access and onboarding help.</CardDescription>
       </CardHeader>
     </Card>
   );

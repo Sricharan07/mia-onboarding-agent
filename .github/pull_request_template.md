@@ -5,6 +5,7 @@
 ## Validation
 
 - [ ] `npm run verify`
+- [ ] `npm run audit:all`
 
 ## Notes
 

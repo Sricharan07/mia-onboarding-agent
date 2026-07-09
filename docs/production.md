@@ -1,19 +1,19 @@
 # Production Deployment
 
-This guide covers the supported self-hosted deployment shape: one backend service that serves the console at `/`, API routes under `/api/v1`, SQLite state, local uploads, and a local LanceDB semantic index.
+This guide covers the supported self-hosted deployment shape: one Node.js 22 backend service that serves the console at `/`, API routes under `/api/v1`, SQLite state, local uploads and generated audio, and a local LanceDB semantic index.
 
-The built-in rate limits are enforced inside that single backend process. For multiple replicas, put a shared rate limiter at the proxy or edge before exposing MIA.
+The current persistence and coordination model supports one backend replica. Do not mount one SQLite data directory into concurrent backend replicas. A multi-replica deployment requires an external transactional database, shared runtime-token and rate-limit state, distributed job coordination, and shared object storage; an edge rate limiter alone is not sufficient.
 
 ## Deployment Checklist
 
 - Terminate TLS at a reverse proxy or load balancer.
 - Set `NODE_ENV=production`.
 - Set `CORS_ORIGIN` to explicit origins. Do not use `*` in production.
-- Set stable, high-entropy values for `MIA_SECRET_ENCRYPTION_KEY` and `BOOTSTRAP_ADMIN_TOKEN`.
+- Set independent, stable, high-entropy values for `MIA_SECRET_ENCRYPTION_KEY` and `BOOTSTRAP_ADMIN_TOKEN`. Production requires at least 32 characters.
 - Provide `GEMINI_API_KEY` and `OPENAI_API_KEY` when using provider-backed workflow processing, semantic search, or voice.
-- Mount persistent storage for SQLite, uploads, and LanceDB.
+- Mount persistent storage for SQLite, uploads, generated audio, and LanceDB.
 - Create the first console admin, then rotate or remove the bootstrap token from the runtime environment.
-- Create app-bound SDK keys with allowed browser origins. Never ship an `admin` key to a browser.
+- Create app-bound server integration keys with allowed browser origins. Never ship an admin or integration key to a browser; mint short-lived runtime tokens from the trusted host backend.
 - Configure backups before onboarding real users.
 - Tune `CONSOLE_AUTH_RATE_LIMIT_MAX` and `WORKFLOW_VIDEO_MAX_BYTES` for the deployment size and reverse-proxy limits.
 
@@ -28,6 +28,7 @@ The compose file requires `CORS_ORIGIN` and stores all mutable runtime data in t
 
 - SQLite database: `/app/data/sqlite/local.db`
 - Workflow video uploads: `/app/data/uploads`
+- Generated audio: `/app/data/tts`
 - Semantic index: `/app/data/lancedb`
 
 The container listens on port `4000`. The console is available at `http://localhost:4000/`, and the health endpoint is `http://localhost:4000/api/v1/health`.
@@ -57,12 +58,15 @@ curl -X POST https://mia.example.com/api/v1/console/auth/setup \
 
 After the first admin exists, bootstrap setup is closed by the backend. Rotate or remove `BOOTSTRAP_ADMIN_TOKEN` after setup.
 
+Generate secrets independently, for example with `openssl rand -hex 32`. Keep `MIA_SECRET_ENCRYPTION_KEY` stable across deploys and restores.
+
 ## Data And Backups
 
 Back up the entire persistent data directory or Docker volume. A complete backup must include:
 
 - the SQLite database, including WAL files when present;
 - workflow video uploads;
+- generated audio;
 - the LanceDB semantic index.
 
 For consistent SQLite backups, stop the container before copying the volume, or use SQLite's backup tooling against the live database. Restore by stopping the service, replacing the data directory or volume contents, and starting the same or newer application version.

@@ -18,9 +18,9 @@ Include enough detail to reproduce and assess the report:
 ## Security Design Expectations
 
 - Production deployments must set explicit `CORS_ORIGIN` values.
-- Console admin bootstrap tokens and SDK API keys are secrets.
+- Console bootstrap tokens, admin keys, and server integration keys are secrets.
 - Per-app scan credentials are for dedicated test accounts only.
-- SDK keys should always be app-bound and origin-restricted.
+- Server integration keys must stay on trusted backends and should always be app-bound and origin-restricted. Browser SDKs receive only short-lived runtime tokens.
 - UI scanning should target owned applications and non-production test accounts unless a production scan has been explicitly approved.
 
 See [docs/security.md](docs/security.md) for the detailed security model.

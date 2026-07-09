@@ -11,6 +11,7 @@ build/
 coverage/
 data/sqlite/
 data/uploads/
+data/tts/
 data/lancedb/
 backend/data/
 *.tsbuildinfo
@@ -23,3 +24,4 @@ pnpm-debug.log*
 
 .idea/
 .vscode/
+.impeccable/

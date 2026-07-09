@@ -1,267 +1,201 @@
 # Mia
 
-## Turn one screen recording into an AI onboarding and support agent.
+[![CI](https://github.com/Sricharan07/mia-onboarding-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/Sricharan07/mia-onboarding-agent/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-1f6f50.svg)](LICENSE)
 
-Mia watches how a task is completed in your product, maps that task to the real UI, and helps every new user complete it through voice or text.
+Self-hosted AI onboarding and in-product support that turns recorded tasks into reviewed workflows. Mia answers questions, points to live DOM elements, and performs approved browser actions through an embeddable SDK.
 
-Instead of sending users to documentation or support tickets, Mia appears inside the product, explains what to do, points at the right controls, and guides the user step by step.
+> Record the task, review the generated workflow, then guide users inside the product where the work happens.
 
-> Record it once. Review it once. Let Mia support every user.
+Mia is pre-1.0. The backend, console, SDK source, and demo are available now; `@mia/onboarding-agent` has not yet been published to npm.
 
-![Mia architecture overview](flowcharts/Arch-overview.png)
+## How It Works
 
-## What Mia Does
-
-Imagine a new employee opening a CRM for the first time.
-
-They do not know where to request access, upload documents, update a lead, or finish onboarding. Instead of searching through documentation, they ask Mia:
-
-> "Help me request CRM access."
-
-Mia then:
-
-1. Understands what the employee wants.
-2. Uses the mapped product UI to find the right page or element.
-3. Highlights the next button, field, table, or menu.
-4. Explains what information is needed.
-5. Waits for confirmation when an action is sensitive.
-6. Continues until the task is complete.
-
-The user can speak naturally or use text throughout the workflow.
-
-## One Video Becomes A Reusable Workflow
-
-Creating support with Mia starts with one demonstration:
-
-1. **Record the task**
-   Complete the workflow once while recording your screen.
-
-2. **Upload the video**
-   Mia analyzes the visible actions and the goal of the workflow.
-
-3. **Match the product UI**
-   Mia connects each action to the real buttons, forms, routes, and selectors in your application.
-
-4. **Review and publish**
-   Your team checks the generated steps, edits instructions, and approves what can run.
-
-5. **Support every user**
-   Mia can now guide customers through the same task inside your product.
-
-```text
-One screen recording
-        |
-        v
-Mia understands the task
-        |
-        v
-Your team reviews the steps
-        |
-        v
-The workflow is published
-        |
-        v
-Users receive voice, text, pointing, and guided actions
+```mermaid
+flowchart LR
+    Operator[Product team] --> Console[Mia Console]
+    Console --> Recording[Workflow recording]
+    Console --> Mapper[UI mapper]
+    Recording --> Review[Human review]
+    Mapper --> Review
+    Review --> Published[Published workflow]
+    User[Product user] --> SDK[Browser SDK]
+    Published --> Runtime[Mia runtime]
+    SDK <--> Runtime
+    SDK <--> Product[Live product DOM]
 ```
 
-## See Mia In Action
+1. Record a task while completing it in the product.
+2. Upload the recording and map the product's real routes and controls.
+3. Review selectors, action safety, instructions, and confirmation rules.
+4. Publish only after every workflow blocker is resolved.
+5. Install the SDK and verify it from the real host application.
+6. Let users ask by text or voice, follow Mia's cursor, and confirm actions.
 
-### Manage Everything From The Mia Console
+## Product Experience
 
-See application health, mapped UI elements, workflow status, recent jobs, API keys, logs, and provider readiness in one place.
+### For product teams
 
-![Mia Console overview](<flowcharts/Screenshot 2026-06-07 at 11.20.18 AM.jpg>)
+The Mia Console provides one operational path from setup to production:
 
-### Turn Recordings Into Reviewed Workflows
+- Configure an app, providers, scan authentication, privacy, and retention.
+- Discover routes or select routes explicitly, then run scan preflight.
+- Map normal pages and interactive states such as menus, drawers, and modals.
+- Upload recordings and review every generated workflow step.
+- Resolve stale selectors and safety blockers before approval and publication.
+- Create an app-bound server integration key and copy the SDK integration code.
+- Preview resolution in Test Mia, then prove the SDK is live in the host app.
+- Inspect runtime targets, action verification, usage, sessions, and redacted telemetry.
 
-Upload a screen recording, follow its processing status, and open the generated workflow for review before publishing it.
+### For product users
 
-![Mia workflow processing jobs](<flowcharts/Screenshot 2026-06-07 at 11.22.06 AM.jpg>)
+Mia appears inside the host product rather than sending users to a separate help center. Users can:
 
-### Connect Workflows To The Real Product UI
+- Ask what a screen means or how to complete a task.
+- Use text, open-mic voice, or hold `Control+Space` for push-to-talk.
+- See Mia point to and highlight the correct visible control.
+- Confirm direct clicks or focus actions before they run.
+- Follow a reviewed workflow through forms, navigation, and manual-only steps.
+- Stop Mia, pause voice, or close the panel at any time.
 
-Mia maps actual buttons, links, fields, labels, routes, and selectors so every guided action points to a visible interface element.
+Mia is DOM-first. Screen sharing is optional and user-initiated for surfaces the DOM cannot describe well, including canvas, images, video, PDFs, and custom-rendered interfaces.
 
-![Mia mapped CRM interface elements](<flowcharts/Screenshot 2026-06-07 at 11.23.55 AM.jpg>)
+## Safety Model
 
-### Guide Users Inside The Real Product
+Mia does not give a model unrestricted control of the browser.
 
-This is the kind of product users work in every day. Mia lives right here, helping them find the next step without leaving the screen.
+- Only reviewed and published workflow DSL can execute as a workflow.
+- Unmatched recording actions become non-executable review blockers.
+- Approval is bound to the current UI map and target fingerprints.
+- A new completed UI map moves stale approved or published workflows back to review.
+- Q&A-only apps cannot return workflows or element actions.
+- Direct ad hoc actions always require user confirmation.
+- Runtime targets must resolve to one visible, enabled, unobstructed live DOM element.
+- Bounding boxes position the cursor but never select an action target.
+- Completion requires a verified URL, value, control-state, or relevant DOM change.
+- Secret, credential, payment, and similar fields remain manual-only.
 
-![Demo CRM dashboard where Mia helps users](<flowcharts/Screenshot 2026-06-07 at 11.29.21 AM.png>)
+Browser code receives only short-lived `mia_rt_...` runtime tokens. Reusable admin and integration credentials stay on trusted servers.
 
-## The Customer Experience
+## Architecture
 
-Mia is an in-product copilot, not another help center.
+```mermaid
+flowchart TB
+    subgraph Host[Customer product]
+        HostBackend[Trusted host backend]
+        Browser[Browser SDK]
+        DOM[Live DOM]
+        HostBackend -->|short-lived runtime token| Browser
+        Browser <--> DOM
+    end
 
-- Ask questions using text or speech.
-- Hear Mia respond with natural voice output.
-- See an AI cursor move to the correct control.
-- Get the next button, field, menu, or table highlighted on screen.
-- Complete forms with guided prompts and safe action execution.
-- Pause, resume, or switch between voice and text.
-- Confirm important actions before Mia continues.
-- Stay inside the product from question to completion.
+    subgraph Mia[Mia self-hosted deployment]
+        Console[Admin console]
+        API[Fastify API]
+        Scanner[Playwright UI mapper]
+        Worker[Workflow processor]
+        DB[(SQLite)]
+        Files[(Uploads and generated audio)]
+        Index[(LanceDB)]
+        Console <--> API
+        API <--> Scanner
+        API <--> Worker
+        API <--> DB
+        API <--> Files
+        API <--> Index
+    end
 
-## Example Workflows
+    HostBackend -->|server integration key| API
+    Browser <--> API
+    Scanner -->|owned app routes| DOM
+    Worker --> Gemini[Gemini]
+    API --> Gemini
+    API --> OpenAI[OpenAI embeddings]
+    API -. optional .-> Voice[Qwen TTS or LiveKit]
+```
 
-Mia can help a new employee or customer:
-
-- Request CRM access.
-- Submit missing onboarding documents.
-- Add and qualify a new lead.
-- Complete a security checklist.
-- Configure notifications and preferences.
-- Find a customer account.
-- Update an opportunity stage.
-- Invite a teammate.
-- Generate a report.
-- Complete first-day onboarding.
-
-Each workflow is made of visible interactions. Every click, form fill, navigation step, or confirmation maps back to reviewed UI context so the user understands what Mia is doing.
-
-## Why Mia
-
-Traditional product support usually stops at instructions.
-
-| Traditional support | Mia |
-| --- | --- |
-| Sends users to documentation | Guides users inside the product |
-| Explains where to click | Points at and highlights the correct control |
-| Repeats the same answers | Reuses reviewed workflows for every user |
-| Separates voice, chat, and onboarding | Combines voice, text, UI mapping, and guided actions |
-| Leaves users to finish alone | Stays with the user until completion |
-
-## One Platform, Two Experiences
-
-### Product Teams
-
-Teams use the Mia Console to:
-
-- Create application records.
-- Configure SDK keys and allowed browser origins.
-- Map routes, pages, forms, tables, modals, and hidden UI states.
-- Upload workflow recordings.
-- Review generated workflow steps.
-- Edit instructions, selectors, and confirmation rules.
-- Publish approved workflows.
-- Test Mia against the mapped product UI.
-- Monitor logs, sessions, prompts, transcripts, targets, and actions.
-
-### Product Users
-
-Users see Mia directly inside the application. They ask for help, follow the visual guidance, provide information when requested, and complete tasks without leaving the current screen.
-
-![Developer and customer workflow](flowcharts/Screenshot_2026-06-07_at_1.36.08_AM.png)
-
-## Human Reviewed, AI Guided
-
-Mia does not let a model freely control the application.
-
-- AI-generated workflows must be reviewed before publication.
-- Only reviewed and published workflow DSL can execute in the SDK.
-- Unmatched recording actions compile to non-executable review blockers, never confirmation placeholders.
-- Approval is bound to the latest UI map and target fingerprints; completing a new scan moves stale approved or published workflows back to review.
-- Q&A-only mode is enforced by the backend and cannot return workflows or element actions.
-- Every direct ad hoc element action requires user confirmation; reviewed workflows may automate only approved non-consequential steps.
-- Action completion is reported only after the SDK verifies a URL, value, control-state, or relevant DOM change.
-- Manual-only steps guide the user without clicking for them.
-- Runtime-sensitive SDK and backend routes use scoped API keys.
-- SDK keys are bound to an app and allowed browser origins.
-- Workflow actions, prompts, targets, and sessions are logged.
-
-This keeps the experience helpful without removing control from the product team or the user.
-
-## Technology Behind Mia
-
-Mia brings together five focused parts:
-
-- **Mia Console** for app setup, UI mapping, workflow review, SDK keys, logs, and testing.
-- **Backend** for API routes, workflow processing, runtime orchestration, SQLite persistence, file storage, and semantic indexing.
-- **UI Mapper** for scanning the real product, detecting visible elements, and building reusable selectors.
-- **Mia SDK** for the assistant panel, voice controls, AI cursor, highlights, DOM context, and guided workflow execution inside the host app.
-- **AI and retrieval services** for recording analysis, request understanding, workflow matching, embeddings, voice, and screen-aware help.
-
-The default stack uses Gemini for model reasoning and live voice tokening, OpenAI embeddings with LanceDB for retrieval, SQLite for persistence, local file storage for uploads/audio, and the browser SDK for in-app guidance. Optional LiveKit transport and Qwen TTS endpoints are available when configured.
-
-Screen sharing is only needed for visual surfaces the DOM cannot describe well, such as canvas charts, images, videos, PDFs, or custom-rendered UI. For ordinary product screens, Mia uses mapped UI data and SDK runtime context.
-
-![Mia system architecture](flowcharts/Low-level-arch.png)
+The supported production shape is one backend process serving the console at `/` and APIs under `/api/v1`, with persistent local data. SQLite and the in-process controls are intentionally single-replica; use an external database and distributed rate limiting before designing a multi-replica deployment.
 
 ## Repository
 
 ```text
 mia-onboarding-agent/
-├── backend/              # TypeScript backend, API routes, jobs, UI mapper, providers
-├── backend/console/      # Self-hosted Mia admin console
-├── sdk/                  # Embeddable browser SDK
-├── example/demo-crm+sdk/ # Demo CRM with the SDK installed
-├── docs/                 # Production, SDK, API, security, database, troubleshooting docs
-└── flowcharts/           # Product screenshots and generated architecture diagrams
+|-- backend/              # API, jobs, UI mapper, providers, persistence
+|-- backend/console/      # Self-hosted admin console
+|-- sdk/                  # Embeddable browser SDK
+|-- example/demo-crm+sdk/ # CRM demo with the SDK installed
+`-- docs/                 # Operations, integration, security, and release guides
 ```
+
+## Requirements
+
+- Node.js 22 or newer
+- npm 10 or newer
+- Docker and Docker Compose for the containerized deployment
+- Gemini credentials for workflow analysis and live voice
+- OpenAI credentials for embeddings and semantic retrieval
 
 ## Run Locally
 
-Install dependencies, create a local environment file, build the workspaces, and start the backend:
-
 ```bash
 npm install
+npm ci --prefix backend/console
+npm ci --prefix example/demo-crm+sdk
 cp .env.example .env
 npm run build
 npm run dev:backend
 ```
 
-The backend listens on `http://localhost:4000` by default.
-
-Required minimum production configuration:
-
-```bash
-GEMINI_API_KEY=...
-OPENAI_API_KEY=...
-BOOTSTRAP_ADMIN_TOKEN=long-random-bootstrap-token
-MIA_SECRET_ENCRYPTION_KEY=long-random-secret-encryption-key
-```
-
-`BOOTSTRAP_ADMIN_TOKEN` is only needed while creating the first console admin. Keep `MIA_SECRET_ENCRYPTION_KEY` stable for the lifetime of the database so saved scan credentials remain decryptable.
-
-Start the Mia Console:
+In separate terminals:
 
 ```bash
 npm run dev:console
-```
-
-Start the demo CRM:
-
-```bash
 npm --prefix example/demo-crm+sdk run dev
 ```
 
-The console opens on `http://localhost:5173` and the demo CRM opens on `http://localhost:3000/dashboard/default`.
+The backend defaults to `http://localhost:4000`, the Vite console to `http://localhost:5173`, and the demo CRM to `http://localhost:3000/dashboard/default`.
+
+Production validates the bootstrap and encryption secrets as at least 32 characters. Generate independent values rather than using the examples literally:
+
+```bash
+openssl rand -hex 32
+```
+
+Set the result separately for `BOOTSTRAP_ADMIN_TOKEN` and `MIA_SECRET_ENCRYPTION_KEY`. The bootstrap token is needed only for first-admin creation. The encryption key must remain stable for the database lifetime so saved scan credentials remain decryptable.
 
 ## First App Setup
 
-1. Open the console and create the first admin with `BOOTSTRAP_ADMIN_TOKEN`.
-2. Create an application record with the app name, slug, and base URL.
-3. Configure the app UI scan profile: default routes, auth mode, login selectors when needed, ignored selectors, redacted selectors, and optional same-origin route discovery.
-4. Run the UI mapper from Console -> UI Map.
-5. Use interactive scan for manual SSO login, modals, drawers, dropdowns, row action menus, and other hidden states.
-6. Upload a workflow recording.
-7. Review the generated workflow and clear safety blockers.
-8. Publish the workflow only when the selectors, steps, and confirmation rules are correct.
-9. Create an app-bound server integration key with `runtime:tokens:create` and keep it out of browser code.
-10. Add an authenticated host-backend endpoint that exchanges the signed-in user for a short-lived runtime token, then install the SDK using the console-generated snippet.
-11. Open Console -> Test Mia to dry-run answers, pointing, and action resolution before giving the workflow to users.
+1. Create the first console admin with `BOOTSTRAP_ADMIN_TOKEN`.
+2. Create an app with its name, slug, base URL, and intended runtime mode.
+3. Configure scan authentication and privacy selectors under Settings -> Scan profile.
+4. Select or discover routes in UI Map, then pass full preflight.
+5. Run an automated scan and capture authenticated or hidden states interactively when needed.
+6. Upload a workflow recording from Workflows.
+7. Review targets, instructions, action types, confirmation rules, and safety blockers.
+8. Approve and publish only against the latest completed UI map.
+9. Create an app-bound server integration key with `runtime:tokens:create`.
+10. Add an authenticated host-backend token endpoint and initialize the SDK with `tokenProvider`.
+11. Use Test Mia for a resolver preview, then open the real host app and confirm the live SDK proof and runtime logs.
 
-Integration keys are bound to one `appId` and the browser origins for which they may mint tokens. Only short-lived `mia_rt_...` tokens belong in browser memory. Admin and integration keys are server-side credentials.
+The server integration key is bound to one app and the browser origins for which it may mint tokens. Only short-lived runtime tokens belong in browser memory.
 
-## Privacy And Safety
+## SDK Integration
 
-The SDK redacts visible DOM text by default before context leaves the browser. Keep `redactText` enabled unless the host app has reviewed the data that may be sent to the backend or model provider:
+Until the first npm publication, build and install a local tarball:
+
+```bash
+npm pack -w sdk
+npm install /absolute/path/to/mia-onboarding-agent-0.1.0.tgz
+```
+
+Initialize Mia from the host application:
 
 ```ts
+import { AIOnboardingAgent } from "@mia/onboarding-agent";
+
 AIOnboardingAgent.init({
-  appId: "app_local",
-  backendUrl: "http://localhost:4000",
+  appId: "app_example",
+  backendUrl: "https://mia.example.com",
   tokenProvider: async () => {
     const response = await fetch("/api/mia/runtime-token", { method: "POST" });
     if (!response.ok) throw new Error("Unable to start Mia");
@@ -271,17 +205,22 @@ AIOnboardingAgent.init({
   privacy: {
     redactText: true,
     redactedSelectors: ["[data-private]", ".billing-card"],
-    telemetry: { mode: "events_only" },
-    redactScreenFrame: (canvas, context) => {
-      context.clearRect(0, 0, 220, 80);
-    }
+    telemetry: { mode: "events_only" }
+  },
+  ui: {
+    assistantPanel: true,
+    theme: "auto"
   }
 });
 ```
 
-For a demo or reviewed internal app where Mia should point at visible UI by spoken request, set `privacy.redactText: false` or provide stable readable selectors. Use a dedicated demo or test account for authenticated UI ingestion.
+The host backend must authenticate its user before exchanging the server integration key for a runtime token. See the [SDK integration guide](docs/sdk.md) and the retained [demo implementation](example/demo-crm+sdk/README.md).
 
-URL query strings, page titles, user metadata, and telemetry payloads are excluded by default. Workflow values stay in browser memory and are cleared at the end of a run; Mia never collects password, payment, token, or similar secret fields. Retention, export, and user deletion controls are under Console -> Settings -> Privacy.
+## Privacy
+
+Visible DOM text is redacted by default before context leaves the browser. URL query strings, page titles, user metadata, and telemetry payloads are omitted by default. Workflow values stay in browser memory and are cleared when a run ends.
+
+Use scan-profile redaction for mapped content and SDK privacy options for live runtime context. Full telemetry requires an app policy that permits it and explicit user consent. Retention, export, purge, and per-user deletion controls are available under Settings -> Privacy.
 
 ## Docker
 
@@ -290,9 +229,17 @@ cp .env.example .env
 docker compose up --build
 ```
 
-The Docker image serves the console at `/` and the API under `/api/v1`. The backend container stores SQLite, uploads, generated audio, and LanceDB semantic index files in the `mia-data` volume.
+The image runs as a non-root user and stores SQLite, uploads, generated audio, and the semantic index in the `mia-data` volume. Read [Production deployment](docs/production.md) before exposing it publicly.
 
-Read [Production deployment](docs/production.md) before exposing the service publicly.
+## Verification
+
+```bash
+npm run verify
+npm run audit:all
+docker build -t mia-onboarding-agent:local .
+```
+
+`verify` runs backend and SDK tests, builds the backend, SDK, console, and demo, audits production dependencies, and validates the SDK package contents.
 
 ## Documentation
 
@@ -302,24 +249,11 @@ Read [Production deployment](docs/production.md) before exposing the service pub
 - [Security model](docs/security.md)
 - [Database operations](docs/database.md)
 - [Troubleshooting](docs/troubleshooting.md)
+- [Release process](docs/releasing.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security policy](SECURITY.md)
+- [Third-party notices](THIRD_PARTY_NOTICES.md)
 
-## Useful Commands
+## License
 
-```bash
-npm run verify
-npm run build
-npm run test
-npm run dev:backend
-npm run dev:console
-npm run build:console
-npm run build:demo
-npm run pack:sdk
-```
-
-## Vision
-
-Every product should be able to support a new user from their first question to a completed task.
-
-Mia turns the workflows already known by your team into interactive, reusable support that speaks, explains, points, confirms, and helps users finish the work.
+Mia is available under the [MIT License](LICENSE). Bundled and adapted third-party work is documented in [Third-party notices](THIRD_PARTY_NOTICES.md).

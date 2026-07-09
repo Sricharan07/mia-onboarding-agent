@@ -4,7 +4,7 @@ The SDK runs in a host web app and talks to the self-hosted MIA backend. It moun
 
 ## Install
 
-The SDK package is publish-ready, but this repository is not authenticated to publish `@mia/onboarding-agent` to npm from this environment. Until the first npm release is published, install from a local package tarball:
+The SDK source and package manifest are prepared for a first release, but `@mia/onboarding-agent` is not published to npm yet. Until that release exists, install from a local package tarball:
 
 ```bash
 # Build the SDK tarball from the MIA repository.
@@ -33,7 +33,7 @@ In the console, create an app-bound server key with:
 
 Keep this key in the host application's backend. Never expose an admin or integration key in browser code.
 
-Add an authenticated host-backend endpoint that calls `POST /api/v1/runtime/tokens` with the current user's server-verified ID, the configured app ID, and the request origin. Return the backend response to the browser. The included demo implements this pattern at `/api/mia/runtime-token`.
+Add an authenticated host-backend endpoint that calls `POST /api/v1/runtime/tokens` with the current user's server-verified ID, the configured app ID, and the request origin. Return the backend response to the browser. The included demo shows the server-side key exchange at `/api/mia/runtime-token`, but intentionally uses one fixed, low-privilege demo identity; replace that identity with the host product's authenticated session in a real integration.
 
 ## Initialize
 
@@ -120,7 +120,7 @@ AIOnboardingAgent.init({
 });
 ```
 
-After installing the SDK, use Console -> Test Mia for a resolver preview and Console -> Logs to confirm real host-app sessions, runtime events, and element actions. Transcript content appears only under consented full telemetry.
+After installing the SDK, use Console -> Test Mia for a resolver preview. Then open the real host app so the console can verify live SDK evidence, and use Console -> Logs to confirm runtime targets and element actions. A preview alone does not prove the integration is ready. Transcript content appears only under consented full telemetry.
 
 ## Voice
 

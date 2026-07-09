@@ -14,7 +14,7 @@ export default function Page() {
       <section className="lg:col-span-9">
         <div className="flex flex-col gap-6">
           <div className="flex flex-col gap-2">
-            <h1 className="text-3xl text-foreground leading-none tracking-tight">Good morning, Ashwin.</h1>
+            <h1 className="text-3xl text-foreground leading-none tracking-tight">Good morning, Demo Admin.</h1>
             <p className="text-lg text-muted-foreground leading-none">
               Let&apos;s make today productive and meaningful.
             </p>

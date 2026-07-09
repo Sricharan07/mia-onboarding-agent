@@ -1,0 +1,34 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      root-dependencies:
+        patterns:
+          - "*"
+  - package-ecosystem: npm
+    directory: /backend/console
+    schedule:
+      interval: weekly
+    groups:
+      console-dependencies:
+        patterns:
+          - "*"
+  - package-ecosystem: npm
+    directory: /example/demo-crm+sdk
+    schedule:
+      interval: weekly
+    groups:
+      demo-dependencies:
+        patterns:
+          - "*"
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly

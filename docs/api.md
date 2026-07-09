@@ -36,7 +36,7 @@ Runtime token capabilities are `runtime:resolve`, `runtime:workflow`, `logs:writ
 ## System
 
 - `GET /api/v1/health`: lightweight process health.
-- `GET /api/v1/system/readiness`: admin-only database, config, provider, secret-storage, and local storage readiness.
+- `GET /api/v1/system/readiness`: admin-only database, provider-configuration, and encrypted secret-storage readiness. Provider credentials are not exercised by this check.
 
 ## Console Auth
 
@@ -76,6 +76,7 @@ App records include base URL and optional UI scan profile settings. API key crea
 - `POST /api/v1/apps/:appId/ui-map/scan`
 - `GET /api/v1/apps/:appId/ui-map/versions`
 - `GET /api/v1/ui-map/:uiMapVersionId/pages`
+- `GET /api/v1/ui-map/:uiMapVersionId/elements?limit=1000&offset=0`
 - `GET /api/v1/pages/:pageId/elements`
 - `PATCH /api/v1/apps/:appId/ui-map/elements/:elementRowId`
 - `GET /api/v1/ui-map/interactive-sessions`
@@ -120,10 +121,12 @@ Workflow video uploads must be MP4, MOV, WebM, MKV, or MPEG and must match the c
 - `POST /api/v1/runtime/workflow-sessions`
 - `PATCH /api/v1/runtime/workflow-sessions/:runtimeSessionId`
 - `POST /api/v1/gemini/live-token`
+- `POST /api/v1/tts`
+- `POST /api/v1/livekit/token`
 - `POST /api/v1/logs/execution`
 - `GET /api/v1/logs`
 - `GET /api/v1/metrics/usage`
 - `GET /api/v1/metrics/usage/timeseries`
 - `POST /api/v1/apps/:appId/semantic-index/rebuild`
 
-Runtime and log write routes are intended for app-bound SDK keys. Metrics and log reads are intended for console operators or server-side integrations.
+Runtime, voice, and log-write routes require short-lived runtime tokens with the matching capability. Metrics and log reads are intended for console operators or trusted server-side integrations.

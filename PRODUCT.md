@@ -6,7 +6,7 @@ product
 
 ## Users
 
-Mia is for product and engineering teams that want to add an AI onboarding and in-app assistance cursor to an existing web application. The primary operator is a self-hosted admin who configures one or more customer apps, scans their UI, reviews generated workflows, creates scoped SDK keys, and verifies the SDK inside the customer app.
+Mia is for product and engineering teams that want to add an AI onboarding and in-app assistance cursor to an existing web application. The primary operator is a self-hosted admin who configures one or more customer apps, scans their UI, reviews generated workflows, creates app-bound server integration keys, and verifies the live SDK inside the customer app.
 
 ## Product Purpose
 

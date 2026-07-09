@@ -26,16 +26,18 @@ curl -H "authorization: Bearer $ADMIN_API_KEY" http://localhost:4000/api/v1/syst
 
 - Set `BOOTSTRAP_ADMIN_TOKEN`.
 - Send the same value as `x-bootstrap-admin-token`.
+- In production, use at least 32 characters for both `BOOTSTRAP_ADMIN_TOKEN` and `MIA_SECRET_ENCRYPTION_KEY`.
 - Use a password with at least 12 characters.
 - If an admin already exists, use the login screen instead of setup.
 
 ## SDK Requests Return 401 Or 403
 
-- `401 API_KEY_REQUIRED`: the SDK key is missing or not reaching the backend.
-- `401 INVALID_API_KEY`: the key is malformed, revoked, or copied incorrectly.
-- `403 API_KEY_FORBIDDEN`: the key is missing the required scope.
-- `403 API_KEY_APP_FORBIDDEN`: the key is bound to another app.
-- `403 API_KEY_ORIGIN_FORBIDDEN`: add the browser origin to the key's allowed origins.
+- `401 RUNTIME_TOKEN_REQUIRED`: `tokenProvider` did not supply a runtime token.
+- `401 INVALID_RUNTIME_TOKEN`: the token is malformed or unknown.
+- `401 RUNTIME_TOKEN_REVOKED`, `RUNTIME_TOKEN_EXPIRED`, or `RUNTIME_TOKEN_EXHAUSTED`: request a fresh token from the trusted host backend.
+- `403 RUNTIME_CAPABILITY_FORBIDDEN`: mint the token with the capability required by the operation.
+- `403 RUNTIME_TOKEN_APP_FORBIDDEN`: the token and SDK `appId` do not match.
+- `403 RUNTIME_TOKEN_ORIGIN_FORBIDDEN`: mint the token for the exact host-app origin and include that origin on the server integration key.
 
 ## UI Scan Fails
 
