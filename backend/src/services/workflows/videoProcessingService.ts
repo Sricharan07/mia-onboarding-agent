@@ -7,8 +7,9 @@ import { WorkflowCompiler } from "./compiler.js";
 const JOB_LEASE_MS = 30 * 60 * 1000;
 
 export class VideoProcessingService {
-  private readonly activeJobs = new Set<string>();
+  private readonly activeJobs = new Map<string, { promise: Promise<void>; controller: AbortController }>();
   private readonly workerId = `video_${process.pid}_${randomUUID()}`;
+  private closing = false;
 
   constructor(
     private readonly repositories: Repositories,
@@ -17,6 +18,7 @@ export class VideoProcessingService {
   ) {}
 
   startJob(jobId: string, onError?: (error: unknown) => void): { jobId: string; status: string } {
+    if (this.closing) return { jobId, status: "stopping" };
     const job = this.repositories.getWorkflowJob(jobId);
     this.repositories.getActiveApp(String(job.app_id));
     const status = String(job.status);
@@ -30,12 +32,13 @@ export class VideoProcessingService {
       return { jobId, status: "analyzing" };
     }
 
-    this.activeJobs.add(jobId);
-    void this.processClaimedJob(jobId)
+    const controller = new AbortController();
+    const promise = this.processClaimedJob(jobId, controller.signal)
       .catch((error) => onError?.(error))
       .finally(() => {
         this.activeJobs.delete(jobId);
       });
+    this.activeJobs.set(jobId, { promise, controller });
     return { jobId, status: "analyzing" };
   }
 
@@ -54,7 +57,13 @@ export class VideoProcessingService {
     await this.processClaimedJob(jobId);
   }
 
-  private async processClaimedJob(jobId: string): Promise<void> {
+  async close(): Promise<void> {
+    this.closing = true;
+    for (const active of this.activeJobs.values()) active.controller.abort(new Error("Backend is shutting down."));
+    await Promise.allSettled([...this.activeJobs.values()].map((active) => active.promise));
+  }
+
+  private async processClaimedJob(jobId: string, signal?: AbortSignal): Promise<void> {
     const heartbeat = setInterval(() => {
       this.repositories.refreshWorkflowJobLease(jobId, this.workerId, leaseUntil(JOB_LEASE_MS));
     }, Math.floor(JOB_LEASE_MS / 3));
@@ -63,18 +72,24 @@ export class VideoProcessingService {
       const job = this.repositories.getWorkflowJob(jobId);
       const video = this.repositories.getWorkflowVideo(String(job.video_id));
       const timeline = parseStoredTimeline(job.extracted_action_timeline_json)
-        ?? await this.extractAndStoreTimeline(jobId, job, video);
+        ?? await this.extractAndStoreTimeline(jobId, job, video, signal);
+      if (signal?.aborted) throw signal.reason;
       const workflow = await this.compiler.compile({
         appId: String(job.app_id),
         timeline,
         videoId: String(job.video_id),
         jobId,
         requestedName: optionalString(video.workflow_name),
-        requestedDescription: optionalString(video.workflow_description)
+        requestedDescription: optionalString(video.workflow_description),
+        signal
       });
       this.repositories.saveWorkflow(workflow);
       this.repositories.updateWorkflowJob(jobId, { status: "needs_review", error: null });
     } catch (error) {
+      if (signal?.aborted) {
+        this.repositories.releaseWorkflowJob(jobId, this.workerId);
+        return;
+      }
       this.repositories.updateWorkflowJob(jobId, {
         status: "failed",
         error: error instanceof Error ? error.message : String(error)
@@ -85,11 +100,12 @@ export class VideoProcessingService {
     }
   }
 
-  private async extractAndStoreTimeline(jobId: string, job: Record<string, unknown>, video: Record<string, unknown>): Promise<ExtractedActionTimeline> {
+  private async extractAndStoreTimeline(jobId: string, job: Record<string, unknown>, video: Record<string, unknown>, signal?: AbortSignal): Promise<ExtractedActionTimeline> {
     const uiElements = this.repositories.listLatestUiElementsForApp(String(job.app_id), 160);
     const knownRoutes = Array.from(new Set(uiElements.map((element) => element.route))).filter(Boolean);
     const timelineResult = await this.videoUnderstanding.extractActionTimeline({
       videoPath: String(video.local_path),
+      signal,
       appContext: {
         appName: String(job.app_id),
         knownRoutes,

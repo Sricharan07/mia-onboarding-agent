@@ -36,6 +36,10 @@ const envSchema = z.object({
   APP_VOICE_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(120),
   DATA_RETENTION_SWEEP_INTERVAL_MS: z.coerce.number().int().positive().default(60 * 60 * 1_000),
   WORKFLOW_VIDEO_MAX_BYTES: z.coerce.number().int().positive().default(50 * 1024 * 1024),
+  PROVIDER_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().max(10 * 60 * 1_000).optional(),
+  PROVIDER_RETRY_ATTEMPTS: z.coerce.number().int().positive().max(5).optional(),
+  PROVIDER_RESPONSE_MAX_BYTES: z.coerce.number().int().positive().max(100 * 1024 * 1024).optional(),
+  SHUTDOWN_GRACE_PERIOD_MS: z.coerce.number().int().positive().max(2 * 60 * 1_000).optional(),
   GEMINI_LIVE_TOKEN_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(30),
   GEMINI_API_KEY: z.string().optional(),
   GEMINI_BASE_URL: z.string().default("https://generativelanguage.googleapis.com"),
@@ -49,26 +53,14 @@ const envSchema = z.object({
   OPENAI_EMBEDDING_MODEL: z.string().default("text-embedding-3-small"),
   OPENAI_EMBEDDING_DIMENSIONS: z.coerce.number().int().positive().default(1536),
   SEMANTIC_INDEX_DIR: z.string().default("./data/lancedb"),
-  RUNTIME_LLM_MODEL: z.string().optional(),
   QWEN_API_KEY: z.string().optional(),
-  QWEN_BASE_URL: z.string().optional(),
-  QWEN_TEXT_ENDPOINT: z.string().default("/chat/completions"),
-  QWEN_VIDEO_ENDPOINT: z.string().default("/chat/completions"),
-  QWEN_MODEL: z.string().optional(),
-  QWEN_VISION_MODEL: z.string().optional(),
   QWEN_TTS_BASE_URL: z.string().optional(),
   QWEN_TTS_ENDPOINT: z.string().default("/services/aigc/multimodal-generation/generation"),
   QWEN_VOICE_MODEL: z.string().optional(),
-  STT_BASE_URL: z.string().optional(),
-  STT_ENDPOINT: z.string().default("/chat/completions"),
-  STT_API_KEY: z.string().optional(),
-  STT_MODEL: z.string().optional(),
+  QWEN_TTS_AUDIO_ORIGINS: z.string().optional(),
   LIVEKIT_URL: z.string().optional(),
   LIVEKIT_API_KEY: z.string().optional(),
   LIVEKIT_API_SECRET: z.string().optional(),
-  MOSS_PROJECT_ID: z.string().optional(),
-  MOSS_PROJECT_KEY: z.string().optional(),
-  MOSS_INDEX_NAME: z.string().optional(),
   UI_SCAN_AUTH_MODE: z.enum(["none", "login_form"]).default("none"),
   UI_SCAN_LOGIN_URL: z.string().optional(),
   UI_SCAN_USERNAME: z.string().optional(),
@@ -79,7 +71,8 @@ const envSchema = z.object({
   UI_SCAN_SUCCESS_URL_PATTERN: z.string().optional(),
   UI_SCAN_POST_LOGIN_WAIT_MS: z.coerce.number().int().nonnegative().default(1000),
   UI_SCAN_HEADLESS: booleanStringSchema.default(true),
-  UI_SCAN_ALLOW_PRIVATE_NETWORKS: booleanStringSchema.default(false)
+  UI_SCAN_ALLOW_PRIVATE_NETWORKS: booleanStringSchema.default(false),
+  UI_SCAN_ALLOWED_RESOURCE_ORIGINS: z.string().optional()
 });
 
 export type AppConfig = z.infer<typeof envSchema>;
@@ -105,8 +98,34 @@ export function requireConfig(config: AppConfig, keys: Array<keyof AppConfig>, p
 }
 
 export function validateRuntimeConfig(config: AppConfig): void {
-  if (config.NODE_ENV === "production" && config.CORS_ORIGIN.trim() === "*") {
-    throw new ConfigError("CORS_ORIGIN must be an explicit origin list in production.");
+  if (config.NODE_ENV !== "production") return;
+  if (config.CORS_ORIGIN.trim() === "*") throw new ConfigError("CORS_ORIGIN must be an explicit origin list in production.");
+  validateProductionOrigins(config.CORS_ORIGIN);
+  if (!config.MIA_SECRET_ENCRYPTION_KEY || config.MIA_SECRET_ENCRYPTION_KEY.length < 32) {
+    throw new ConfigError("MIA_SECRET_ENCRYPTION_KEY must contain at least 32 characters in production.");
+  }
+  if (config.BOOTSTRAP_ADMIN_TOKEN && config.BOOTSTRAP_ADMIN_TOKEN.length < 32) {
+    throw new ConfigError("BOOTSTRAP_ADMIN_TOKEN must contain at least 32 characters when set in production.");
+  }
+}
+
+function validateProductionOrigins(value: string): void {
+  const origins = value.split(",").map((origin) => origin.trim()).filter(Boolean);
+  if (origins.length === 0) throw new ConfigError("CORS_ORIGIN must include at least one origin in production.");
+  for (const rawOrigin of origins) {
+    let url: URL;
+    try {
+      url = new URL(rawOrigin);
+    } catch {
+      throw new ConfigError(`CORS_ORIGIN contains an invalid origin: ${rawOrigin}`);
+    }
+    if (url.username || url.password || url.pathname !== "/" || url.search || url.hash || url.origin !== rawOrigin.replace(/\/$/, "")) {
+      throw new ConfigError(`CORS_ORIGIN entries must be origins without paths or credentials: ${rawOrigin}`);
+    }
+    const localHttp = url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+    if (url.protocol !== "https:" && !localHttp) {
+      throw new ConfigError(`CORS_ORIGIN must use HTTPS outside localhost: ${rawOrigin}`);
+    }
   }
 }
 

@@ -182,7 +182,7 @@ Mia brings together five focused parts:
 - **Mia SDK** for the assistant panel, voice controls, AI cursor, highlights, DOM context, and guided workflow execution inside the host app.
 - **AI and retrieval services** for recording analysis, request understanding, workflow matching, embeddings, voice, and screen-aware help.
 
-The default local stack uses Gemini for model reasoning and live tokening, OpenAI embeddings with LanceDB for retrieval, SQLite for persistence, local file storage for uploads/audio, and the browser SDK for in-app guidance. Optional provider adapters for Qwen, MOSS, LiveKit, STT, and TTS are present for deployments that configure them.
+The default stack uses Gemini for model reasoning and live voice tokening, OpenAI embeddings with LanceDB for retrieval, SQLite for persistence, local file storage for uploads/audio, and the browser SDK for in-app guidance. Optional LiveKit transport and Qwen TTS endpoints are available when configured.
 
 Screen sharing is only needed for visual surfaces the DOM cannot describe well, such as canvas charts, images, videos, PDFs, or custom-rendered UI. For ordinary product screens, Mia uses mapped UI data and SDK runtime context.
 

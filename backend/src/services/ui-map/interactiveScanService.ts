@@ -1,4 +1,4 @@
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import type { Browser, BrowserContext, Page } from "playwright";
 import type { AppConfig } from "../../config/env.js";
 import type { Repositories } from "../../db/repositories.js";
 import type { SemanticSearchAdapter } from "../../adapters/interfaces.js";
@@ -10,6 +10,7 @@ import { UiMapPageCaptureService, type CapturePageResult } from "./pageCaptureSe
 import { syncLatestUiElementSemanticIndex } from "../semantic/syncUiElementSemanticIndex.js";
 import { assertSafeTargetUrl, resolveSameOriginRouteUrl } from "../security/targetUrlPolicy.js";
 import { installUiScanRequestGuard } from "./requestGuard.js";
+import { createUiScanNetworkPolicy, launchUiScanBrowser } from "./networkPolicy.js";
 
 type InteractiveSession = {
   sessionId: string;
@@ -57,9 +58,10 @@ export class InteractiveUiMapScanService {
       mode: input.auth?.mode ?? appScanConfig.authMode
     };
     const version = this.repositories.createUiMapVersion(input.appId, "interactive_browser_scan");
-    const browser = await chromium.launch({ headless: this.config.UI_SCAN_HEADLESS });
+    const networkPolicy = await createUiScanNetworkPolicy(this.config, [app.baseUrl, auth.loginUrl]);
+    const browser = await launchUiScanBrowser(this.config, networkPolicy);
     const context = await browser.newContext();
-    await installUiScanRequestGuard(context, this.config);
+    await installUiScanRequestGuard(context, this.config, networkPolicy);
     const page = await context.newPage();
     const sessionId = createId("ui_scan_session");
     const firstRoute = routes[0]!;

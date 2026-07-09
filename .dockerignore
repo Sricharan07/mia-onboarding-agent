@@ -3,11 +3,17 @@
 .env.*
 !.env.example
 node_modules
+**/node_modules
 backend/dist
 sdk/dist
 backend/console/dist
+**/.next
+.github
+.codex
 example
 docs
 data
+backend/test
+coverage
 *.log
 npm-debug.log*

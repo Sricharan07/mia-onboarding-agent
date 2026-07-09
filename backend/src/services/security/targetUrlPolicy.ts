@@ -4,9 +4,11 @@ import type { AppConfig } from "../../config/env.js";
 import { ValidationAppError } from "../../utils/errors.js";
 
 export async function assertSafeTargetUrl(rawUrl: string, config: AppConfig): Promise<URL> {
-  const url = parseHttpUrl(rawUrl);
-  if (allowsPrivateNetworkTargets(config)) return url;
+  return (await resolveSafeTargetUrl(rawUrl, config)).url;
+}
 
+export async function resolveSafeTargetUrl(rawUrl: string, config: AppConfig): Promise<{ url: URL; addresses: string[] }> {
+  const url = parseHttpUrl(rawUrl);
   const host = stripIpv6Brackets(url.hostname);
   const literalVersion = isIP(host);
   const addresses = literalVersion
@@ -17,7 +19,9 @@ export async function assertSafeTargetUrl(rawUrl: string, config: AppConfig): Pr
     throw new ValidationAppError(`Target URL host did not resolve: ${host}`);
   }
 
-  const blocked = addresses.find((address) => isPrivateOrReservedAddress(address.address));
+  const blocked = allowsPrivateNetworkTargets(config)
+    ? undefined
+    : addresses.find((address) => isPrivateOrReservedAddress(address.address));
   if (blocked) {
     throw new ValidationAppError(
       `Target URL resolves to a private or reserved network address: ${host}`,
@@ -25,7 +29,7 @@ export async function assertSafeTargetUrl(rawUrl: string, config: AppConfig): Pr
     );
   }
 
-  return url;
+  return { url, addresses: [...new Set(addresses.map((address) => address.address))] };
 }
 
 export function resolveSameOriginRouteUrl(route: string, baseUrl: string): string {
@@ -68,7 +72,7 @@ function parseHttpUrl(rawUrl: string): URL {
   return url;
 }
 
-function allowsPrivateNetworkTargets(config: AppConfig): boolean {
+export function allowsPrivateNetworkTargets(config: AppConfig): boolean {
   return config.UI_SCAN_ALLOW_PRIVATE_NETWORKS || config.NODE_ENV !== "production";
 }
 

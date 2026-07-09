@@ -1,4 +1,3 @@
-import { chromium } from "playwright";
 import type { Browser, Page } from "playwright";
 import { randomUUID } from "node:crypto";
 import type { Repositories } from "../../db/repositories.js";
@@ -12,6 +11,7 @@ import { captureSafeExpansions } from "./safeExpansion.js";
 import { syncLatestUiElementSemanticIndex } from "../semantic/syncUiElementSemanticIndex.js";
 import { assertSafeTargetUrl, resolveSameOriginRouteUrl } from "../security/targetUrlPolicy.js";
 import { installUiScanRequestGuard } from "./requestGuard.js";
+import { createUiScanNetworkPolicy, launchUiScanBrowser } from "./networkPolicy.js";
 
 const SCAN_LEASE_MS = 30 * 60 * 1000;
 const ROUTE_PREFLIGHT_CONCURRENCY = 5;
@@ -57,7 +57,10 @@ export type UiMapRouteDiscoveryReport = {
 export class UiMapService {
   private readonly capture: UiMapPageCaptureService;
   private readonly activeScans = new Set<string>();
+  private readonly activeRuns = new Map<string, Promise<void>>();
+  private readonly activeBrowsers = new Map<string, Browser>();
   private readonly workerId = `ui_scan_${process.pid}_${randomUUID()}`;
+  private closing = false;
 
   constructor(
     private readonly config: AppConfig,
@@ -160,9 +163,10 @@ export class UiMapService {
 
     try {
       await assertSafeTargetUrl(app.baseUrl, this.config);
-      browser = await chromium.launch({ headless: this.config.UI_SCAN_HEADLESS });
+      const networkPolicy = await createUiScanNetworkPolicy(this.config, [app.baseUrl, auth.loginUrl]);
+      browser = await launchUiScanBrowser(this.config, networkPolicy);
       const context = await browser.newContext();
-      await installUiScanRequestGuard(context, this.config);
+      await installUiScanRequestGuard(context, this.config, networkPolicy);
       const page = await context.newPage();
       await applyUiScanAuth({
         page,
@@ -216,15 +220,24 @@ export class UiMapService {
     }
   }
 
+  async closeAll(): Promise<void> {
+    this.closing = true;
+    await Promise.all([...this.activeBrowsers.values()].map((browser) => browser.close().catch(() => undefined)));
+    await Promise.allSettled([...this.activeRuns.values()]);
+  }
+
   private startScan(uiMapVersionId: string, onError?: (error: unknown) => void): void {
+    if (this.closing) return;
     if (this.activeScans.has(uiMapVersionId)) return;
     if (!this.repositories.claimUiMapVersion(uiMapVersionId, this.workerId, leaseUntil(SCAN_LEASE_MS))) return;
     this.activeScans.add(uiMapVersionId);
-    void this.runScan(uiMapVersionId)
+    const run = this.runScan(uiMapVersionId)
       .catch((error) => onError?.(error))
       .finally(() => {
         this.activeScans.delete(uiMapVersionId);
+        this.activeRuns.delete(uiMapVersionId);
       });
+    this.activeRuns.set(uiMapVersionId, run);
   }
 
   private async runScan(uiMapVersionId: string): Promise<void> {
@@ -237,9 +250,12 @@ export class UiMapService {
     let browser: Browser | undefined;
 
     try {
-      browser = await chromium.launch({ headless: this.config.UI_SCAN_HEADLESS });
+      const networkPolicy = await createUiScanNetworkPolicy(this.config, [config.baseUrl, config.auth?.loginUrl]);
+      browser = await launchUiScanBrowser(this.config, networkPolicy);
+      this.activeBrowsers.set(uiMapVersionId, browser);
+      if (this.closing) throw new Error("Backend closed before UI map scan finished.");
       const context = await browser.newContext();
-      await installUiScanRequestGuard(context, this.config);
+      await installUiScanRequestGuard(context, this.config, networkPolicy);
       const page = await context.newPage();
       await assertSafeTargetUrl(config.baseUrl, this.config);
       await applyUiScanAuth({
@@ -319,7 +335,8 @@ export class UiMapService {
       this.repositories.updateUiMapVersion(uiMapVersionId, "failed", error instanceof Error ? error.message : String(error));
     } finally {
       clearInterval(heartbeat);
-      await browser?.close();
+      await browser?.close().catch(() => undefined);
+      this.activeBrowsers.delete(uiMapVersionId);
     }
   }
 
@@ -342,9 +359,10 @@ export class UiMapService {
 
     let browser: Browser | undefined;
     try {
-      browser = await chromium.launch({ headless: true });
+      const networkPolicy = await createUiScanNetworkPolicy(this.config, [baseUrl, auth?.loginUrl]);
+      browser = await launchUiScanBrowser(this.config, networkPolicy, true);
       const context = await browser.newContext();
-      await installUiScanRequestGuard(context, this.config);
+      await installUiScanRequestGuard(context, this.config, networkPolicy);
       const page = await context.newPage();
       const loginUrl = new URL(auth!.loginUrl!, baseUrl).toString();
       await assertSafeTargetUrl(loginUrl, this.config);

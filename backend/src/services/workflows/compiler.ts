@@ -16,6 +16,7 @@ export class WorkflowCompiler {
     jobId: string;
     requestedName?: string;
     requestedDescription?: string;
+    signal?: AbortSignal;
   }): Promise<Workflow> {
     const steps: WorkflowStep[] = [];
     const uiMapVersionId = this.repositories.getLatestCompletedUiMapVersion(input.appId)?.id;
@@ -23,7 +24,8 @@ export class WorkflowCompiler {
     const workflowDescription = input.requestedDescription ?? input.timeline.summary ?? `Guides the user through ${input.timeline.goal}.`;
 
     for (const extractedStep of [...input.timeline.steps].sort((a, b) => a.order - b.order)) {
-      const compiled = await this.compileStep(input.appId, extractedStep);
+      if (input.signal?.aborted) throw input.signal.reason;
+      const compiled = await this.compileStep(input.appId, extractedStep, input.signal);
       steps.push(...compiled);
     }
 
@@ -52,13 +54,13 @@ export class WorkflowCompiler {
     };
   }
 
-  private async compileStep(appId: string, step: ExtractedActionStep): Promise<WorkflowStep[]> {
+  private async compileStep(appId: string, step: ExtractedActionStep, signal?: AbortSignal): Promise<WorkflowStep[]> {
     if (step.action === "navigate" && step.route) {
       return [{ id: createId("step"), type: "navigate", route: step.route }];
     }
 
     if (step.action === "wait") {
-      const match = await this.matchTarget(appId, step);
+      const match = await this.matchTarget(appId, step, signal);
       if (!match) return [createReviewStep(step, `I could not match "${step.observedElement ?? "wait target"}" automatically. Resolve or remove this step before publishing.`)];
       return [{
         id: createId("step"),
@@ -73,7 +75,7 @@ export class WorkflowCompiler {
       return [createReviewStep(step, `I could not convert the recorded "${step.action}" action automatically. Please review this step before publishing.`)];
     }
 
-    const match = await this.matchTarget(appId, step);
+    const match = await this.matchTarget(appId, step, signal);
     if (!match) return [createReviewStep(step, `I could not match "${step.observedElement ?? step.action}" automatically. Resolve or remove this step before publishing.`)];
     const target = match.target;
 
@@ -108,11 +110,11 @@ export class WorkflowCompiler {
     ];
   }
 
-  private async matchTarget(appId: string, step: ExtractedActionStep): Promise<{ target: WorkflowTarget; matchConfidence: number } | undefined> {
+  private async matchTarget(appId: string, step: ExtractedActionStep, signal?: AbortSignal): Promise<{ target: WorkflowTarget; matchConfidence: number } | undefined> {
     const query = [step.action, step.observedElement, step.page, step.visualContext].filter(Boolean).join(" ");
     const filters: Record<string, string> = { appId, kind: "ui_element" };
     if (step.route) filters.route = step.route;
-    const results = await this.semanticSearch.search({ query, filters, limit: 8 });
+    const results = await this.semanticSearch.search({ query, filters, limit: 8, signal });
 
     for (const result of results) {
       const elementId = result.metadata?.elementId;

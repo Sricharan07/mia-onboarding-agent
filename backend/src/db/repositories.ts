@@ -134,6 +134,10 @@ export class Repositories {
     this.db.prepare("SELECT 1").get();
   }
 
+  close(): void {
+    if (this.db.open) this.db.close();
+  }
+
   listApps(): AppRecord[] {
     return (this.db.prepare("SELECT * FROM apps WHERE archived_at IS NULL ORDER BY created_at DESC").all() as Row[])
       .map((row) => mapApp(row, this.secretEncryptionKey));
@@ -593,6 +597,18 @@ export class Repositories {
   refreshWorkflowJobLease(jobId: string, workerId: string, leaseUntil: string): void {
     this.db.prepare("UPDATE workflow_jobs SET locked_until = ?, updated_at = ? WHERE id = ? AND locked_by = ?")
       .run(leaseUntil, nowIso(), jobId, workerId);
+  }
+
+  releaseWorkflowJob(jobId: string, workerId: string): void {
+    this.db.prepare(`
+      UPDATE workflow_jobs
+      SET status = CASE WHEN extracted_action_timeline_json IS NULL THEN 'uploaded' ELSE 'mapped' END,
+          error = 'Processing interrupted by backend shutdown. The job will resume automatically.',
+          locked_by = NULL,
+          locked_until = NULL,
+          updated_at = ?
+      WHERE id = ? AND locked_by = ?
+    `).run(nowIso(), jobId, workerId);
   }
 
   listWorkflowJobs(appId: string): Array<{

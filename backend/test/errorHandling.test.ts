@@ -54,6 +54,24 @@ test("server errors are sanitized before they reach clients", async () => {
   }
 });
 
+test("HTTP responses carry production security policy headers", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mia-security-headers-"));
+  const app = await buildApp(testConfig(dir));
+
+  try {
+    const response = await app.inject({ method: "GET", url: "/api/v1/health" });
+    assert.equal(response.statusCode, 200);
+    assert.match(response.headers["content-security-policy"] ?? "", /default-src 'self'/);
+    assert.equal(response.headers["x-content-type-options"], "nosniff");
+    assert.equal(response.headers["referrer-policy"], "no-referrer");
+    assert.equal(response.headers["cache-control"], "no-store");
+    assert.match(response.headers["permissions-policy"] ?? "", /microphone=\(\)/);
+  } finally {
+    await app.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 function testConfig(dir: string): AppConfig {
   return {
     NODE_ENV: "test",

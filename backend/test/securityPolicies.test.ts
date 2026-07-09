@@ -7,14 +7,25 @@ import { validateRuntimeConfig } from "../src/config/env.js";
 import { assertSafeTargetUrl, resolveSameOriginRouteUrl } from "../src/services/security/targetUrlPolicy.js";
 import { validateWorkflowVideoUpload } from "../src/services/security/workflowVideoUploadPolicy.js";
 import { ConfigError, ValidationAppError } from "../src/utils/errors.js";
+import { createUiScanNetworkPolicy } from "../src/services/ui-map/networkPolicy.js";
+import { isUiScanRequestAllowed } from "../src/services/ui-map/requestGuard.js";
 
-test("production CORS requires explicit origins", () => {
+test("production configuration requires explicit secure origins and durable secrets", () => {
   assert.throws(
     () => validateRuntimeConfig(config({ NODE_ENV: "production", CORS_ORIGIN: "*" })),
     (error) => error instanceof ConfigError && error.message.includes("CORS_ORIGIN")
   );
 
-  assert.doesNotThrow(() => validateRuntimeConfig(config({ NODE_ENV: "production", CORS_ORIGIN: "https://app.example.com" })));
+  assert.throws(
+    () => validateRuntimeConfig(config({ NODE_ENV: "production", CORS_ORIGIN: "http://app.example.com" })),
+    (error) => error instanceof ConfigError && error.message.includes("HTTPS")
+  );
+  assert.doesNotThrow(() => validateRuntimeConfig(config({
+    NODE_ENV: "production",
+    CORS_ORIGIN: "https://app.example.com",
+    MIA_SECRET_ENCRYPTION_KEY: "test-secret-encryption-key-32-chars",
+    BOOTSTRAP_ADMIN_TOKEN: undefined
+  })));
 });
 
 test("target URL policy blocks private networks in production while allowing local development scans", async () => {
@@ -37,6 +48,21 @@ test("UI scan routes must stay on the app origin", () => {
     () => resolveSameOriginRouteUrl("https://other.example.com/admin", "https://app.example.com"),
     (error) => error instanceof ValidationAppError && error.message.includes("app origin")
   );
+});
+
+test("UI scan network policy pins approved hosts and blocks undeclared origins", async () => {
+  const policy = await createUiScanNetworkPolicy(config({
+    NODE_ENV: "development",
+    UI_SCAN_ALLOWED_RESOURCE_ORIGINS: "http://127.0.0.1:4001"
+  }), ["http://localhost:3000"]);
+
+  assert.equal(policy.navigationOrigins.has("http://localhost:3000"), true);
+  assert.equal(policy.resourceOrigins.has("http://127.0.0.1:4001"), true);
+  assert.equal(policy.hostResolverRules.some((rule) => rule.startsWith("MAP localhost ")), true);
+  assert.equal(isUiScanRequestAllowed("http://localhost:3000/dashboard", true, policy), true);
+  assert.equal(isUiScanRequestAllowed("http://127.0.0.1:4001/app.css", false, policy), true);
+  assert.equal(isUiScanRequestAllowed("https://undeclared.example/app.js", false, policy), false);
+  assert.equal(isUiScanRequestAllowed("http://127.0.0.1:4001/login", true, policy), false);
 });
 
 test("workflow video upload policy rejects disguised non-video uploads", () => {

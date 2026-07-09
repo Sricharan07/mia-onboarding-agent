@@ -8,6 +8,7 @@ export class GeminiVideoUnderstandingAdapter implements VideoUnderstandingAdapte
 
   async extractActionTimeline(input: {
     videoPath: string;
+    signal?: AbortSignal;
     appContext: {
       appName: string;
       knownRoutes: string[];
@@ -17,6 +18,7 @@ export class GeminiVideoUnderstandingAdapter implements VideoUnderstandingAdapte
     const prompt = buildPrompt(input.appContext);
     const result = await this.gateway.analyzeImagesOrVideo<unknown>({
       videoPath: input.videoPath,
+      signal: input.signal,
       model: this.config.GEMINI_VISION_MODEL ?? this.config.GEMINI_TEXT_MODEL,
       prompt,
       logContext: { appId: input.appContext.appName, purpose: "workflow_video_analysis" }

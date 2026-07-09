@@ -20,7 +20,8 @@ export class GeminiModelGatewayAdapter implements ModelGatewayAdapter {
     try {
       const response = await this.generateContent({
         model,
-        contents: input.system ? `${input.system}\n\n${input.prompt}` : input.prompt
+        contents: input.system ? `${input.system}\n\n${input.prompt}` : input.prompt,
+        signal: input.signal
       });
       const text = extractText(response);
       this.writeLog(input.logContext, "gemini_generate_text", model, started, `textChars=${text.length}`);
@@ -38,7 +39,8 @@ export class GeminiModelGatewayAdapter implements ModelGatewayAdapter {
       const response = await this.generateContent({
         model,
         contents: input.system ? `${input.system}\n\n${input.prompt}` : input.prompt,
-        config: { responseMimeType: "application/json" }
+        config: { responseMimeType: "application/json" },
+        signal: input.signal
       });
       const text = extractText(response);
       const data = parseProviderJson<T>(text);
@@ -66,7 +68,8 @@ export class GeminiModelGatewayAdapter implements ModelGatewayAdapter {
           },
           { text: input.prompt }
         ],
-        config: { responseMimeType: "application/json" }
+        config: { responseMimeType: "application/json" },
+        signal: input.signal
       });
       const text = extractText(response);
       const data = parseProviderJson<T>(text);
@@ -82,6 +85,7 @@ export class GeminiModelGatewayAdapter implements ModelGatewayAdapter {
     model?: string;
     contents: ContentListUnion;
     config?: { responseMimeType?: string };
+    signal?: AbortSignal;
   }): Promise<GenerateContentResponse> {
     requireConfig(this.config, ["GEMINI_API_KEY"], "Gemini model gateway");
     const model = input.model;
@@ -89,11 +93,18 @@ export class GeminiModelGatewayAdapter implements ModelGatewayAdapter {
       throw new AppError("CONFIG_ERROR", "Gemini model gateway is not configured. Missing: GEMINI_TEXT_MODEL.", 500);
     }
 
-    this.client ??= new GoogleGenAI({ apiKey: this.config.GEMINI_API_KEY });
+    this.client ??= new GoogleGenAI({
+      apiKey: this.config.GEMINI_API_KEY,
+      httpOptions: {
+        baseUrl: this.config.GEMINI_BASE_URL,
+        timeout: this.config.PROVIDER_REQUEST_TIMEOUT_MS ?? 60_000,
+        retryOptions: { attempts: this.config.PROVIDER_RETRY_ATTEMPTS ?? 3 }
+      }
+    });
     return this.client.models.generateContent({
       model,
       contents: input.contents,
-      config: input.config
+      config: { ...input.config, abortSignal: input.signal }
     });
   }
 

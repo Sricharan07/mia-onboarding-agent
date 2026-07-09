@@ -5,7 +5,7 @@ import type { AppConfig } from "../config/env.js";
 import { requireConfig } from "../config/env.js";
 import type { SemanticRecord } from "../schemas/domain.js";
 import { AppError } from "../utils/errors.js";
-import { joinUrl, requestJson } from "./http.js";
+import { joinUrl, providerRequestPolicy, requestJson } from "./http.js";
 import type { AiRequestLogInput, SemanticSearchAdapter, SemanticSearchInput, SemanticSearchResult } from "./interfaces.js";
 
 const TABLE_NAME = "semantic_records";
@@ -98,7 +98,7 @@ export class LanceDbSemanticSearchAdapter implements SemanticSearchAdapter {
     const [vector] = await this.embedTexts([query], {
       appId: input.filters?.appId,
       purpose: "semantic_search"
-    });
+    }, input.signal);
     const where = toWhereClause(input.filters);
     const limit = Math.max(input.limit ?? 10, 1);
     let search = table
@@ -147,6 +147,18 @@ export class LanceDbSemanticSearchAdapter implements SemanticSearchAdapter {
     return rows.map((row) => String(row.id)).filter(Boolean);
   }
 
+  async close(): Promise<void> {
+    const table = await this.table?.catch(() => undefined);
+    const connection = await this.connection?.catch(() => undefined);
+    try {
+      table?.close();
+    } finally {
+      connection?.close();
+      this.table = undefined;
+      this.connection = undefined;
+    }
+  }
+
   private async getConnection(): Promise<Connection> {
     if (!this.connection) {
       mkdirSync(this.config.SEMANTIC_INDEX_DIR, { recursive: true });
@@ -164,7 +176,7 @@ export class LanceDbSemanticSearchAdapter implements SemanticSearchAdapter {
     return this.table;
   }
 
-  private async embedTexts(texts: string[], context: { appId?: string; purpose: string }): Promise<number[][]> {
+  private async embedTexts(texts: string[], context: { appId?: string; purpose: string }, signal?: AbortSignal): Promise<number[][]> {
     requireConfig(this.config, ["OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_EMBEDDING_MODEL"], "OpenAI embeddings");
     const embeddings: number[][] = [];
 
@@ -174,6 +186,8 @@ export class LanceDbSemanticSearchAdapter implements SemanticSearchAdapter {
       try {
         const response = await requestJson<OpenAIEmbeddingsResponse>({
           url: joinUrl(this.config.OPENAI_BASE_URL, "/embeddings"),
+          ...providerRequestPolicy(this.config),
+          signal,
           headers: { authorization: `Bearer ${this.config.OPENAI_API_KEY}` },
           body: {
             model: this.config.OPENAI_EMBEDDING_MODEL,

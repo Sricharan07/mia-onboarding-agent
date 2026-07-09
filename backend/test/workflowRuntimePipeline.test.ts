@@ -669,6 +669,47 @@ test("video processing service starts and resumes unfinished jobs", async () => 
   }
 });
 
+test("video processing releases an interrupted job during shutdown", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mia-video-shutdown-"));
+  const db = createDatabase(testConfig(dir));
+  const repositories = new Repositories(db);
+  const videoUnderstanding: VideoUnderstandingAdapter = {
+    extractActionTimeline: async ({ signal }) => new Promise((_resolve, reject) => {
+      if (signal?.aborted) {
+        reject(signal.reason);
+        return;
+      }
+      signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+    })
+  };
+  const service = new VideoProcessingService(repositories, videoUnderstanding, new WorkflowCompiler(repositories, emptySearch));
+
+  try {
+    repositories.upsertApp({ name: "Workflow app", slug: "one", baseUrl: "http://localhost:3000" });
+    completeEmptyUiMap(repositories, "app_one");
+    const video = repositories.createWorkflowVideo({
+      appId: "app_one",
+      filename: "shutdown.mp4",
+      localPath: join(dir, "shutdown.mp4"),
+      mimeType: "video/mp4",
+      sizeBytes: 1
+    });
+
+    service.startJob(video.jobId);
+    await waitFor(() => String(repositories.getWorkflowJob(video.jobId).status) === "analyzing");
+    await service.close();
+
+    const released = repositories.getWorkflowJob(video.jobId);
+    assert.equal(released.status, "uploaded");
+    assert.equal(released.locked_by, null);
+    assert.equal(released.locked_until, null);
+    assert.match(String(released.error), /resume automatically/);
+  } finally {
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("workflow service syncs source job status across review lifecycle", async () => {
   const dir = mkdtempSync(join(tmpdir(), "mia-workflow-status-"));
   const db = createDatabase(testConfig(dir));

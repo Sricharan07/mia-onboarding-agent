@@ -1,6 +1,7 @@
 import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
 import fastifyStatic from "@fastify/static";
+import helmet from "@fastify/helmet";
 import Fastify, { type FastifyInstance } from "fastify";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -40,10 +41,41 @@ export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
   mkdirSync(config.LOCAL_UPLOAD_DIR, { recursive: true });
 
   const app = Fastify({ logger: true, trustProxy: config.TRUST_PROXY });
+  const secureTransport = config.NODE_ENV === "production" && corsOriginsUseHttps(config.CORS_ORIGIN);
+  await app.register(helmet, {
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        baseUri: ["'none'"],
+        connectSrc: ["'self'"],
+        fontSrc: ["'self'", "data:"],
+        formAction: ["'self'"],
+        frameAncestors: ["'none'"],
+        imgSrc: ["'self'", "data:", "blob:"],
+        objectSrc: ["'none'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'"],
+        upgradeInsecureRequests: secureTransport ? [] : null
+      }
+    },
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+    hsts: secureTransport
+      ? { maxAge: 31_536_000, includeSubDomains: true, preload: true }
+      : false,
+    referrerPolicy: { policy: "no-referrer" }
+  });
+  app.addHook("onSend", async (request, reply, payload) => {
+    reply.header("permissions-policy", "camera=(), geolocation=(), microphone=(), payment=(), usb=()");
+    if (request.url.startsWith("/api/")) reply.header("cache-control", "no-store");
+    return payload;
+  });
   await app.register(cors, {
     origin: corsOrigin(config.CORS_ORIGIN),
     methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["authorization", "content-type", "x-api-key", "x-bootstrap-admin-token"]
+    allowedHeaders: ["authorization", "content-type", "x-api-key", "x-bootstrap-admin-token"],
+    exposedHeaders: ["retry-after"],
+    maxAge: 600,
+    strictPreflight: true
   });
   await app.register(multipart, { limits: { fileSize: config.WORKFLOW_VIDEO_MAX_BYTES } });
 
@@ -59,7 +91,20 @@ export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
   retentionTimer.unref();
   app.addHook("onClose", async () => {
     clearInterval(retentionTimer);
-    await dependencies.services.interactiveUiMap.closeAll();
+    const results = await Promise.allSettled([
+      dependencies.services.uiMap.closeAll(),
+      dependencies.services.interactiveUiMap.closeAll(),
+      dependencies.services.videoProcessing.close()
+    ]);
+    try {
+      await dependencies.adapters.semanticSearch.close();
+    } catch (error) {
+      results.push({ status: "rejected", reason: error });
+    } finally {
+      dependencies.repositories.close();
+    }
+    const failures = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (failures.length > 0) throw new AggregateError(failures.map((failure) => failure.reason), "Backend resource cleanup failed.");
   });
   registerErrorHandler(app);
   await registerRoutes(app, dependencies);
@@ -72,6 +117,17 @@ export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
 function corsOrigin(value: string): true | string[] {
   if (value.trim() === "*") return true;
   return value.split(",").map((origin) => origin.trim()).filter(Boolean);
+}
+
+function corsOriginsUseHttps(value: string): boolean {
+  const origins = value.split(",").map((origin) => origin.trim()).filter(Boolean);
+  return origins.length > 0 && origins.every((origin) => {
+    try {
+      return new URL(origin).protocol === "https:";
+    } catch {
+      return false;
+    }
+  });
 }
 
 async function registerConsoleStatic(app: FastifyInstance, config: AppConfig): Promise<void> {
@@ -245,6 +301,8 @@ function safeErrorLogMessage(error: unknown): string {
 
 function clientErrorMessage(error: AppError): string {
   if (error.statusCode < 500) return error.message;
-  if (error.statusCode === 502) return "Upstream provider request failed.";
+  if (error.statusCode === 502 || error.code.startsWith("PROVIDER_") || error.code.startsWith("OPENAI_") || error.code.startsWith("GEMINI_")) {
+    return "Upstream provider request failed.";
+  }
   return "Internal server error.";
 }

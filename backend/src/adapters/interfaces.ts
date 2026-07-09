@@ -20,6 +20,7 @@ export type GenerateTextInput = {
   system?: string;
   prompt: string;
   logContext?: AiLogContext;
+  signal?: AbortSignal;
 };
 
 export type GenerateJsonInput = GenerateTextInput & {
@@ -31,6 +32,7 @@ export type AnalyzeVideoInput = {
   prompt: string;
   model?: string;
   logContext?: AiLogContext;
+  signal?: AbortSignal;
 };
 
 export interface ModelGatewayAdapter {
@@ -42,6 +44,7 @@ export interface ModelGatewayAdapter {
 export interface VideoUnderstandingAdapter {
   extractActionTimeline(input: {
     videoPath: string;
+    signal?: AbortSignal;
     appContext: {
       appName: string;
       knownRoutes: string[];
@@ -54,6 +57,7 @@ export type SemanticSearchInput = {
   query: string;
   filters?: Record<string, string>;
   limit?: number;
+  signal?: AbortSignal;
 };
 
 export type SemanticSearchResult = {
@@ -79,10 +83,6 @@ export interface VoiceTransportAdapter {
   createSession(input: { appId: string; sessionId: string; identity: string }): Promise<{ token: string; url: string }>;
 }
 
-export interface SpeechToTextAdapter {
-  transcribe(input: { audioPath?: string; audioBuffer?: Buffer; mimeType?: string }): Promise<{ text: string; confidence?: number }>;
-}
-
 export interface TextToSpeechAdapter {
-  synthesize(input: { text: string; voice?: string }): Promise<{ audioPath?: string; audioUrl?: string; mimeType: string }>;
+  synthesize(input: { text: string; voice?: string; signal?: AbortSignal }): Promise<{ audioPath?: string; audioUrl?: string; mimeType: string }>;
 }
