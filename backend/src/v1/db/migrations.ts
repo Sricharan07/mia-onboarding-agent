@@ -267,6 +267,21 @@ const migrations: Migration[] = [{
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `
+}, {
+  id: 2,
+  name: "encrypted_product_settings",
+  sql: `
+    ALTER TABLE product
+      ADD COLUMN scan_config JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN voice_config JSONB NOT NULL DEFAULT '{"enabled":true,"voice":"Aoede","language":"en-US"}'::jsonb;
+
+    CREATE TABLE encrypted_secrets (
+      name TEXT PRIMARY KEY CHECK (name ~ '^[a-z][a-z0-9_]{0,63}$'),
+      ciphertext TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `
 }];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {

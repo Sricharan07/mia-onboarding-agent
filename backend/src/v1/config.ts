@@ -83,7 +83,6 @@ export function validateV1Config(config: V1Config): void {
   if (!config.SETUP_TOKEN || config.SETUP_TOKEN.length < 32) {
     throw new ConfigError("SETUP_TOKEN must contain at least 32 characters until first-run setup is complete.");
   }
-  if (!config.GEMINI_API_KEY) throw new ConfigError("GEMINI_API_KEY is required in production.");
 }
 
 export function corsOrigins(value: string): true | string[] {

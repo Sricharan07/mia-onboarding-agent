@@ -19,6 +19,8 @@ export type ProductRecord = {
   redactedSelectors: string[];
   transcriptMode: "full" | "redacted" | "disabled";
   transcriptRetentionDays: number;
+  scanConfig: Record<string, unknown>;
+  voiceConfig: { enabled: boolean; voice: string; language: string };
   createdAt: string;
   updatedAt: string;
 };
@@ -181,6 +183,7 @@ export class V1Repositories {
   readonly agent: AgentRepository;
   readonly knowledge: KnowledgeRepository;
   readonly diagnostics: DiagnosticsRepository;
+  readonly secrets: SecretRepository;
 
   constructor(readonly database: V1Database) {
     this.product = new ProductRepository(database);
@@ -188,6 +191,7 @@ export class V1Repositories {
     this.agent = new AgentRepository(database);
     this.knowledge = new KnowledgeRepository(database);
     this.diagnostics = new DiagnosticsRepository(database);
+    this.secrets = new SecretRepository(database);
   }
 }
 
@@ -208,6 +212,7 @@ export class ProductRepository {
              redacted_selectors AS "redactedSelectors",
              transcript_mode AS "transcriptMode",
              transcript_retention_days AS "transcriptRetentionDays",
+             scan_config AS "scanConfig", voice_config AS "voiceConfig",
              created_at::text AS "createdAt", updated_at::text AS "updatedAt"
       FROM product WHERE singleton = TRUE
     `);
@@ -246,13 +251,14 @@ export class ProductRepository {
     });
   }
 
-  async update(input: Partial<Pick<ProductRecord, "name" | "origin" | "documentationOrigins" | "redactedSelectors" | "transcriptMode" | "transcriptRetentionDays">>): Promise<ProductRecord> {
+  async update(input: Partial<Pick<ProductRecord, "name" | "origin" | "documentationOrigins" | "redactedSelectors" | "transcriptMode" | "transcriptRetentionDays" | "scanConfig" | "voiceConfig">>): Promise<ProductRecord> {
     const current = await this.get();
     await this.database.query(`
       UPDATE product SET
         name = $1, origin = $2, documentation_origins = $3::jsonb,
         redacted_selectors = $4::jsonb, transcript_mode = $5,
-        transcript_retention_days = $6, updated_at = NOW()
+        transcript_retention_days = $6, scan_config = $7::jsonb,
+        voice_config = $8::jsonb, updated_at = NOW()
       WHERE singleton = TRUE
     `, [
       input.name ?? current.name,
@@ -260,9 +266,36 @@ export class ProductRepository {
       JSON.stringify(input.documentationOrigins ?? current.documentationOrigins),
       JSON.stringify(input.redactedSelectors ?? current.redactedSelectors),
       input.transcriptMode ?? current.transcriptMode,
-      input.transcriptRetentionDays ?? current.transcriptRetentionDays
+      input.transcriptRetentionDays ?? current.transcriptRetentionDays,
+      JSON.stringify(input.scanConfig ?? current.scanConfig),
+      JSON.stringify(input.voiceConfig ?? current.voiceConfig)
     ]);
     return this.get();
+  }
+}
+
+export class SecretRepository {
+  constructor(private readonly database: V1Database) {}
+
+  async set(name: string, ciphertext: string): Promise<void> {
+    await this.database.query(`
+      INSERT INTO encrypted_secrets (name, ciphertext) VALUES ($1, $2)
+      ON CONFLICT (name) DO UPDATE SET ciphertext = EXCLUDED.ciphertext, updated_at = NOW()
+    `, [name, ciphertext]);
+  }
+
+  async get(name: string): Promise<string | undefined> {
+    const result = await this.database.query<{ ciphertext: string }>("SELECT ciphertext FROM encrypted_secrets WHERE name = $1", [name]);
+    return result.rows[0]?.ciphertext;
+  }
+
+  async has(name: string): Promise<boolean> {
+    const result = await this.database.query<{ configured: boolean }>("SELECT EXISTS(SELECT 1 FROM encrypted_secrets WHERE name = $1) AS configured", [name]);
+    return result.rows[0]?.configured === true;
+  }
+
+  async delete(name: string): Promise<void> {
+    await this.database.query("DELETE FROM encrypted_secrets WHERE name = $1", [name]);
   }
 }
 
@@ -402,14 +435,33 @@ export class AgentRepository {
   }
 
   async beginGoal(input: { id: string; expectedRevision: number; goal: string; route: string }): Promise<AgentSessionRecord> {
+    return this.database.transaction(async (client) => {
+      const result = await client.query<AgentSessionRecord>(`
+        UPDATE agent_sessions SET status = 'active', goal = $3, current_route = $4,
+          revision = revision + 1, step_count = 0, consecutive_failures = 0,
+          loop_signature = NULL, loop_count = 0, pending_confirmation = NULL,
+          completed_at = NULL, error = NULL, updated_at = NOW()
+        WHERE id = $1 AND revision = $2
+        RETURNING ${agentSessionColumns()}
+      `, [input.id, input.expectedRevision, input.goal, input.route]);
+      const session = requireSessionUpdate(result.rows[0], input.expectedRevision);
+      await client.query(`
+        UPDATE agent_steps SET status = 'cancelled', error = 'Superseded by a new user goal.'
+        WHERE session_id = $1 AND status = 'issued'
+      `, [input.id]);
+      return session;
+    });
+  }
+
+  async continueGoal(input: { id: string; expectedRevision: number; route: string }): Promise<AgentSessionRecord> {
     const result = await this.database.query<AgentSessionRecord>(`
-      UPDATE agent_sessions SET status = 'active', goal = $3, current_route = $4,
-        revision = revision + 1, step_count = 0, consecutive_failures = 0,
+      UPDATE agent_sessions SET status = 'active', current_route = $3,
+        revision = revision + 1, consecutive_failures = 0,
         loop_signature = NULL, loop_count = 0, pending_confirmation = NULL,
         completed_at = NULL, error = NULL, updated_at = NOW()
-      WHERE id = $1 AND revision = $2
+      WHERE id = $1 AND revision = $2 AND status = 'waiting_user'
       RETURNING ${agentSessionColumns()}
-    `, [input.id, input.expectedRevision, input.goal, input.route]);
+    `, [input.id, input.expectedRevision, input.route]);
     return requireSessionUpdate(result.rows[0], input.expectedRevision);
   }
 
@@ -523,14 +575,24 @@ export class AgentRepository {
       INSERT INTO action_receipts (
         action_id, session_id, step_id, idempotency_key, action_type, target_ref, status, message, evidence
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
-      ON CONFLICT (idempotency_key) DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key
+      ON CONFLICT (idempotency_key) DO NOTHING
       RETURNING action_id AS "actionId", idempotency_key AS "idempotencyKey", action_type AS type,
         status, message, target_ref AS "targetRef", evidence
     `, [
       input.actionId, input.sessionId, input.stepId ?? null, input.idempotencyKey, input.type,
       input.targetRef ?? null, input.status, input.message, JSON.stringify(input.evidence)
     ]);
-    return { ...result.rows[0]!, route: input.route };
+    if (result.rows[0]) return { ...result.rows[0], route: input.route };
+    const existing = await this.database.query<ActionReceipt & { sessionId: string }>(`
+      SELECT action_id AS "actionId", session_id AS "sessionId", idempotency_key AS "idempotencyKey",
+             action_type AS type, status, message, target_ref AS "targetRef", evidence
+      FROM action_receipts WHERE idempotency_key = $1
+    `, [input.idempotencyKey]);
+    const receipt = existing.rows[0];
+    if (!receipt || receipt.sessionId !== input.sessionId || receipt.actionId !== input.actionId || receipt.type !== input.type) {
+      throw new AppError("IDEMPOTENCY_CONFLICT", "The idempotency key belongs to a different action.", 409);
+    }
+    return { ...receipt, route: input.route };
   }
 
   async listReceipts(sessionId: string, limit = 24): Promise<ActionReceipt[]> {
@@ -901,6 +963,7 @@ async function productWithClient(client: PoolClient): Promise<ProductRecord> {
     SELECT name, origin, documentation_origins AS "documentationOrigins",
            redacted_selectors AS "redactedSelectors", transcript_mode AS "transcriptMode",
            transcript_retention_days AS "transcriptRetentionDays",
+           scan_config AS "scanConfig", voice_config AS "voiceConfig",
            created_at::text AS "createdAt", updated_at::text AS "updatedAt"
     FROM product WHERE singleton = TRUE
   `);
@@ -977,7 +1040,12 @@ function vector(values: number[]): string {
 }
 
 export function safeDirectiveJson(actions: ActionDirective[]): Json {
-  return actions.map(({ value: _value, arguments: _arguments, ...action }) => action) as Json;
+  return actions.map(({ value: _value, arguments: _arguments, confirmation, ...action }) => ({
+    ...action,
+    confirmation: confirmation
+      ? { id: confirmation.id, prompt: confirmation.prompt, expiresAt: confirmation.expiresAt }
+      : undefined
+  })) as Json;
 }
 
 export function safeObservationSummary(observation: Observation): Record<string, unknown> {

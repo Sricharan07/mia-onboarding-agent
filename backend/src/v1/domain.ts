@@ -28,6 +28,7 @@ export const observationNodeSchema = z.object({
   text: z.string().max(2_000).optional(),
   value: z.string().max(2_000).optional(),
   inputType: z.string().max(100).optional(),
+  route: z.string().max(2_000).optional(),
   elementKey: z.string().max(300).optional(),
   locators: z.array(targetLocatorSchema).max(12).default([]),
   bounds: boxSchema,

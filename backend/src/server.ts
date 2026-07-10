@@ -1,7 +1,7 @@
 import { buildApp } from "./app.js";
-import { loadConfig } from "./config/env.js";
+import { loadV1Config } from "./v1/config.js";
 
-const config = loadConfig();
+const config = loadV1Config();
 const app = await buildApp(config);
 let shuttingDown = false;
 
