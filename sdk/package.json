@@ -1,7 +1,7 @@
 {
   "name": "@mia/onboarding-agent",
-  "version": "0.1.0",
-  "description": "Browser SDK for the self-hosted MIA onboarding agent.",
+  "version": "1.0.0",
+  "description": "Framework-neutral browser SDK for the self-hosted Mia intelligent product agent.",
   "private": false,
   "type": "module",
   "main": "dist/index.js",
@@ -22,7 +22,7 @@
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "npm run clean && tsc -p tsconfig.json",
     "prepack": "npm run build",
-    "test": "tsc -p tsconfig.json --noEmit"
+    "test": "tsc -p tsconfig.json --noEmit && node --import tsx --test --test-concurrency=1 test/*.test.ts"
   },
   "keywords": [
     "onboarding",
@@ -44,10 +44,12 @@
     "directory": "sdk"
   },
   "dependencies": {
-    "livekit-client": "^2.20.0",
-    "zod": "^4.4.3"
+    "lucide": "^1.24.0"
   },
   "devDependencies": {
+    "@types/jsdom": "^21.1.7",
+    "jsdom": "^26.1.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   }
 }

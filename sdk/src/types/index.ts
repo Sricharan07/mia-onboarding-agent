@@ -1,15 +1,11 @@
-export type ExecutionPolicy = "auto" | "requires_confirmation" | "manual_only" | "blocked";
 export type MiaTheme = "light" | "dark" | "auto";
-export type MiaCursorState = "idle" | "connecting" | "listening" | "thinking" | "speaking" | "guiding" | "fading" | "offline" | "error";
-export type MiaStatus = MiaCursorState | "ended";
-export type VoiceSessionStatus = "connecting" | "listening" | "thinking" | "speaking" | "ended" | "error";
+export type MiaStatus = "idle" | "connecting" | "listening" | "thinking" | "speaking" | "guiding" | "offline" | "error" | "ended";
+export type MiaCursorState = Exclude<MiaStatus, "ended"> | "fading";
+export type RiskLevel = "read" | "navigate" | "reversible_write" | "manual" | "blocked";
+export type UiActionPolicy = "guide_only" | Exclude<RiskLevel, "read">;
 
-export type RuntimeToken = {
-  token: string;
-  expiresAt?: string;
-};
-
-export type RuntimeTokenProvider = () => Promise<RuntimeToken>;
+export type RuntimeToken = { token: string; expiresAt?: string };
+export type RuntimeTokenProvider = () => Promise<string | RuntimeToken>;
 
 export type TargetLocator =
   | { strategy: "css"; selector: string }
@@ -17,164 +13,224 @@ export type TargetLocator =
   | { strategy: "label"; label: string }
   | { strategy: "text"; text: string; tagName?: string };
 
-export type SDKConfig = {
-  appId: string;
-  backendUrl: string;
-  tokenProvider: RuntimeTokenProvider;
-  enableVoice: boolean;
-  enableScreenShare?: boolean;
-  voice?: {
-    voiceName?: string;
-  };
-  navigate?: (route: string) => void | Promise<void>;
-  privacy?: {
-    redactText?: boolean;
-    redactedSelectors?: string[];
-    redactScreenFrame?: (canvas: HTMLCanvasElement, context: CanvasRenderingContext2D) => void;
-    includeUrlQuery?: boolean;
-    includePageTitle?: boolean;
-    includeUserMetadata?: boolean;
-    allowUnredactedScreenShare?: boolean;
-    telemetry?: {
-      mode?: "events_only" | "redacted" | "full";
-      hasConsent?: () => boolean;
-    };
-  };
-  user?: {
-    id?: string;
-    email?: string;
-    role?: string;
-    metadata?: Record<string, unknown>;
-  };
-  ui?: {
-    cursorIcon?: string;
-    cursorOffset?: { x: number; y: number };
-    theme?: MiaTheme;
-    bubbleMaxWidth?: number;
-    bubbleLingerMs?: number;
-    assistantPanel?: boolean;
-  };
-  onStatusChange?: (status: MiaStatus) => void;
-  onTranscript?: (entry: { role: "user" | "assistant" | "system"; text: string }) => void;
-  onError?: (error: Error) => void;
-  onWorkflowEvent?: (event: { type: string; workflowId?: string; stepId?: string; message?: string }) => void;
-};
+export type MiaActionType =
+  | "point"
+  | "highlight"
+  | "hover"
+  | "scroll_to"
+  | "scroll_by"
+  | "navigate"
+  | "go_back"
+  | "focus"
+  | "click"
+  | "fill"
+  | "clear"
+  | "select"
+  | "toggle"
+  | "press_key"
+  | "wait"
+  | "request_visual"
+  | "host_action";
 
-export type RuntimeElementContext = {
+export type ObservationNode = {
+  nodeId: string;
+  frameId?: string;
   tagName: string;
   role?: string;
-  label?: string;
+  name?: string;
+  description?: string;
   text?: string;
-  selector?: string;
-  locators?: TargetLocator[];
-  elementId?: string;
-  mappedElementId?: string;
-  uiMapVersionId?: string;
-  fingerprint?: string;
-  boundingBox?: { x: number; y: number; width: number; height: number };
-};
-
-export type SDKRuntimeContext = {
-  appId: string;
-  sessionId: string;
-  currentUrl: string;
-  currentRoute: string;
-  pageTitle?: string;
-  focusedElement?: RuntimeElementContext;
-  hoveredElement?: RuntimeElementContext;
-  visibleElements?: RuntimeElementContext[];
-  userMetadata?: Record<string, unknown>;
-};
-
-export type WorkflowTarget = {
-  elementId: string;
-  label?: string;
-  selector: string;
-  fallbackSelectors?: string[];
-  locators: TargetLocator[];
+  value?: string;
+  inputType?: string;
   route?: string;
-  pageName?: string;
-  uiMapVersionId?: string;
-  fingerprint?: string;
-  elementType?: string;
+  elementKey?: string;
+  locators: TargetLocator[];
+  bounds: { x: number; y: number; width: number; height: number };
+  viewportVisible: boolean;
+  disabled?: boolean;
+  checked?: boolean;
+  selected?: boolean;
+  expanded?: boolean;
+  pressed?: boolean;
+  required?: boolean;
+  readOnly?: boolean;
+  sensitive: boolean;
+  actionPolicy?: RiskLevel;
 };
 
-export type WorkflowStep =
-  | { id: string; type: "review_required"; message: string; observedAction?: string; label?: string }
-  | { id: string; type: "navigate"; route: string; label?: string }
-  | { id: string; type: "click"; target: WorkflowTarget; executionPolicy: ExecutionPolicy; label?: string }
-  | { id: string; type: "focus"; target: WorkflowTarget; executionPolicy: ExecutionPolicy; label?: string }
-  | { id: string; type: "fill"; target: WorkflowTarget; valueFrom: string; executionPolicy: ExecutionPolicy; label?: string }
-  | { id: string; type: "select"; target: WorkflowTarget; valueFrom: string; executionPolicy: ExecutionPolicy; label?: string }
-  | { id: string; type: "ask_user"; field: string; prompt: string; inputType?: "text" | "email" | "password" | "number" | "date" | "choice"; sensitivity?: "standard" | "personal" | "secret" | "payment"; choices?: string[]; label?: string }
-  | { id: string; type: "wait_for_element"; target: WorkflowTarget; timeoutMs: number; label?: string }
-  | { id: string; type: "confirm"; message: string; confirmLabel?: string; cancelLabel?: string; label?: string }
-  | { id: string; type: "complete"; message: string; label?: string };
+export type Observation = {
+  id: string;
+  revision: number;
+  url: string;
+  route: string;
+  title?: string;
+  viewport: { width: number; height: number; scrollX: number; scrollY: number };
+  focusedNodeId?: string;
+  hoveredNodeId?: string;
+  selectedText?: string;
+  pageText?: string;
+  nodes: ObservationNode[];
+};
 
-export type Workflow = {
-  workflowId: string;
-  appId: string;
+export type MiaContextEntry = {
   name: string;
   description: string;
-  status: "draft" | "needs_review" | "approved" | "published" | "archived";
-  version: number;
-  triggerPhrases: string[];
-  steps: WorkflowStep[];
-  review?: { reviewedBy?: string; reviewedAt?: string; notes?: string; uiMapVersionId?: string };
+  content: string;
+  trusted?: boolean;
 };
 
-export type ResolveResponse =
-  | { type: "workflow"; workflow: Workflow; message: string }
-  | { type: "control"; action: "cancel" | "pause" | "resume"; message: string }
-  | { type: "element_action"; action: "click" | "focus"; target: RuntimeElementContext; executionPolicy: "requires_confirmation"; message: string }
-  | { type: "answer"; message: string; target?: RuntimeElementContext }
-  | { type: "no_match"; message: string; target?: RuntimeElementContext };
-
-export type GeminiLiveTokenResponse = {
-  token: string;
-  model: string;
-  expiresAt: string;
-  websocketUrl: string;
+export type MiaContextProvider = {
+  name: string;
+  description: string;
+  trusted?: boolean;
+  getContext: (input: { signal: AbortSignal; observation: Observation }) => string | Promise<string>;
 };
 
-export type GeminiLiveEvent =
-  | { type: "session_ready"; status: VoiceSessionStatus }
-  | { type: "listening"; status: VoiceSessionStatus }
-  | { type: "thinking"; status: VoiceSessionStatus }
-  | { type: "transcript_user"; text: string; isFinal: true }
-  | { type: "transcript_assistant"; text: string; isFinal: boolean }
-  | { type: "assistant_response"; message: string; result: ResolveResponse }
-  | { type: "tool_cancelled" }
-  | { type: "error"; message: string; code?: string }
-  | { type: "ended"; status: VoiceSessionStatus; reason?: "connection_lost" };
+export type MiaVisualContext = {
+  name: string;
+  description: string;
+  mimeType?: "image/png" | "image/jpeg";
+  data?: string;
+};
 
-export type SDKEvent =
-  | { type: "session_started"; sessionId: string }
+export type MiaVisualContextProvider = (input: {
+  reason: string;
+  signal: AbortSignal;
+  observation: Observation;
+}) => MiaVisualContext | MiaVisualContext[] | null | Promise<MiaVisualContext | MiaVisualContext[] | null>;
+
+export type MiaActionReceiptResult = {
+  status: "completed" | "unverified" | "failed" | "cancelled" | "manual";
+  message: string;
+  evidence?: Record<string, unknown>;
+};
+
+export type MiaActionDefinition<TInput extends Record<string, unknown> = Record<string, unknown>> = {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  risk: RiskLevel;
+  execute: { bivarianceHack(input: TInput, context: {
+    signal: AbortSignal;
+    observation: Observation;
+    idempotencyKey: string;
+  }): MiaActionReceiptResult | Promise<MiaActionReceiptResult> }["bivarianceHack"];
+};
+
+export type MiaActionManifest = Pick<MiaActionDefinition, "name" | "description" | "inputSchema" | "risk">;
+
+export type AgentTarget = {
+  ref: string;
+  nodeId?: string;
+  elementKey?: string;
+  label?: string;
+  role?: string;
+  route?: string;
+  locators: TargetLocator[];
+  bounds?: { x: number; y: number; width: number; height: number };
+};
+
+export type ConfirmationRequest = { id: string; prompt: string; binding: string; expiresAt: string };
+
+export type ActionDirective = {
+  actionId: string;
+  idempotencyKey: string;
+  type: MiaActionType;
+  message: string;
+  expectedOutcome: string;
+  risk: RiskLevel;
+  target?: AgentTarget;
+  route?: string;
+  value?: string;
+  key?: string;
+  deltaX?: number;
+  deltaY?: number;
+  waitMs?: number;
+  hostAction?: string;
+  arguments?: Record<string, unknown>;
+  confirmation?: ConfirmationRequest;
+};
+
+export type ActionReceipt = {
+  actionId: string;
+  idempotencyKey: string;
+  type: MiaActionType;
+  status: "completed" | "unverified" | "failed" | "cancelled" | "manual";
+  message: string;
+  targetRef?: string;
+  route?: string;
+  evidence: Record<string, unknown>;
+};
+
+export type AgentResponse = {
+  sessionId: string;
+  resumeToken?: string;
+  revision: number;
+  status: "active" | "waiting_user" | "waiting_confirmation" | "completed" | "failed" | "cancelled";
+  assessment: string;
+  progress: string;
+  type: "actions" | "ask_user" | "answer" | "complete" | "unable";
+  message: string;
+  actions: ActionDirective[];
+  input?: { field: string; inputType?: "text" | "email" | "number" | "date" | "choice"; choices?: string[] };
+};
+
+export type MiaEvent =
+  | { type: "ready"; sessionId: string }
+  | { type: "thinking"; message: string }
+  | { type: "progress"; assessment: string; progress: string }
+  | { type: "action_requested"; action: ActionDirective }
+  | { type: "confirmation_required"; confirmation: ConfirmationRequest; actions: ActionDirective[] }
+  | { type: "action_completed"; receipt: ActionReceipt }
+  | { type: "answer"; message: string }
+  | { type: "completed"; message: string }
+  | { type: "cancelled" }
   | { type: "voice_started" }
   | { type: "voice_stopped" }
-  | { type: "intent_resolved"; resultType: string }
-  | { type: "workflow_started"; workflowId: string }
-  | { type: "step_started"; workflowId: string; stepId: string }
-  | { type: "step_completed"; workflowId: string; stepId: string }
-  | { type: "step_failed"; workflowId: string; stepId: string; error: string }
-  | { type: "workflow_completed"; workflowId: string }
-  | { type: "workflow_cancelled"; workflowId: string };
+  | { type: "transcript"; role: "user" | "assistant" | "system"; text: string }
+  | { type: "error"; error: Error };
 
-export type BrowserActionResult = {
-  status: "completed" | "unverified" | "failed";
-  action: "click" | "focus" | "fill" | "select";
-  message: string;
-  evidence: {
-    locator?: TargetLocator;
-    urlChanged?: boolean;
-    focusChanged?: boolean;
-    valueChanged?: boolean;
-    checkedChanged?: boolean;
-    selectedIndexChanged?: boolean;
-    expandedChanged?: boolean;
-    selectedChanged?: boolean;
-    pressedChanged?: boolean;
-    openChanged?: boolean;
-    domMutations?: number;
+export type MiaOptions = {
+  backendUrl: string;
+  tokenProvider: RuntimeTokenProvider;
+  navigate?: (route: string) => void | Promise<void>;
+  voice?: {
+    enabled?: boolean;
+    voice?: string;
+    openMic?: boolean;
+    pushToTalk?: boolean;
   };
+  actions?: MiaActionDefinition[];
+  contextProviders?: MiaContextProvider[];
+  visualContextProvider?: MiaVisualContextProvider;
+  privacy?: {
+    redactedSelectors?: string[];
+    includePageText?: boolean;
+    includeUrlQuery?: boolean;
+    includePageTitle?: boolean;
+    sensitivePatterns?: RegExp[];
+    transformObservation?: (observation: Observation) => Observation;
+    transformVisualContext?: (context: MiaVisualContext[]) => MiaVisualContext[] | Promise<MiaVisualContext[]>;
+  };
+  ui?: {
+    enabled?: boolean;
+    theme?: MiaTheme;
+    cursorIcon?: string;
+    cursorOffset?: { x: number; y: number };
+    bubbleMaxWidth?: number;
+    bubbleLingerMs?: number;
+  };
+  onEvent?: (event: MiaEvent) => void;
 };
+
+export type GeminiLiveToken = { token: string; model: string; expiresAt: string; websocketUrl: string };
+export type VoiceEvent =
+  | { type: "ready" }
+  | { type: "listening" }
+  | { type: "thinking" }
+  | { type: "speaking" }
+  | { type: "user_transcript"; text: string }
+  | { type: "assistant_transcript"; text: string }
+  | { type: "input_level"; level: number }
+  | { type: "error"; error: Error }
+  | { type: "ended"; reconnectable: boolean };

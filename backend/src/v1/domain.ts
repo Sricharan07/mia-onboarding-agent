@@ -107,6 +107,7 @@ export const actionTypeSchema = z.enum([
   "toggle",
   "press_key",
   "wait",
+  "request_visual",
   "host_action"
 ]);
 export type ActionType = z.infer<typeof actionTypeSchema>;

@@ -1,119 +1,109 @@
-# @mia/onboarding-agent
+# `@mia/onboarding-agent`
 
-Browser SDK for the self-hosted MIA onboarding agent. It mounts Mia's cursor, an end-user Ask/voice control panel, runtime context collection, workflow execution, and optional Gemini Live voice.
-
-Full integration guidance lives in the repository's [SDK guide](https://github.com/Sricharan07/mia-onboarding-agent/blob/main/docs/sdk.md).
+Framework-neutral browser SDK for Mia v1. It observes the live product UI, streams user turns to the self-hosted Mia backend, renders a separate visible guide cursor, executes guarded DOM or reviewed host actions, verifies outcomes, and uses the same backend session for text and voice.
 
 ## Install
 
-Until the first npm release is published, install from a package tarball built from the repository root:
-
 ```bash
-# Build the SDK tarball from the MIA repository.
-npm install
-npm pack -w sdk
-
-# Then run this in the host web app that loads Mia.
-npm install /absolute/path/to/mia-onboarding-agent/mia-onboarding-agent-0.1.0.tgz
+npm install @mia/onboarding-agent
 ```
 
-After publication, install with `npm install @mia/onboarding-agent`.
+The package is ESM-only and requires a modern browser.
 
-## Usage
+## Initialize
 
 ```ts
-import { AIOnboardingAgent } from "@mia/onboarding-agent";
+import { Mia, defineMiaAction } from "@mia/onboarding-agent";
 
-AIOnboardingAgent.init({
-  appId: "app_example",
+const createDraftLead = defineMiaAction({
+  name: "create_draft_lead",
+  description: "Create a reversible CRM lead draft without sending it.",
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      name: { type: "string", minLength: 1 },
+      email: { type: "string", format: "email" }
+    },
+    required: ["name"]
+  },
+  risk: "reversible_write",
+  async execute(input, { signal, idempotencyKey }) {
+    const response = await fetch("/api/leads/drafts", {
+      method: "POST",
+      signal,
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": idempotencyKey
+      },
+      body: JSON.stringify(input)
+    });
+    if (!response.ok) return { status: "failed", message: "The lead draft could not be created." };
+    const draft = await response.json();
+    return {
+      status: "completed",
+      message: "The lead draft was created.",
+      evidence: { draftId: draft.id, state: "draft" }
+    };
+  }
+});
+
+const mia = await Mia.init({
   backendUrl: "https://mia.example.com",
   tokenProvider: async () => {
     const response = await fetch("/api/mia/runtime-token", { method: "POST" });
-    if (!response.ok) throw new Error("Unable to start Mia");
     return response.json();
   },
-  enableVoice: true,
-  ui: {
-    assistantPanel: true
-  },
-  voice: {
-    voiceName: "Kore"
-  },
-  user: {
-    id: "user_123",
-    role: "admin"
-  }
-});
-```
-
-Ask Mia to resolve a user request:
-
-```ts
-await AIOnboardingAgent.ask("Show me how to invite a teammate");
-```
-
-Clean up when your app shell unmounts or changes tenants:
-
-```ts
-AIOnboardingAgent.destroy();
-```
-
-Calling `init` again automatically destroys the previous SDK instance before creating a fresh session.
-
-## Required Backend Setup
-
-Create an app-bound server integration key in the MIA console with:
-
-- `runtime:tokens:create`
-- the target `appId`
-- allowed browser origins for the host app
-
-Keep this key in the host backend and use it to call `POST /api/v1/runtime/tokens` for the authenticated user. Do not ship admin or integration API keys in browser code. The key's allowed origins must include the exact browser origin that loads the host app.
-
-## Configuration
-
-The SDK accepts visual options under `ui`, user identity under `user`, and privacy controls under `privacy`. The assistant panel is enabled by default and gives users an Ask box, start/stop voice controls, suggested prompts, privacy status, and a local transcript.
-
-```ts
-AIOnboardingAgent.init({
-  appId: "app_example",
-  backendUrl: "https://mia.example.com",
-  tokenProvider: async () => (await fetch("/api/mia/runtime-token", { method: "POST" })).json(),
-  ui: {
-    assistantPanel: true,
-    theme: "auto",
-    cursorOffset: { x: 20, y: 20 },
-    bubbleMaxWidth: 320
-  },
+  navigate: (route) => router.push(route),
+  voice: { enabled: true, voice: "Aoede", openMic: true, pushToTalk: true },
+  actions: [createDraftLead],
+  contextProviders: [{
+    name: "current_workspace",
+    description: "Current CRM workspace context.",
+    trusted: true,
+    getContext: () => JSON.stringify({ workspaceId, permissions })
+  }],
   privacy: {
-    redactedSelectors: ["[data-private]", ".billing-card"],
-    redactText: true,
-    telemetry: { mode: "events_only" }
-  }
+    redactedSelectors: ["[data-private]", ".payment-details"]
+  },
+  onEvent: (event) => console.debug("Mia", event)
 });
+
+await mia.ask("Create a draft lead for Avery");
+await mia.startVoice();
+await mia.stop();
+mia.destroy();
 ```
+
+Keep the integration key on your server. `tokenProvider` should call your server endpoint, which mints a short-lived, origin-bound runtime token from Mia's `/api/v1/runtime/tokens` endpoint.
+
+## Actions And Safety
+
+`defineMiaAction` requires a unique name, clear description, JSON input schema, risk classification, and receipt-producing executor. Actions are detected by the backend but unavailable to Gemini until an administrator reviews and publishes them.
+
+Allowed risk values are `read`, `navigate`, `reversible_write`, `manual`, and `blocked`. The backend blocks delete, send, publish, approve, payment, external communication, and irreversible submission operations in v1 regardless of the manifest.
+
+Use the supplied idempotency key for every host mutation. Return evidence that lets Mia verify the resulting product state.
+
+## Privacy
+
+The observer reads accessibility semantics and visible product text, not arbitrary JavaScript state. It traverses open shadow roots and same-origin frames. Passwords, authentication codes, payment fields, token-like values, configured private regions, and Mia's own UI are redacted before observations leave the browser.
+
+Canvas, chart, map, and image inspection is opt-in through `visualContextProvider`. The provider is invoked only after the agent explicitly determines semantic context is insufficient. Use `privacy.transformVisualContext` to apply any final image or description redaction before upload.
+
+Only the backend session ID and opaque resume token are stored in `sessionStorage`. Conversation state, plans, confirmations, and receipts remain authoritative on the backend.
 
 ## Voice
 
-Voice mode requires the backend to be configured with Gemini Live credentials and the SDK option `enableVoice: true`.
+Gemini Live is used as a microphone and speech transport. Every user utterance is submitted to the same persisted agent used by text. The Live model is constrained to speak the backend agent's exact response and cannot independently plan or execute product actions.
 
-```ts
-await AIOnboardingAgent.startVoice();
-await AIOnboardingAgent.stopVoice();
-```
+`Aoede` is the default voice. Open mic and hold `Control+Space` push-to-talk can be enabled together. When `openMic` is `false`, holding the shortcut starts voice if needed, enables the microphone for the hold, and pauses it on release.
 
-With `enableVoice: true`, users can also hold `Control+Space` for push-to-talk. Releasing either key, switching tabs, or moving away from the window disables the microphone track and ends that audio turn. Gemini Live sessions use context compression and automatically resume across provider connection refreshes.
+## Lifecycle
 
-Mia uses Gemini Live voice `Kore` by default. Override `voice.voiceName` only after testing the replacement voice in Google AI Studio.
-
-Mia is DOM-first. UI maps and live runtime context use structured CSS, role/name, label, and exact-text locators. Element bounding boxes are used only to position Mia's cursor, never as an action target. Direct click/focus requests always require confirmation, and the SDK reports completion only after it verifies a URL, control state, value, or relevant DOM change. Set `enableScreenShare: true` only for visual content the DOM cannot describe well, such as canvas charts, images, videos, PDFs, or custom-rendered surfaces. This enables a **Share screen** control but never opens the browser picker automatically. You can also call `startScreenShare()` and `stopScreenShare()` explicitly after voice starts.
-
-URL query strings, page titles, user metadata, and telemetry payloads are omitted by default. Workflow values remain in memory only, and Mia never collects secret or payment fields. Screen sharing requires a redaction callback or an explicit unredacted-screen decision.
-
-Voice and runtime events follow the app telemetry policy. Transcript content is retained only when full diagnostics are allowed and the SDK consent callback returns true.
-
-If voice fails, check the backend readiness endpoint with an admin credential and confirm runtime tokens include `voice:live`. If Mia talks but does not point or act, use Console -> Test Mia for a resolver dry-run and Console -> Logs to confirm real host-app targets and element actions.
-
-## License
-
-MIT
+- `Mia.init(options)` creates or resumes a session and returns a ready instance.
+- `mia.ask(text)` runs a text turn through observe, reason, act, and verify.
+- `mia.startVoice()` and `mia.stopVoice()` control the shared voice session.
+- `mia.confirm(approved)` and `mia.provideInput(value)` support headless/custom UI integrations.
+- `mia.stop()` aborts the active model request, queued actions, speech, animation, and pending approval.
+- `mia.destroy()` removes observers, UI, cursor, hotkeys, media, and network activity.

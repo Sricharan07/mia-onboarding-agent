@@ -1,171 +1,210 @@
-import type { GeminiLiveTokenResponse, ResolveResponse, SDKConfig, SDKRuntimeContext } from "../types/index.js";
+import type {
+  ActionReceipt,
+  AgentResponse,
+  GeminiLiveToken,
+  MiaActionManifest,
+  MiaContextEntry,
+  MiaOptions,
+  MiaVisualContext,
+  Observation,
+  RuntimeToken
+} from "../types/index.js";
+
+type RuntimePayload = {
+  observation: Observation;
+  actions: MiaActionManifest[];
+  context: MiaContextEntry[];
+  visualContext?: MiaVisualContext[];
+};
+type TokenCache = RuntimeToken & { expiresAtMs?: number };
+type StreamEvent = { type: string; data: unknown };
 
 export class BackendClient {
-  private cachedToken?: RuntimeTokenCache;
-  private tokenRequest?: Promise<RuntimeTokenCache>;
+  private readonly baseUrl: string;
+  private cachedToken?: TokenCache;
+  private tokenRequest?: Promise<TokenCache>;
 
-  constructor(private readonly config: SDKConfig) {}
+  constructor(private readonly options: MiaOptions) {
+    this.baseUrl = options.backendUrl.replace(/\/+$/, "");
+  }
 
-  async resolve(input: { sessionId: string; utterance: string; context: SDKRuntimeContext }): Promise<ResolveResponse> {
-    return this.post("/api/v1/runtime/resolve", {
-      appId: this.config.appId,
-      sessionId: input.sessionId,
-      utterance: input.utterance,
-      context: {
-        currentUrl: input.context.currentUrl,
-        currentRoute: input.context.currentRoute,
-        pageTitle: input.context.pageTitle,
-        focusedElement: input.context.focusedElement ?? null,
-        hoveredElement: input.context.hoveredElement ?? null,
-        visibleElements: input.context.visibleElements ?? [],
-        userMetadata: input.context.userMetadata
+  async createSession(payload: RuntimePayload): Promise<{ sessionId: string; resumeToken: string; revision: number; status: string }> {
+    return this.request("/api/v1/runtime/sessions", { method: "POST", body: payload });
+  }
+
+  async resumeSession(payload: RuntimePayload & { sessionId: string; resumeToken: string }): Promise<{
+    sessionId: string;
+    revision: number;
+    status: string;
+    goal: string;
+    pending?: {
+      assessment: string;
+      progress: string;
+      message: string;
+      actions: import("../types/index.js").ActionDirective[];
+      recovery: "confirm" | "verify_navigation" | "replan";
+    };
+  }> {
+    return this.request("/api/v1/runtime/sessions/resume", { method: "POST", body: payload });
+  }
+
+  async submitTurn(input: RuntimePayload & {
+    sessionId: string;
+    revision: number;
+    utterance: string;
+    source: "text" | "voice";
+    signal?: AbortSignal;
+  }, onEvent?: (event: StreamEvent) => void): Promise<AgentResponse> {
+    const { sessionId, signal, ...body } = input;
+    return this.stream(`/api/v1/runtime/sessions/${encodeURIComponent(sessionId)}/turns/stream`, body, onEvent, signal);
+  }
+
+  async continueSession(input: RuntimePayload & {
+    sessionId: string;
+    revision: number;
+    receipts: ActionReceipt[];
+    signal?: AbortSignal;
+  }, onEvent?: (event: StreamEvent) => void): Promise<AgentResponse> {
+    const { sessionId, signal, ...body } = input;
+    return this.stream(`/api/v1/runtime/sessions/${encodeURIComponent(sessionId)}/continue/stream`, body, onEvent, signal);
+  }
+
+  async confirm(input: {
+    sessionId: string;
+    confirmationId: string;
+    revision: number;
+    binding: string;
+    approved: boolean;
+    source: "text" | "voice" | "ui";
+    observation: Observation;
+  }): Promise<{ approved: boolean; revision: number; status: string }> {
+    const { sessionId, confirmationId, ...body } = input;
+    return this.request(`/api/v1/runtime/sessions/${encodeURIComponent(sessionId)}/confirmations/${encodeURIComponent(confirmationId)}`, {
+      method: "POST", body
+    });
+  }
+
+  async cancel(sessionId: string, revision?: number): Promise<{ revision: number; status: "cancelled" }> {
+    return this.request(`/api/v1/runtime/sessions/${encodeURIComponent(sessionId)}/cancel`, {
+      method: "POST", body: { revision }
+    });
+  }
+
+  async createLiveToken(): Promise<GeminiLiveToken> {
+    return this.request("/api/v1/runtime/voice/token", { method: "POST", body: {} });
+  }
+
+  async recordEvent(eventType: string, payload: Record<string, unknown>, sessionId?: string): Promise<void> {
+    await this.request("/api/v1/runtime/events", { method: "POST", body: { sessionId, eventType, payload } });
+  }
+
+  clearToken(): void {
+    this.cachedToken = undefined;
+    this.tokenRequest = undefined;
+  }
+
+  private async stream<T extends AgentResponse>(path: string, body: unknown, onEvent?: (event: StreamEvent) => void, signal?: AbortSignal): Promise<T> {
+    const response = await this.fetchWithAuth(path, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "text/event-stream" },
+      body: JSON.stringify(body),
+      signal
+    });
+    if (!response.ok) throw await responseError(response);
+    if (!response.body) throw new Error("Mia backend returned an empty event stream.");
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let final: T | undefined;
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value, { stream: !done });
+      const blocks = buffer.split(/\r?\n\r?\n/);
+      buffer = blocks.pop() ?? "";
+      for (const block of blocks) {
+        const event = parseSseBlock(block);
+        if (!event) continue;
+        onEvent?.(event);
+        if (event.type === "error") throw streamError(event.data);
+        if (["confirmation_required", "action_requested", "answer", "completed", "ask_user", "unable"].includes(event.type)) {
+          final = event.data as T;
+        }
       }
-    });
-  }
-
-  async createWorkflowSession(input: { workflowId: string; clientSessionId: string }): Promise<{ runtimeSessionId: string; status: string }> {
-    return this.post("/api/v1/runtime/workflow-sessions", {
-      appId: this.config.appId,
-      workflowId: input.workflowId,
-      clientSessionId: input.clientSessionId
-    });
-  }
-
-  async updateWorkflowSession(input: { runtimeSessionId: string; status: string; currentStepId?: string; error?: string }): Promise<void> {
-    await this.patch(`/api/v1/runtime/workflow-sessions/${input.runtimeSessionId}`, input);
-  }
-
-  async logExecution(input: { sessionId: string; workflowId?: string; stepId?: string; eventType: string; payload?: unknown }): Promise<void> {
-    const telemetry = this.telemetryRequest();
-    await this.post("/api/v1/logs/execution", {
-      appId: this.config.appId,
-      ...input,
-      payload: prepareTelemetryPayload(input.payload, telemetry),
-      telemetry
-    });
-  }
-
-  private telemetryRequest(): { mode: "events_only" | "redacted" | "full"; consent?: boolean } {
-    const telemetry = this.config.privacy?.telemetry;
-    const mode = telemetry?.mode ?? "events_only";
-    if (mode !== "full") return { mode };
-    let consent = false;
-    try {
-      consent = telemetry?.hasConsent?.() === true;
-    } catch {
-      consent = false;
+      if (done) break;
     }
-    return { mode, consent };
-  }
-
-  async createGeminiLiveToken(input: { clientSessionId: string }): Promise<GeminiLiveTokenResponse> {
-    return this.post("/api/v1/gemini/live-token", {
-      appId: this.config.appId,
-      clientSessionId: input.clientSessionId
-    });
-  }
-
-  async getLiveKitToken(input: { sessionId: string }): Promise<{ token: string; url: string }> {
-    return this.post("/api/v1/livekit/token", {
-      appId: this.config.appId,
-      sessionId: input.sessionId,
-    });
-  }
-
-  private async post<T>(path: string, body: unknown): Promise<T> {
-    return this.request<T>(path, { method: "POST", body });
-  }
-
-  private async patch<T>(path: string, body: unknown): Promise<T> {
-    return this.request<T>(path, { method: "PATCH", body });
+    if (!final) throw new Error("Mia backend event stream ended without a result.");
+    return final;
   }
 
   private async request<T>(path: string, input: { method: string; body?: unknown }): Promise<T> {
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      const token = await this.getRuntimeToken(attempt > 0);
-      const response = await fetchWithBackendError(`${this.config.backendUrl.replace(/\/+$/, "")}${path}`, {
-        method: input.method,
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${token}`
-        },
-        body: input.body === undefined ? undefined : JSON.stringify(input.body)
-      }, this.config.backendUrl);
-      const json = await response.json();
-      if (response.ok && !json?.error) return json as T;
-      const code = typeof json?.error?.code === "string" ? json.error.code : undefined;
-      if (attempt === 0 && response.status === 401 && isRefreshableRuntimeTokenError(code)) {
-        this.cachedToken = undefined;
-        continue;
-      }
-      throw new Error(json?.error?.message ?? `Backend request failed: ${response.status}`);
-    }
-    throw new Error("Runtime token refresh failed.");
-  }
-
-  private async getRuntimeToken(forceRefresh: boolean): Promise<string> {
-    if (!forceRefresh && this.cachedToken && this.cachedToken.refreshAt > Date.now()) {
-      return this.cachedToken.token;
-    }
-    if (!forceRefresh && this.tokenRequest) return (await this.tokenRequest).token;
-    this.tokenRequest = this.config.tokenProvider().then((result) => {
-      if (!result?.token) throw new Error("Mia tokenProvider returned an empty runtime token.");
-      const expiresAt = result.expiresAt ? Date.parse(result.expiresAt) : Number.NaN;
-      const refreshAt = Number.isFinite(expiresAt)
-        ? Math.max(Date.now(), expiresAt - 30_000)
-        : Date.now() + 60_000;
-      const next = { token: result.token, refreshAt };
-      this.cachedToken = next;
-      return next;
-    }).finally(() => {
-      this.tokenRequest = undefined;
+    const response = await this.fetchWithAuth(path, {
+      method: input.method,
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: input.body === undefined ? undefined : JSON.stringify(input.body)
     });
-    return (await this.tokenRequest).token;
+    if (!response.ok) throw await responseError(response);
+    return response.json() as Promise<T>;
+  }
+
+  private async fetchWithAuth(path: string, init: RequestInit): Promise<Response> {
+    let token = await this.getToken(false);
+    let response = await fetch(`${this.baseUrl}${path}`, { ...init, headers: { ...init.headers, authorization: `Bearer ${token}` } });
+    if (response.status === 401) {
+      this.clearToken();
+      token = await this.getToken(true);
+      response = await fetch(`${this.baseUrl}${path}`, { ...init, headers: { ...init.headers, authorization: `Bearer ${token}` } });
+    }
+    return response;
+  }
+
+  private async getToken(force: boolean): Promise<string> {
+    const now = Date.now();
+    if (!force && this.cachedToken && (!this.cachedToken.expiresAtMs || this.cachedToken.expiresAtMs - now > 30_000)) return this.cachedToken.token;
+    if (!force && this.tokenRequest) return (await this.tokenRequest).token;
+    const request = Promise.resolve(this.options.tokenProvider()).then((provided) => {
+      const token = typeof provided === "string" ? provided : provided.token;
+      const expiresAt = typeof provided === "string" ? undefined : provided.expiresAt;
+      if (!token?.trim()) throw new Error("Mia tokenProvider returned no runtime token.");
+      const cached: TokenCache = { token, expiresAt, expiresAtMs: expiresAt ? Date.parse(expiresAt) : undefined };
+      this.cachedToken = cached;
+      return cached;
+    }).finally(() => {
+      if (this.tokenRequest === request) this.tokenRequest = undefined;
+    });
+    this.tokenRequest = request;
+    return (await request).token;
   }
 }
 
-type RuntimeTokenCache = {
-  token: string;
-  refreshAt: number;
-};
-
-function isRefreshableRuntimeTokenError(code: string | undefined): boolean {
-  return code === "INVALID_RUNTIME_TOKEN"
-    || code === "RUNTIME_TOKEN_EXPIRED"
-    || code === "RUNTIME_TOKEN_EXHAUSTED"
-    || code === "RUNTIME_TOKEN_REVOKED"
-    || code === "RUNTIME_TOKEN_UNAVAILABLE";
-}
-
-const secretTelemetryKey = /(?:password|passcode|secret|token|authorization|api.?key|cookie|session.?key|cvv|cvc|card.?number|bank.?account|routing.?number|ssn)/i;
-const redactedTelemetryKey = /(?:text|message|prompt|utterance|transcript|value|email|phone|address|name|user|url|route|title|selector|screen|frame|image|audio)/i;
-const secretTelemetryValue = /(?:bearer\s+[a-z0-9._~+/=-]+|(?:password|passcode|secret|token|api.?key|cvv|cvc|ssn)\s*[:=]\s*\S+|\b(?:\d[ -]*?){13,19}\b)/i;
-
-function prepareTelemetryPayload(payload: unknown, telemetry: { mode: "events_only" | "redacted" | "full"; consent?: boolean }): unknown {
-  if (telemetry.mode === "events_only" || (telemetry.mode === "full" && telemetry.consent !== true)) return {};
-  return sanitizeTelemetryValue(payload, telemetry.mode, 0);
-}
-
-function sanitizeTelemetryValue(value: unknown, mode: "redacted" | "full", depth: number, key = ""): unknown {
-  if (secretTelemetryKey.test(key)) return "[redacted]";
-  if (mode === "redacted" && redactedTelemetryKey.test(key)) return "[redacted]";
-  if (depth >= 6) return "[truncated]";
-  if (value === null || typeof value === "boolean" || typeof value === "number") return value;
-  if (typeof value === "string") return secretTelemetryValue.test(value) ? "[redacted]" : value.slice(0, mode === "full" ? 2_000 : 200);
-  if (Array.isArray(value)) return value.slice(0, 100).map((item) => sanitizeTelemetryValue(item, mode, depth + 1));
-  if (typeof value !== "object") return String(value).slice(0, 200);
-  const result: Record<string, unknown> = {};
-  for (const [entryKey, entryValue] of Object.entries(value).slice(0, 100)) {
-    result[entryKey] = sanitizeTelemetryValue(entryValue, mode, depth + 1, entryKey);
+function parseSseBlock(block: string): StreamEvent | undefined {
+  let type = "message";
+  const data: string[] = [];
+  for (const line of block.split(/\r?\n/)) {
+    if (line.startsWith("event:")) type = line.slice(6).trim();
+    else if (line.startsWith("data:")) data.push(line.slice(5).trimStart());
   }
-  return result;
+  if (data.length === 0) return undefined;
+  return { type, data: JSON.parse(data.join("\n")) as unknown };
 }
 
-async function fetchWithBackendError(url: string, init: RequestInit, backendUrl: string): Promise<Response> {
+function streamError(data: unknown): Error {
+  const error = data && typeof data === "object" && "error" in data ? (data as { error?: { message?: string; code?: string } }).error : undefined;
+  const value = new Error(error?.message ?? "Mia agent request failed.");
+  value.name = error?.code ?? "MiaError";
+  return value;
+}
+
+async function responseError(response: Response): Promise<Error> {
+  let message = `Mia backend request failed (${response.status}).`;
+  let code = "MiaBackendError";
   try {
-    return await fetch(url, init);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`MIA backend is unreachable at ${backendUrl}. Start npm run dev:backend and refresh. Details: ${message}`);
+    const payload = await response.json() as { error?: { message?: string; code?: string } };
+    message = payload.error?.message ?? message;
+    code = payload.error?.code ?? code;
+  } catch {
+    // The HTTP status remains sufficient when the body is not JSON.
   }
+  const error = new Error(message);
+  error.name = code;
+  return error;
 }

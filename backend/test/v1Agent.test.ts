@@ -196,6 +196,74 @@ test("v1 agent keeps a goal across questions and blocks protected operations bef
   }
 });
 
+test("v1 agent resumes confirmations and navigation without persisting mutation values in browser storage", {
+  skip: databaseUrl ? false : "Set MIA_TEST_DATABASE_URL to run PostgreSQL integration tests."
+}, async () => {
+  assert.ok(databaseUrl);
+  const database = new V1Database({ DATABASE_URL: databaseUrl, DATABASE_POOL_MAX: 3 });
+  try {
+    await database.query("DROP SCHEMA public CASCADE");
+    await database.query("CREATE SCHEMA public");
+    await database.connect();
+    const repositories = new V1Repositories(database);
+    await repositories.product.setup({
+      product: { name: "Resume Test", origin: "http://localhost:3001", documentationOrigins: [], redactedSelectors: [], transcriptMode: "full", transcriptRetentionDays: 30 },
+      admin: { id: "admin", email: "admin@example.com", name: "Admin", passwordHash: "hash" }
+    });
+    const model = new FakeAgentModel();
+    const agent = new V1AgentService(config(databaseUrl), repositories, model);
+    const created = await agent.createSession("resume-user", runtime());
+    model.push(decision("actions", { message: "Open the draft form", actions: [planned("click", "live:create", "Open Create draft")] }));
+    const issued = await agent.submitTurn({
+      sessionId: created.sessionId, userId: "resume-user", revision: created.revision,
+      utterance: "Open the draft form", source: "text", runtime: runtime()
+    });
+    const firstBinding = issued.actions[0]?.confirmation?.binding;
+    assert.ok(firstBinding);
+    const reconfirm = await agent.resumeSession("resume-user", {
+      ...runtime(2), sessionId: created.sessionId, resumeToken: created.resumeToken
+    });
+    assert.equal(reconfirm.pending?.recovery, "confirm");
+    const refreshed = reconfirm.pending?.actions[0]?.confirmation;
+    assert.ok(refreshed);
+    assert.notEqual(refreshed.binding, firstBinding);
+    const approved = await agent.resolveConfirmation({
+      sessionId: created.sessionId, confirmationId: refreshed.id, userId: "resume-user",
+      revision: reconfirm.revision, binding: refreshed.binding, approved: true, source: "ui", observation: observation(2)
+    });
+    const navigatedRuntime = runtime(3);
+    navigatedRuntime.observation.route = "/dashboard/crm/new";
+    navigatedRuntime.observation.url = "http://localhost:3001/dashboard/crm/new";
+    const navigated = await agent.resumeSession("resume-user", {
+      ...navigatedRuntime, sessionId: created.sessionId, resumeToken: created.resumeToken
+    });
+    assert.equal(navigated.revision, approved.revision);
+    assert.equal(navigated.pending?.recovery, "verify_navigation");
+
+    const fillSession = await agent.createSession("fill-user", runtime());
+    model.push(decision("actions", {
+      message: "Enter the name",
+      actions: [{
+        actionId: "model", type: "fill", targetRef: "live:create", value: "Avery",
+        message: "Enter Avery", expectedOutcome: "The field contains Avery"
+      }]
+    }));
+    const fillIssued = await agent.submitTurn({
+      sessionId: fillSession.sessionId, userId: "fill-user", revision: fillSession.revision,
+      utterance: "Enter Avery", source: "text", runtime: runtime()
+    });
+    assert.equal(fillIssued.status, "waiting_confirmation");
+    const fillResumed = await agent.resumeSession("fill-user", {
+      ...runtime(2), sessionId: fillSession.sessionId, resumeToken: fillSession.resumeToken
+    });
+    assert.equal(fillResumed.status, "active");
+    assert.equal(fillResumed.pending?.recovery, "replan");
+    assert.equal(fillResumed.pending?.actions[0]?.value, undefined);
+  } finally {
+    await database.close();
+  }
+});
+
 class FakeAgentModel {
   readonly decisions: PlannerDecision[] = [];
   judgeCalls = 0;

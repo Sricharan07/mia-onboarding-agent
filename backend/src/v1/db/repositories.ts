@@ -589,6 +589,14 @@ export class AgentRepository {
     return result.rows.reverse();
   }
 
+  async latestIssuedStep(sessionId: string): Promise<AgentStepRecord | undefined> {
+    const result = await this.database.query<AgentStepRecord>(`
+      SELECT ${agentStepColumns()} FROM agent_steps
+      WHERE session_id = $1 AND status = 'issued' ORDER BY step_index DESC LIMIT 1
+    `, [sessionId]);
+    return result.rows[0];
+  }
+
   async updateStepStatus(id: string, status: AgentStepRecord["status"], error?: string): Promise<void> {
     await this.database.query("UPDATE agent_steps SET status = $2, error = $3 WHERE id = $1", [id, status, error ?? null]);
   }
@@ -662,6 +670,16 @@ export class AgentRepository {
       RETURNING ${confirmationColumns()}
     `, [input.id, input.sessionId, input.bindingHash, input.source, input.approved ? "approved" : "denied"]);
     if (!result.rows[0]) throw new AppError("CONFIRMATION_INVALID", "The confirmation is invalid, expired, or already resolved.", 409);
+    return result.rows[0];
+  }
+
+  async refreshConfirmation(input: { id: string; sessionId: string; bindingHash: string; expiresAt: string }): Promise<ConfirmationRecord> {
+    const result = await this.database.query<ConfirmationRecord>(`
+      UPDATE confirmations SET binding_hash = $3, expires_at = $4, status = 'pending', source = NULL, resolved_at = NULL
+      WHERE id = $1 AND session_id = $2 AND status = 'pending'
+      RETURNING ${confirmationColumns()}
+    `, [input.id, input.sessionId, input.bindingHash, input.expiresAt]);
+    if (!result.rows[0]) throw new AppError("CONFIRMATION_INVALID", "The pending confirmation could not be resumed.", 409);
     return result.rows[0];
   }
 

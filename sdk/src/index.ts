@@ -1,763 +1,659 @@
+import { DomAgentActor } from "./agent/DomAgentActuator.js";
 import { BackendClient } from "./client/backendClient.js";
-import { collectRuntimeContext, installRuntimeContextTracking } from "./context/collectRuntimeContext.js";
+import { AgentObservationCollector, redact } from "./context/AgentObservationCollector.js";
 import { MiaShadowCursor } from "./cursor/MiaShadowCursor.js";
-import { executeElementAction } from "./execution/activateElement.js";
-import { resolveElement } from "./execution/elementResolution.js";
-import { WorkflowExecutor } from "./execution/WorkflowExecutor.js";
-import type { GeminiLiveEvent, MiaStatus, ResolveResponse, RuntimeElementContext, SDKConfig } from "./types/index.js";
+import type {
+  ActionDirective,
+  AgentResponse,
+  ConfirmationRequest,
+  MiaActionDefinition,
+  MiaActionManifest,
+  MiaContextEntry,
+  MiaEvent,
+  MiaOptions,
+  MiaStatus,
+  MiaVisualContext,
+  Observation,
+  VoiceEvent
+} from "./types/index.js";
 import { MiaAssistantPanel } from "./ui/MiaAssistantPanel.js";
-import { MiaPromptUI } from "./ui/MiaPromptUI.js";
-import { GeminiLiveClient } from "./voice/geminiLiveClient.js";
+import { GeminiLiveClient, type VoiceAgentResult } from "./voice/geminiLiveClient.js";
 
-class AIOnboardingAgentInstance {
-  private config?: SDKConfig;
-  private backendClient?: BackendClient;
-  private cursor?: MiaShadowCursor;
-  private assistantPanel?: MiaAssistantPanel;
-  private promptUi?: MiaPromptUI;
-  private voice?: GeminiLiveClient;
-  private activeExecutor?: WorkflowExecutor;
-  private sessionId = `sdk_session_${crypto.randomUUID()}`;
-  private pendingWorkflowInput?: {
-    resolve: (value: string) => void;
-    reject: (error: Error) => void;
-    prompt: string;
-    settled: boolean;
-  };
-  private pendingWorkflowInputCleanup?: () => void;
-  private capturedWorkflowInput?: { key: string; at: number };
-  private removePushToTalkListeners?: () => void;
-  private removeRuntimeContextTracking?: () => void;
+type SessionReference = { sessionId: string; resumeToken: string };
+type PendingConfirmationInteraction = {
+  claimed: boolean;
+  promise: Promise<VoiceAgentResult>;
+  resolve: (approved: boolean) => boolean;
+};
+type PendingInputInteraction = {
+  claimed: boolean;
+  promise: Promise<VoiceAgentResult>;
+  resolve: (value: string) => boolean;
+};
+
+export class Mia {
+  private readonly backend: BackendClient;
+  private readonly collector: AgentObservationCollector;
+  private readonly cursor: MiaShadowCursor;
+  private readonly panel?: MiaAssistantPanel;
+  private readonly actor: DomAgentActor;
+  private readonly voice: GeminiLiveClient;
+  private readonly storageKey: string;
+  private session?: SessionReference;
+  private revision = 0;
+  private operation?: AbortController;
+  private destroyed = false;
+  private voiceActive = false;
+  private pendingConfirmation?: PendingConfirmationInteraction;
+  private pendingInput?: PendingInputInteraction;
+  private removeHotkeys?: () => void;
   private pushToTalkHeld = false;
-  private pushToTalkVoiceSession = false;
-  private voiceStartPromise?: Promise<void>;
-  private voiceConnecting = false;
-  private voiceStoppedLogged = false;
-  private screenShareActive = false;
+  private voiceStart?: Promise<void>;
 
-  init(config: SDKConfig): void {
-    if (config.privacy?.telemetry?.mode === "full" && !config.privacy.telemetry.hasConsent) {
-      throw new Error("Full Mia telemetry requires privacy.telemetry.hasConsent.");
-    }
-    if (config.enableScreenShare && !config.privacy?.redactScreenFrame && !config.privacy?.allowUnredactedScreenShare) {
-      throw new Error("Screen sharing requires privacy.redactScreenFrame or explicit allowUnredactedScreenShare consent.");
-    }
-    this.destroy();
-    this.sessionId = `sdk_session_${crypto.randomUUID()}`;
-    this.config = config;
-    this.backendClient = new BackendClient(config);
-    this.cursor = new MiaShadowCursor();
-    this.cursor.mount();
-    this.cursor.setCursorIcon(config.ui?.cursorIcon);
-    this.cursor.setOffset(config.ui?.cursorOffset);
-    this.cursor.setTheme(config.ui?.theme ?? "auto");
-    this.cursor.setBubbleMaxWidth(config.ui?.bubbleMaxWidth ?? 320);
-    this.cursor.setBubbleLingerMs(config.ui?.bubbleLingerMs ?? 3000);
-    if (config.ui?.assistantPanel !== false) {
-      this.assistantPanel = new MiaAssistantPanel({
-        enableVoice: Boolean(config.enableVoice),
-        enableScreenShare: Boolean(config.enableScreenShare),
-        textRedacted: config.privacy?.redactText !== false,
-        getSuggestions: () => this.buildSuggestedPrompts(),
-        onAsk: (text) => this.ask(text),
-        onStartVoice: () => this.startVoice(),
-        onStopVoice: () => this.stopVoice(),
-        onStartScreenShare: () => this.startScreenShare(),
-        onStopScreenShare: () => this.stopScreenShare(),
-        onCancel: () => this.cancelCurrentActivity()
-      });
-      this.assistantPanel.mount();
-    }
-    this.promptUi = new MiaPromptUI();
-    this.voice = new GeminiLiveClient(this.backendClient);
-    this.removeRuntimeContextTracking = installRuntimeContextTracking();
-    this.installPushToTalk();
-    void this.backendClient.logExecution({
-      sessionId: this.sessionId,
-      eventType: "session_started",
-      payload: { user: config.user?.id }
-    }).catch((error) => config.onError?.(toError(error)));
-    this.cursor.setState("idle");
+  static async init(options: MiaOptions): Promise<Mia> {
+    validateOptions(options);
+    const instance = new Mia(options);
+    await instance.initialize();
+    return instance;
   }
 
-  destroy(): void {
-    const activeConfig = this.config;
-    this.removePushToTalkListeners?.();
-    this.removePushToTalkListeners = undefined;
-    this.removeRuntimeContextTracking?.();
-    this.removeRuntimeContextTracking = undefined;
-    this.pushToTalkHeld = false;
-    this.pushToTalkVoiceSession = false;
-    this.voiceStartPromise = undefined;
-    this.voiceConnecting = false;
-    this.voiceStoppedLogged = false;
-    this.capturedWorkflowInput = undefined;
-    this.pendingWorkflowInputCleanup?.();
-    this.pendingWorkflowInputCleanup = undefined;
-    if (this.pendingWorkflowInput && !this.pendingWorkflowInput.settled) {
-      this.pendingWorkflowInput.settled = true;
-      this.pendingWorkflowInput.reject(new Error("AIOnboardingAgent was destroyed."));
+  private constructor(private readonly options: MiaOptions) {
+    this.backend = new BackendClient(options);
+    this.collector = new AgentObservationCollector(options);
+    this.cursor = new MiaShadowCursor();
+    this.cursor.mount();
+    this.cursor.setTheme(options.ui?.theme ?? "auto");
+    this.cursor.setCursorIcon(options.ui?.cursorIcon);
+    this.cursor.setOffset(options.ui?.cursorOffset);
+    this.cursor.setBubbleMaxWidth(options.ui?.bubbleMaxWidth ?? 320);
+    this.cursor.setBubbleLingerMs(options.ui?.bubbleLingerMs ?? 3_000);
+    if (options.ui?.enabled !== false) {
+      this.panel = new MiaAssistantPanel({
+        voiceEnabled: options.voice?.enabled === true,
+        onAsk: (text) => this.ask(text),
+        onToggleVoice: () => this.voiceActive ? this.stopVoice() : this.startVoice(),
+        onStop: () => this.stop()
+      });
+      this.panel.mount();
     }
-    this.pendingWorkflowInput = undefined;
-
-    const executor = this.activeExecutor;
-    this.activeExecutor = undefined;
-    void executor?.cancel().catch((error) => activeConfig?.onError?.(toError(error)));
-
-    const voice = this.voice;
-    this.voice = undefined;
-    void voice?.disconnect().catch((error) => activeConfig?.onError?.(toError(error)));
-    this.screenShareActive = false;
-
-    this.promptUi?.destroy();
-    this.promptUi = undefined;
-    this.cursor?.destroy();
-    this.cursor = undefined;
-    this.assistantPanel?.destroy();
-    this.assistantPanel = undefined;
-    this.backendClient = undefined;
-    this.config = undefined;
+    this.actor = new DomAgentActor({
+      collector: this.collector,
+      cursor: this.cursor,
+      config: options,
+      onAction: (action, receipt) => {
+        if (!receipt) {
+          this.emit({ type: "action_requested", action });
+          this.setStatus("guiding");
+          this.cursor.setBubbleText(action.message);
+        } else {
+          this.emit({ type: "action_completed", receipt });
+        }
+      }
+    });
+    this.voice = new GeminiLiveClient(this.backend);
+    this.storageKey = `mia:v1:${hash(options.backendUrl)}`;
   }
 
   async ask(text: string): Promise<void> {
-    if (!this.config || !this.backendClient || !this.cursor) {
-      throw new Error("AIOnboardingAgent.init(config) must be called before ask().");
+    this.assertActive();
+    const utterance = text.trim();
+    if (!utterance) return;
+    if (this.operation && !this.operation.signal.aborted) await this.stop();
+    const controller = new AbortController();
+    this.operation = controller;
+    try {
+      const result = await this.runTurn(utterance, "text", controller.signal, "text");
+      if (this.voiceActive) this.voice.speak(result.spokenMessage);
+    } catch (error) {
+      if (!controller.signal.aborted) this.handleError(error);
+    } finally {
+      if (this.operation === controller) this.operation = undefined;
     }
-    const context = collectRuntimeContext(this.config, this.sessionId);
-    this.assistantPanel?.addTranscript({ role: "user", text });
-    if (this.isVoiceConnected() && this.voice) {
-      this.voice.sendText(text);
-      return;
-    }
-    this.setStatus("thinking");
-    this.cursor.setState("thinking");
-    this.cursor.setBubbleText("Thinking...");
-    const result = await this.backendClient.resolve({ sessionId: this.sessionId, utterance: text, context });
-    this.logExecutionEvent("runtime_resolution", { ...resolveLogPayload(result), source: "text" });
-    await this.handleResolveResult(result);
   }
 
-  async startVoice(options: { microphoneInitiallyEnabled?: boolean } = {}): Promise<void> {
-    if (!this.config || !this.backendClient || !this.cursor || !this.voice) {
-      throw new Error("AIOnboardingAgent.init(config) must be called before startVoice().");
-    }
-    if (!this.config.enableVoice) {
-      throw new Error("Voice is disabled. Set enableVoice=true to start a voice session.");
-    }
-    if (this.voiceConnecting || this.voice.isConnected()) return;
-    this.voiceConnecting = true;
-    const context = collectRuntimeContext(this.config, this.sessionId);
-    this.pushToTalkVoiceSession = options.microphoneInitiallyEnabled === false;
-    this.voiceStoppedLogged = false;
+  async startVoice(): Promise<void> {
+    this.assertActive();
+    if (this.options.voice?.enabled !== true) throw new Error("Voice is disabled for this Mia installation.");
+    if (this.voiceActive || this.voiceStart) return this.voiceStart;
+    const microphoneInitiallyEnabled = this.options.voice.openMic !== false || this.pushToTalkHeld;
     this.setStatus("connecting");
-    this.cursor.setState("connecting");
-    try {
-      await this.voice.connect({
-        sessionId: this.sessionId,
-        context,
-        microphoneInitiallyEnabled: options.microphoneInitiallyEnabled,
-        voiceName: this.config.voice?.voiceName,
-        getContext: () => collectRuntimeContext(this.config!, this.sessionId),
-        resolveRequest: (utterance) => this.resolveVoiceToolRequest(utterance),
-        redactScreenFrame: this.config.privacy?.redactScreenFrame,
-        onInputLevel: (level) => this.cursor?.setListeningLevel(level),
-        onStage: (stage) => this.cursor?.setBubbleText(stage),
-        onScreenShareChange: (active) => this.handleScreenShareChange(active),
-        onEvent: (event) => this.dispatchVoiceEvent(event)
-      });
-    } catch (error) {
-      this.pushToTalkHeld = false;
-      this.pushToTalkVoiceSession = false;
-      if (error instanceof Error && error.message === "Mia voice connection was stopped.") return;
-      this.setStatus("error");
-      this.cursor.setState("error");
-      throw error;
-    } finally {
-      this.voiceConnecting = false;
-    }
-    this.assistantPanel?.setVoiceActive(true);
-    this.logExecutionEvent("voice_started", {
-      mode: this.pushToTalkVoiceSession ? "push_to_talk" : "open_mic",
-      screenShareEnabled: this.voice.isScreenSharing()
-    });
-    if (this.pushToTalkVoiceSession && !this.pushToTalkHeld) {
-      this.showPushToTalkHint();
-    }
+    const start = this.voice.connect({
+      voice: this.options.voice.voice || "Aoede",
+      microphoneInitiallyEnabled,
+      onTurn: (utterance) => this.handleVoiceTurn(utterance),
+      onConfirmation: (approved) => this.handleVoiceConfirmation(approved),
+      onEvent: (event) => this.handleVoiceEvent(event)
+    }).then(() => {
+      this.voiceActive = true;
+      this.panel?.setVoiceActive(true);
+      this.installPushToTalk();
+      this.emit({ type: "voice_started" });
+    }).finally(() => { this.voiceStart = undefined; });
+    this.voiceStart = start;
+    return start;
   }
 
   async stopVoice(): Promise<void> {
     this.pushToTalkHeld = false;
-    this.pushToTalkVoiceSession = false;
-    this.voiceStartPromise = undefined;
-    await this.voice?.disconnect();
-    this.assistantPanel?.setVoiceActive(false);
-    this.assistantPanel?.setScreenShareActive(false);
-    this.logVoiceStopped("requested");
+    await this.voice.disconnect();
+    this.voiceActive = false;
+    this.panel?.setVoiceActive(false);
     this.setStatus("ended");
-    this.cursor?.setState("offline");
-    this.cursor?.setBubbleText("Voice off");
-    this.assistantPanel?.addTranscript({ role: "system", text: "Voice is off. Start it again anytime, or keep using text." });
-    this.cursor?.startBubbleFade();
+    this.emit({ type: "voice_stopped" });
   }
 
-  async startScreenShare(): Promise<void> {
-    if (!this.config?.enableScreenShare || !this.voice) {
-      throw new Error("Screen sharing is not enabled for this Mia installation.");
-    }
-    if (!this.voice.isConnected()) await this.startVoice();
-    await this.voice.startScreenShare();
+  async stop(): Promise<void> {
+    const active = this.operation;
+    this.operation = undefined;
+    active?.abort(new DOMException("Stopped by user", "AbortError"));
+    this.pendingConfirmation = undefined;
+    this.pendingInput = undefined;
+    this.voice.interrupt();
+    this.cursor.cancelNavigation();
+    this.cursor.resetBubble();
+    if (this.session) await this.backend.cancel(this.session.sessionId).then((value) => { this.revision = value.revision; }).catch(() => undefined);
+    this.setStatus("idle");
+    this.emit({ type: "cancelled" });
   }
 
-  stopScreenShare(): void {
-    if (!this.voice?.isScreenSharing()) return;
-    this.voice.stopScreenShare();
+  async confirm(approved: boolean): Promise<void> {
+    const pending = this.pendingConfirmation;
+    if (!pending || !pending.resolve(approved)) throw new Error("Mia has no pending confirmation.");
+    await pending.promise;
   }
 
-  async connectVoice(): Promise<void> {
-    await this.startVoice();
+  async provideInput(value: string): Promise<void> {
+    const pending = this.pendingInput;
+    if (!pending || !pending.resolve(value)) throw new Error("Mia has no pending input request.");
+    await pending.promise;
   }
 
-  private async handleResolveResult(result: ResolveResponse): Promise<void> {
-    if (!this.config || !this.backendClient || !this.promptUi || !this.cursor) {
-      throw new Error("AIOnboardingAgent.init(config) must be called before handling runtime results.");
-    }
-    this.cursor.setBubbleText(result.message);
-    this.recordAssistantResult(result);
-    if (result.type === "workflow") {
-      this.setStatus("guiding");
-      const executor = new WorkflowExecutor({
-        workflow: result.workflow,
-        backendClient: this.backendClient,
-        cursor: this.cursor,
-        promptUi: this.promptUi,
-        clientSessionId: this.sessionId,
-        navigate: this.config.navigate,
-        requestUserInput: (input) => this.requestWorkflowInput(input),
-        onWorkflowEvent: this.config.onWorkflowEvent
-      });
-      this.activeExecutor = executor;
+  destroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    const active = this.operation;
+    this.operation = undefined;
+    active?.abort(new DOMException("Mia was destroyed", "AbortError"));
+    this.pendingConfirmation = undefined;
+    this.pendingInput = undefined;
+    this.voice.interrupt();
+    void this.voice.disconnect().catch(() => undefined);
+    if (this.session) void this.backend.cancel(this.session.sessionId).catch(() => undefined);
+    this.removeHotkeys?.();
+    this.removeHotkeys = undefined;
+    this.collector.destroy();
+    this.panel?.destroy();
+    this.cursor.destroy();
+  }
+
+  private async initialize(): Promise<void> {
+    const signal = new AbortController().signal;
+    const runtime = await this.runtime(signal);
+    const stored = this.readSession();
+    let pending: Awaited<ReturnType<BackendClient["resumeSession"]>>["pending"];
+    if (stored) {
       try {
-        await executor.start();
-      } finally {
-        if (this.activeExecutor === executor) this.activeExecutor = undefined;
+        const resumed = await this.backend.resumeSession({ ...runtime, ...stored });
+        this.session = stored;
+        this.revision = resumed.revision;
+        pending = resumed.pending;
+      } catch {
+        this.clearSession();
       }
-    } else if (result.type === "control") {
-      await this.handleControlResult(result);
-    } else if (result.type === "element_action") {
-      await this.handleElementActionResult(result);
-    } else {
-      const didPoint = this.pointAtResolveTarget(result);
-      const fadeMs = this.cursor.startBubbleFade();
-      if (didPoint) window.setTimeout(() => this.cursor?.returnToCursor(), fadeMs);
-      this.setStatus(this.isVoiceConnected() ? "listening" : "idle");
     }
+    if (!this.session) {
+      const created = await this.backend.createSession(runtime);
+      this.session = { sessionId: created.sessionId, resumeToken: created.resumeToken };
+      this.revision = created.revision;
+      this.writeSession(this.session);
+    }
+    this.setStatus("idle");
+    this.emit({ type: "ready", sessionId: this.session.sessionId });
+    if (this.options.voice?.enabled === true) this.installPushToTalk();
+    void this.backend.recordEvent("sdk_ready", { route: runtime.observation.route }, this.session.sessionId).catch(() => undefined);
+    if (pending) void this.recoverPending(pending);
   }
 
-  private async handleVoiceEvent(event: GeminiLiveEvent): Promise<void> {
-    if (!this.cursor) return;
-    if (event.type === "session_ready" || event.type === "listening") {
-      if (this.activeExecutor) return;
-      if (this.pushToTalkVoiceSession && !this.pushToTalkHeld) {
-        this.showPushToTalkHint();
+  private async recoverPending(pending: NonNullable<Awaited<ReturnType<BackendClient["resumeSession"]>>["pending"]>): Promise<void> {
+    const controller = new AbortController();
+    this.operation = controller;
+    try {
+      if (pending.recovery === "confirm") {
+        await this.processResponse({
+          sessionId: this.requireSession().sessionId,
+          revision: this.revision,
+          status: "waiting_confirmation",
+          assessment: pending.assessment,
+          progress: pending.progress,
+          type: "actions",
+          message: pending.message,
+          actions: pending.actions
+        }, controller.signal, "text");
         return;
       }
-      this.setStatus("listening");
-      this.cursor.setState("listening");
-      return;
+      const receipts = pending.actions.map((action) => ({
+        actionId: action.actionId,
+        idempotencyKey: action.idempotencyKey,
+        type: action.type,
+        status: pending.recovery === "verify_navigation" ? "completed" as const : "cancelled" as const,
+        message: pending.recovery === "verify_navigation"
+          ? "The new route verifies that the navigation completed before reload."
+          : "The pending action was cancelled after reload so Mia can re-observe safely.",
+        targetRef: action.target?.ref,
+        route: `${location.pathname}${location.search}`,
+        evidence: { recoveredAfterReload: true, route: `${location.pathname}${location.search}` }
+      }));
+      const runtime = await this.runtime(controller.signal);
+      const response = await this.backend.continueSession({
+        ...runtime,
+        sessionId: this.requireSession().sessionId,
+        revision: this.revision,
+        receipts,
+        signal: controller.signal
+      }, (event) => this.handleStreamEvent(event));
+      await this.processResponse(response, controller.signal, "text");
+    } catch (error) {
+      if (!controller.signal.aborted) this.handleError(error);
+    } finally {
+      if (this.operation === controller && !this.pendingConfirmation && !this.pendingInput) this.operation = undefined;
     }
+  }
+
+  private async runTurn(
+    utterance: string,
+    source: "text" | "voice",
+    signal: AbortSignal,
+    mode: "text" | "voice"
+  ): Promise<VoiceAgentResult> {
+    const session = this.requireSession();
+    this.addTranscript("user", utterance);
+    this.setStatus("thinking");
+    const runtime = await this.runtime(signal);
+    let response = await this.backend.submitTurn({
+      ...runtime,
+      sessionId: session.sessionId,
+      revision: this.revision,
+      utterance,
+      source,
+      signal
+    }, (event) => this.handleStreamEvent(event));
+    return this.processResponse(response, signal, mode);
+  }
+
+  private async processResponse(response: AgentResponse, signal: AbortSignal, mode: "text" | "voice"): Promise<VoiceAgentResult> {
+    this.revision = response.revision;
+    this.panel?.setProgress(response.progress);
+    this.emit({ type: "progress", assessment: response.assessment, progress: response.progress });
+    if (response.status === "waiting_confirmation") return this.awaitConfirmation(response, signal, mode);
+    if (response.type === "actions") return this.executeActions(response, signal, mode);
+    if (response.type === "ask_user") return this.awaitInput(response, signal, mode);
+    const state = response.type === "unable" ? "error" : response.type === "complete" ? "completed" : "answer";
+    this.addTranscript("assistant", response.message);
+    this.cursor.setBubbleText(response.message);
+    this.cursor.startBubbleFade();
+    this.setStatus(response.type === "unable" ? "error" : "idle");
+    this.emit(response.status === "completed" ? { type: "completed", message: response.message } : { type: "answer", message: response.message });
+    return { spokenMessage: response.message, state };
+  }
+
+  private async awaitConfirmation(response: AgentResponse, signal: AbortSignal, mode: "text" | "voice"): Promise<VoiceAgentResult> {
+    const confirmation = response.actions.find((action) => action.confirmation)?.confirmation;
+    if (!confirmation) throw new Error("Mia backend requested confirmation without a confirmation binding.");
+    this.emit({ type: "confirmation_required", confirmation, actions: response.actions });
+    this.setStatus("idle");
+    if (mode === "voice") {
+      const pending = this.createPendingConfirmation(response, confirmation, signal, mode);
+      pending.promise.then((result) => { if (!pending.claimed && this.voiceActive) this.voice.speak(result.spokenMessage); }).catch((error) => {
+        if (!signal.aborted) this.handleError(error);
+      });
+      return { spokenMessage: confirmation.prompt, state: "confirmation" };
+    }
+    return this.createPendingConfirmation(response, confirmation, signal, mode).promise;
+  }
+
+  private async resolveConfirmation(
+    response: AgentResponse,
+    confirmation: ConfirmationRequest,
+    approved: boolean,
+    source: "text" | "voice" | "ui",
+    signal: AbortSignal,
+    mode: "text" | "voice"
+  ): Promise<VoiceAgentResult> {
+    const session = this.requireSession();
+    const resolved = await this.backend.confirm({
+      sessionId: session.sessionId,
+      confirmationId: confirmation.id,
+      revision: this.revision,
+      binding: confirmation.binding,
+      approved,
+      source,
+      observation: this.collector.collect()
+    });
+    this.revision = resolved.revision;
+    if (!approved) {
+      const message = "Okay, I did not make that change.";
+      this.addTranscript("assistant", message);
+      this.setStatus("idle");
+      return { spokenMessage: message, state: "answer" };
+    }
+    return this.executeActions(response, signal, mode);
+  }
+
+  private async executeActions(response: AgentResponse, signal: AbortSignal, mode: "text" | "voice"): Promise<VoiceAgentResult> {
+    const session = this.requireSession();
+    this.setStatus("guiding");
+    const before = this.collector.collect();
+    const executed = await this.actor.executeBatch(response.actions, before, signal);
+    assertActive(signal);
+    const runtime = await this.runtime(signal, executed.visualContext);
+    const next = await this.backend.continueSession({
+      ...runtime,
+      sessionId: session.sessionId,
+      revision: this.revision,
+      receipts: executed.receipts,
+      signal
+    }, (event) => this.handleStreamEvent(event));
+    return this.processResponse(next, signal, mode);
+  }
+
+  private async awaitInput(response: AgentResponse, signal: AbortSignal, mode: "text" | "voice"): Promise<VoiceAgentResult> {
+    this.addTranscript("assistant", response.message);
+    this.setStatus("idle");
+    if (mode === "voice") {
+      const pending = this.createPendingInput(response, signal, mode);
+      pending.promise.then((result) => { if (!pending.claimed && this.voiceActive) this.voice.speak(result.spokenMessage); }).catch((error) => {
+        if (!signal.aborted) this.handleError(error);
+      });
+      return { spokenMessage: response.message, state: "input" };
+    }
+    return this.createPendingInput(response, signal, mode).promise;
+  }
+
+  private async handleVoiceTurn(utterance: string): Promise<VoiceAgentResult> {
+    if (this.pendingInput) {
+      this.pendingInput.claimed = true;
+      if (!this.pendingInput.resolve(utterance)) return { spokenMessage: "I still need the requested information.", state: "input" };
+      return this.pendingInput.promise;
+    }
+    if (this.pendingConfirmation) return { spokenMessage: "Please approve or decline the pending action.", state: "confirmation" };
+    if (this.operation && !this.operation.signal.aborted) await this.stop();
+    const controller = new AbortController();
+    this.operation = controller;
+    try {
+      return await this.runTurn(utterance, "voice", controller.signal, "voice");
+    } finally {
+      if (!this.pendingConfirmation && !this.pendingInput && this.operation === controller) this.operation = undefined;
+    }
+  }
+
+  private async handleVoiceConfirmation(approved: boolean): Promise<VoiceAgentResult> {
+    const pending = this.pendingConfirmation;
+    if (!pending) return { spokenMessage: "There is no pending action to confirm.", state: "error" };
+    pending.claimed = true;
+    if (!pending.resolve(approved)) return { spokenMessage: "That confirmation is no longer active.", state: "error" };
+    return pending.promise;
+  }
+
+  private createPendingConfirmation(
+    response: AgentResponse,
+    confirmation: ConfirmationRequest,
+    signal: AbortSignal,
+    mode: "text" | "voice"
+  ): PendingConfirmationInteraction {
+    const external = this.panel ? undefined : abortableDeferred<boolean>(signal);
+    const approval = this.panel
+      ? this.panel.requestConfirmation(confirmation, signal)
+      : external!.promise;
+    const pending = {} as PendingConfirmationInteraction;
+    pending.claimed = false;
+    pending.resolve = (approved) => this.panel ? this.panel.resolveConfirmation(approved) : external!.resolve(approved);
+    pending.promise = approval
+      .then((approved) => this.resolveConfirmation(response, confirmation, approved, pending.claimed ? "voice" : "ui", signal, mode))
+      .finally(() => {
+        if (this.pendingConfirmation === pending) this.pendingConfirmation = undefined;
+        this.releaseOperation(signal);
+      });
+    this.pendingConfirmation = pending;
+    return pending;
+  }
+
+  private createPendingInput(response: AgentResponse, signal: AbortSignal, mode: "text" | "voice"): PendingInputInteraction {
+    const external = this.panel ? undefined : abortableDeferred<string>(signal);
+    const answer = this.panel
+      ? this.panel.requestInput({ message: response.message, inputType: response.input?.inputType, choices: response.input?.choices }, signal)
+      : external!.promise;
+    const pending = {} as PendingInputInteraction;
+    pending.claimed = false;
+    pending.resolve = (value) => {
+      const normalized = value.trim();
+      if (!normalized) return false;
+      return this.panel ? this.panel.resolveInput(normalized) : external!.resolve(normalized);
+    };
+    pending.promise = answer
+      .then((value) => this.runTurn(value, pending.claimed ? "voice" : "text", signal, mode))
+      .finally(() => {
+        if (this.pendingInput === pending) this.pendingInput = undefined;
+        this.releaseOperation(signal);
+      });
+    this.pendingInput = pending;
+    return pending;
+  }
+
+  private releaseOperation(signal: AbortSignal): void {
+    if (this.operation?.signal === signal && !this.pendingConfirmation && !this.pendingInput) this.operation = undefined;
+  }
+
+  private async runtime(signal: AbortSignal, visualContext: MiaVisualContext[] = []) {
+    const observation = this.collector.collect();
+    const context = await Promise.all((this.options.contextProviders ?? []).map(async (provider): Promise<MiaContextEntry> => ({
+      name: provider.name,
+      description: provider.description,
+      trusted: provider.trusted ?? false,
+      content: redact((await provider.getContext({ signal, observation })).slice(0, 10_000), this.options)
+    })));
+    if (this.options.visualContextProvider) {
+      context.push({ name: "visual_context_available", description: "An optional visual provider can inspect canvas, chart, map, or image content when semantic context is insufficient.", content: "available", trusted: true });
+    }
+    return { observation, actions: actionManifests(this.options.actions ?? []), context, visualContext };
+  }
+
+  private handleStreamEvent(event: { type: string; data: unknown }): void {
     if (event.type === "thinking") {
       this.setStatus("thinking");
-      this.cursor.setState("thinking");
-      this.cursor.setBubbleText("Thinking...");
-      return;
+      this.emit({ type: "thinking", message: "Understanding your request" });
     }
-    if (event.type === "transcript_user") {
-      this.logExecutionEvent("voice_transcript_user", { text: event.text });
-      if (this.pendingWorkflowInput) {
-        this.resolvePendingWorkflowInput(event.text);
-        return;
-      }
-      const transcriptKey = normalizeRuntimeUtterance(event.text);
-      if (this.capturedWorkflowInput?.key === transcriptKey && Date.now() - this.capturedWorkflowInput.at < 5000) {
-        this.capturedWorkflowInput = undefined;
-        return;
-      }
-      this.cursor.setBubbleText(`You: ${event.text}`);
-      this.assistantPanel?.addTranscript({ role: "user", text: event.text });
-      this.config?.onTranscript?.({ role: "user", text: event.text });
-      return;
-    }
-    if (event.type === "transcript_assistant") {
-      this.setStatus("speaking");
-      this.cursor.setState("speaking");
-      if (event.isFinal) this.logExecutionEvent("voice_transcript_assistant", { text: event.text });
-      if (event.isFinal) this.assistantPanel?.addTranscript({ role: "assistant", text: event.text });
-      if (event.isFinal) this.config?.onTranscript?.({ role: "assistant", text: event.text });
-      return;
-    }
-    if (event.type === "assistant_response") {
-      this.logExecutionEvent("voice_resolution", resolveLogPayload(event.result));
-      await this.handleResolveResult(event.result);
-      return;
-    }
-    if (event.type === "tool_cancelled") {
-      if (this.activeExecutor) await this.activeExecutor.cancel();
-      else this.promptUi?.cancel();
-      this.cursor.cancelNavigation();
-      this.cursor.setBubbleText("Stopped");
-      this.setStatus(this.isVoiceConnected() ? "listening" : "idle");
-      return;
-    }
-    if (event.type === "error") {
-      const error = new Error(event.message);
-      this.logExecutionEvent("voice_error", { message: event.message, code: event.code });
-      this.cursor.setState("error");
-      this.cursor.setBubbleText(event.message);
-      this.assistantPanel?.setError(event.message);
-      this.promptUi?.showError(event.message);
-      this.config?.onError?.(error);
-      this.setStatus("error");
-      return;
-    }
-    if (event.type === "ended") {
-      this.pushToTalkHeld = false;
-      this.pushToTalkVoiceSession = false;
-      this.voiceStartPromise = undefined;
-      this.logVoiceStopped("ended");
-      this.assistantPanel?.setVoiceActive(false);
-      this.assistantPanel?.setScreenShareActive(false);
-      this.setStatus(event.reason === "connection_lost" ? "error" : "ended");
-      this.cursor.setState("offline");
-      this.cursor.setBubbleText(event.reason === "connection_lost" ? "Voice disconnected" : "Voice off");
-      this.assistantPanel?.addTranscript({
-        role: "system",
-        text: event.reason === "connection_lost"
-          ? "Voice disconnected after retrying. Text help is still available."
-          : "Voice is off. Start it again anytime, or keep using text."
-      });
-      this.cursor.startBubbleFade();
+    if (event.type === "progress" && event.data && typeof event.data === "object") {
+      const data = event.data as { assessment?: string; progress?: string };
+      this.panel?.setProgress(data.progress ?? "");
     }
   }
 
-  private dispatchVoiceEvent(event: GeminiLiveEvent): void {
-    void this.handleVoiceEvent(event).catch((error) => {
-      const handled = toError(error);
-      if (/cancelled|canceled|stopped/i.test(handled.message)) {
-        this.setStatus(this.isVoiceConnected() ? "listening" : "idle");
-        return;
-      }
-      this.logExecutionEvent("voice_error", { message: handled.message, source: "event_handler" });
-      this.cursor?.setState("error");
-      this.cursor?.setBubbleText(handled.message);
-      this.assistantPanel?.setError(handled.message);
-      this.config?.onError?.(handled);
-      this.setStatus("error");
-    });
-  }
-
-  private async handleControlResult(result: Extract<ResolveResponse, { type: "control" }>): Promise<void> {
-    if (!this.cursor || !this.config) return;
-    if (!this.activeExecutor) {
-      this.cursor.startBubbleFade();
-      this.setStatus(this.isVoiceConnected() ? "listening" : "idle");
-      return;
+  private handleVoiceEvent(event: VoiceEvent): void {
+    if (event.type === "ready") this.setStatus("idle");
+    else if (event.type === "listening") this.setStatus("listening");
+    else if (event.type === "thinking") this.setStatus("thinking");
+    else if (event.type === "speaking") this.setStatus("speaking");
+    else if (event.type === "input_level") this.cursor.setListeningLevel(event.level);
+    else if (event.type === "user_transcript") this.emit({ type: "transcript", role: "user", text: event.text });
+    else if (event.type === "assistant_transcript") this.emit({ type: "transcript", role: "assistant", text: event.text });
+    else if (event.type === "error") this.handleError(event.error);
+    else if (event.type === "ended") {
+      this.voiceActive = false;
+      this.panel?.setVoiceActive(false);
+      this.setStatus("offline");
     }
-
-    if (result.action === "cancel") {
-      await this.activeExecutor.cancel();
-      return;
-    }
-    if (result.action === "pause") {
-      await this.activeExecutor.pause();
-      this.setStatus("guiding");
-      return;
-    }
-    await this.activeExecutor.resume();
-    this.setStatus("guiding");
-  }
-
-  private async handleElementActionResult(result: Extract<ResolveResponse, { type: "element_action" }>): Promise<void> {
-    if (!this.cursor || !this.promptUi) return;
-    this.setStatus("guiding");
-    this.cursor.setState("guiding");
-    this.cursor.setBubbleText(result.message);
-
-    const resolution = resolveElement(result.target);
-    if (resolution.status !== "resolved") {
-      this.pointAtResolveTarget({ type: "answer", message: result.message, target: result.target });
-      this.cursor.setBubbleText(resolution.message);
-      this.logExecutionEvent("element_action_failed", {
-        action: result.action,
-        reason: resolution.status,
-        target: targetLogPayload(result.target)
-      });
-      this.cursor.startBubbleFade();
-      this.setStatus(this.isVoiceConnected() ? "listening" : "idle");
-      return;
-    }
-
-    const element = resolution.element;
-    element.scrollIntoView({ behavior: "smooth", block: "center" });
-    await wait(260);
-    const rect = element.getBoundingClientRect();
-    this.cursor.navigateTo(rect.x + rect.width / 2, rect.y + rect.height / 2, targetLabel(result.target));
-    await wait(560);
-
-    if (result.executionPolicy === "requires_confirmation") {
-      const approved = await this.promptUi.confirm(`Should I continue with ${targetLabel(result.target)}?`);
-      if (!approved) {
-        this.cursor.setBubbleText("Cancelled");
-        this.cursor.startBubbleFade();
-        this.setStatus(this.isVoiceConnected() ? "listening" : "idle");
-        return;
-      }
-    }
-
-    const actionResult = await executeElementAction({ element, action: result.action, locator: resolution.locator });
-    this.logExecutionEvent(`element_action_${actionResult.status}`, {
-      action: result.action,
-      target: targetLogPayload(result.target),
-      result: actionResult
-    });
-    this.cursor.returnToCursor();
-    this.cursor.setBubbleText(actionResult.message);
-    if (actionResult.status === "failed") this.promptUi.showError(actionResult.message);
-    this.cursor.startBubbleFade();
-    this.setStatus(this.isVoiceConnected() ? "listening" : "idle");
-  }
-
-  private pointAtResolveTarget(result: ResolveResponse): boolean {
-    if (result.type !== "answer" && result.type !== "no_match") return false;
-    const target = result.target;
-    const box = target?.boundingBox;
-    if (!box || box.width <= 0 || box.height <= 0) return false;
-    this.cursor?.navigateTo(box.x + box.width / 2, box.y + box.height / 2, targetLabel(target));
-    this.logExecutionEvent("element_pointed", { target: targetLogPayload(target) });
-    return true;
-  }
-
-  private logExecutionEvent(eventType: string, payload: Record<string, unknown>): void {
-    const backendClient = this.backendClient;
-    const config = this.config;
-    if (!backendClient) return;
-    void backendClient.logExecution({
-      sessionId: this.sessionId,
-      eventType,
-      payload
-    }).catch((error) => config?.onError?.(toError(error)));
-  }
-
-  private logVoiceStopped(reason: string): void {
-    if (this.voiceStoppedLogged) return;
-    this.voiceStoppedLogged = true;
-    this.logExecutionEvent("voice_stopped", { reason });
-  }
-
-  private handleScreenShareChange(active: boolean): void {
-    this.assistantPanel?.setScreenShareActive(active);
-    if (this.screenShareActive === active) return;
-    this.screenShareActive = active;
-    this.logExecutionEvent(active ? "screen_share_started" : "screen_share_stopped", {});
-  }
-
-  private async resolveVoiceToolRequest(text: string): Promise<ResolveResponse | undefined> {
-    if (!this.config || !this.backendClient) return undefined;
-    const utterance = text.trim();
-    if (!utterance) return undefined;
-
-    const key = normalizeRuntimeUtterance(utterance);
-    if (this.pendingWorkflowInput) {
-      this.resolvePendingWorkflowInput(utterance);
-      return undefined;
-    }
-    if (this.capturedWorkflowInput?.key === key && Date.now() - this.capturedWorkflowInput.at < 5000) {
-      this.capturedWorkflowInput = undefined;
-      return undefined;
-    }
-    this.capturedWorkflowInput = undefined;
-    return this.backendClient.resolve({
-      sessionId: this.sessionId,
-      utterance,
-      context: collectRuntimeContext(this.config, this.sessionId)
-    });
-  }
-
-  private async requestWorkflowInput(input: { prompt: string; inputType?: string; choices?: string[]; signal?: AbortSignal }): Promise<string> {
-    if (!this.config || !this.backendClient || !this.cursor || !this.promptUi) {
-      throw new Error("AIOnboardingAgent.init(config) must be called before collecting workflow input.");
-    }
-
-    if (!this.config.enableVoice || !this.voice?.isConnected()) {
-      return this.promptUi.ask(input.prompt, input.inputType, input.choices, input.signal);
-    }
-
-    if (input.choices?.length) {
-      return this.promptUi.ask(input.prompt, input.inputType, input.choices, input.signal);
-    }
-
-    this.cursor.setState("listening");
-    this.cursor.setBubbleText(input.prompt);
-    const inputPromise = new Promise<string>((resolve, reject) => {
-      const abort = () => {
-        this.pendingWorkflowInput = undefined;
-        this.promptUi?.clear();
-        reject(new Error("Workflow cancelled."));
-      };
-      if (input.signal?.aborted) {
-        abort();
-        return;
-      }
-      input.signal?.addEventListener("abort", abort, { once: true });
-      this.pendingWorkflowInput = {
-        resolve,
-        reject,
-        prompt: input.prompt,
-        settled: false
-      };
-      this.pendingWorkflowInputCleanup = () => input.signal?.removeEventListener("abort", abort);
-    });
-    this.promptUi.showListening(input.prompt, () => this.cancelPendingWorkflowInput());
-
-    try {
-      return await inputPromise;
-    } finally {
-      this.pendingWorkflowInputCleanup?.();
-      this.pendingWorkflowInputCleanup = undefined;
-      this.pendingWorkflowInput = undefined;
-      this.promptUi.clear();
-    }
-  }
-
-  private resolvePendingWorkflowInput(text: string): void {
-    const pending = this.pendingWorkflowInput;
-    if (!pending || pending.settled) return;
-    const value = text.trim();
-    if (!value) return;
-    pending.settled = true;
-    this.pendingWorkflowInput = undefined;
-    this.capturedWorkflowInput = { key: normalizeRuntimeUtterance(value), at: Date.now() };
-    this.cursor?.setBubbleText(`Got it: ${value}`);
-    this.assistantPanel?.addTranscript({ role: "user", text: value });
-    this.config?.onTranscript?.({ role: "user", text: value });
-    pending.resolve(value);
-  }
-
-  private cancelPendingWorkflowInput(): void {
-    const pending = this.pendingWorkflowInput;
-    if (!pending || pending.settled) return;
-    pending.settled = true;
-    this.pendingWorkflowInput = undefined;
-    pending.reject(new Error("User cancelled voice input."));
   }
 
   private installPushToTalk(): void {
-    if (!this.config?.enableVoice) return;
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (!isPushToTalkKey(event)) return;
-      if (event.isComposing || event.defaultPrevented) return;
+    if (this.removeHotkeys || this.options.voice?.pushToTalk === false) return;
+    const openMic = this.options.voice?.openMic !== false;
+    const keydown = (event: KeyboardEvent) => {
+      if (event.code !== "Space" || !event.ctrlKey || event.repeat) return;
       event.preventDefault();
-      if (event.repeat) return;
-      if (this.voiceConnecting) return;
-      if (this.voice?.isConnected() && !this.pushToTalkVoiceSession) return;
       this.pushToTalkHeld = true;
-      void this.startPushToTalk().catch((error) => {
-        const handled = toError(error);
-        this.pushToTalkHeld = false;
-        this.voice?.setMicrophoneEnabled(false);
-        this.assistantPanel?.setError(handled.message);
-        this.config?.onError?.(handled);
-      });
+      if (!this.voiceActive) {
+        void this.startVoice().then(() => this.voice.setMicrophoneEnabled(this.pushToTalkHeld || openMic)).catch((error) => this.handleError(error));
+      } else {
+        this.voice.setMicrophoneEnabled(true);
+      }
     };
-
-    const handleKeyUp = (event: KeyboardEvent) => {
-      if (!this.pushToTalkHeld || (event.code !== "Space" && event.key !== "Control")) return;
+    const keyup = (event: KeyboardEvent) => {
+      if (event.code !== "Space" || !this.pushToTalkHeld) return;
       event.preventDefault();
-      this.endPushToTalk();
+      this.pushToTalkHeld = false;
+      this.voice.setMicrophoneEnabled(openMic);
     };
-
-    const handleWindowBlur = () => this.endPushToTalk();
-    const handleVisibilityChange = () => {
-      if (document.hidden) this.endPushToTalk();
+    const blur = () => {
+      if (!this.pushToTalkHeld) return;
+      this.pushToTalkHeld = false;
+      this.voice.setMicrophoneEnabled(openMic);
     };
-
-    document.addEventListener("keydown", handleKeyDown);
-    document.addEventListener("keyup", handleKeyUp);
-    window.addEventListener("blur", handleWindowBlur);
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    this.removePushToTalkListeners = () => {
-      document.removeEventListener("keydown", handleKeyDown);
-      document.removeEventListener("keyup", handleKeyUp);
-      window.removeEventListener("blur", handleWindowBlur);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("keydown", keydown, true);
+    window.addEventListener("keyup", keyup, true);
+    window.addEventListener("blur", blur);
+    this.removeHotkeys = () => {
+      window.removeEventListener("keydown", keydown, true);
+      window.removeEventListener("keyup", keyup, true);
+      window.removeEventListener("blur", blur);
     };
   }
 
-  private async startPushToTalk(): Promise<void> {
-    if (!this.config || !this.voice || !this.cursor) return;
-    if (!this.voice.isConnected()) {
-      this.voiceStartPromise ??= this.startVoice({ microphoneInitiallyEnabled: false })
-        .finally(() => {
-          this.voiceStartPromise = undefined;
-        });
-      await this.voiceStartPromise;
-    }
-    if (!this.pushToTalkHeld) {
-      this.voice?.setMicrophoneEnabled(false);
-      this.showPushToTalkHint();
-      return;
-    }
-    this.pushToTalkVoiceSession = true;
-    this.voice.setMicrophoneEnabled(true);
-    this.setStatus("listening");
-    this.cursor.setState("listening");
-    this.cursor.setBubbleText("Listening...");
-  }
-
-  private endPushToTalk(): void {
-    this.pushToTalkHeld = false;
-    if (!this.pushToTalkVoiceSession) return;
-    this.voice?.setMicrophoneEnabled(false);
-    if (this.voice?.isConnected()) this.showPushToTalkHint();
-  }
-
-  private showPushToTalkHint(): void {
-    this.setStatus("idle");
-    this.cursor?.setState("idle");
-    this.cursor?.setBubbleText("Hold Control+Space to talk");
-    this.cursor?.startBubbleFade();
+  private addTranscript(role: "user" | "assistant" | "system", text: string): void {
+    this.panel?.addTranscript({ role, text });
+    this.emit({ type: "transcript", role, text });
   }
 
   private setStatus(status: MiaStatus): void {
-    if (status !== "ended") this.cursor?.setState(status);
-    this.assistantPanel?.setStatus(status);
-    this.config?.onStatusChange?.(status);
+    this.panel?.setStatus(status);
+    this.cursor.setState(status === "ended" ? "offline" : status);
   }
 
-  private isVoiceConnected(): boolean {
-    return Boolean(this.config?.enableVoice && this.voice instanceof GeminiLiveClient && this.voice.isConnected());
+  private handleError(error: unknown): void {
+    const value = toError(error);
+    this.panel?.showError(value);
+    this.setStatus("error");
+    this.emit({ type: "error", error: value });
   }
 
-  private async cancelCurrentActivity(): Promise<void> {
-    if (this.activeExecutor) {
-      await this.activeExecutor.cancel();
-      this.assistantPanel?.addTranscript({ role: "system", text: "Workflow cancelled." });
-      this.setStatus(this.isVoiceConnected() ? "listening" : "idle");
-      return;
-    }
-    if (this.voiceConnecting || this.isVoiceConnected()) {
-      await this.stopVoice();
-      return;
-    }
-    this.cursor?.cancelNavigation();
-    this.cursor?.setBubbleText("Stopped");
-    this.cursor?.startBubbleFade();
-    this.assistantPanel?.addTranscript({ role: "system", text: "Mia stopped the current action." });
-    this.setStatus("idle");
+  private emit(event: MiaEvent): void {
+    try { this.options.onEvent?.(event); } catch { /* Host callbacks cannot break Mia. */ }
   }
 
-  private recordAssistantResult(result: ResolveResponse): void {
-    if (this.isVoiceConnected()) return;
-    const target = "target" in result && result.target ? ` Target: ${targetLabel(result.target)}.` : "";
-    const action = result.type === "element_action" ? ` Action: ${result.action}.` : "";
-    this.assistantPanel?.addTranscript({ role: "assistant", text: `${result.message}${target}${action}` });
+  private requireSession(): SessionReference {
+    if (!this.session) throw new Error("Mia has not finished initializing.");
+    return this.session;
   }
 
-  private buildSuggestedPrompts(): string[] {
-    if (!this.config) return defaultPrompts();
-    const context = collectRuntimeContext(this.config, this.sessionId);
-    const labels = (context.visibleElements ?? [])
-      .map((element) => targetLabel(element))
-      .filter((label) => label && label !== "that item" && label !== "target")
-      .filter(uniqueByNormalized)
-      .slice(0, 3);
-    const prompts = labels.flatMap((label, index) => index === 0
-      ? [`Where is ${label}?`, `Click ${label}`]
-      : [`Where is ${label}?`]
-    );
-    return [...prompts, ...defaultPrompts()].slice(0, 5);
+  private readSession(): SessionReference | undefined {
+    try {
+      const value = sessionStorage.getItem(this.storageKey);
+      if (!value) return undefined;
+      const parsed = JSON.parse(value) as Partial<SessionReference>;
+      return parsed.sessionId && parsed.resumeToken ? { sessionId: parsed.sessionId, resumeToken: parsed.resumeToken } : undefined;
+    } catch { return undefined; }
   }
 
+  private writeSession(value: SessionReference): void {
+    try { sessionStorage.setItem(this.storageKey, JSON.stringify(value)); } catch { /* Session resumption is best effort in restricted storage contexts. */ }
+  }
+
+  private clearSession(): void {
+    try { sessionStorage.removeItem(this.storageKey); } catch { /* Ignore restricted storage. */ }
+  }
+
+  private assertActive(): void {
+    if (this.destroyed) throw new Error("This Mia instance has been destroyed.");
+  }
 }
 
-export const AIOnboardingAgent = new AIOnboardingAgentInstance();
-export type * from "./types/index.js";
+export function defineMiaAction<TInput extends Record<string, unknown>>(definition: MiaActionDefinition<TInput>): MiaActionDefinition<TInput> {
+  validateAction(definition);
+  return definition;
+}
 
-function resolveLogPayload(result: ResolveResponse): Record<string, unknown> {
-  if (result.type === "workflow") {
-    return {
-      resultType: result.type,
-      message: result.message,
-      workflowId: result.workflow.workflowId,
-      workflowName: result.workflow.name
-    };
+function validateOptions(options: MiaOptions): void {
+  if (typeof window === "undefined" || typeof document === "undefined") throw new Error("Mia.init must run in a browser.");
+  const backend = new URL(options.backendUrl, window.location.href);
+  if (!/^https?:$/.test(backend.protocol)) throw new Error("Mia backendUrl must use HTTP or HTTPS.");
+  if (typeof options.tokenProvider !== "function") throw new Error("Mia tokenProvider is required.");
+  const names = new Set<string>();
+  for (const action of options.actions ?? []) {
+    validateAction(action);
+    if (names.has(action.name)) throw new Error(`Duplicate Mia action: ${action.name}.`);
+    names.add(action.name);
   }
-  if (result.type === "control") {
-    return {
-      resultType: result.type,
-      action: result.action,
-      message: result.message
-    };
+  for (const provider of options.contextProviders ?? []) {
+    if (!/^[a-z][a-z0-9_]{0,63}$/.test(provider.name)) throw new Error(`Invalid Mia context provider name: ${provider.name}.`);
   }
-  if (result.type === "element_action") {
-    return {
-      resultType: result.type,
-      action: result.action,
-      message: result.message,
-      executionPolicy: result.executionPolicy,
-      target: targetLogPayload(result.target)
-    };
+}
+
+function validateAction<TInput extends Record<string, unknown>>(action: MiaActionDefinition<TInput>): void {
+  if (!/^[a-z][a-z0-9_]{0,63}$/.test(action.name)) throw new Error(`Invalid Mia action name: ${action.name}.`);
+  if (!action.description.trim()) throw new Error(`Mia action ${action.name} requires a description.`);
+  if (!action.inputSchema || typeof action.inputSchema !== "object") throw new Error(`Mia action ${action.name} requires a JSON input schema.`);
+  if (!["read", "navigate", "reversible_write", "manual", "blocked"].includes(action.risk)) throw new Error(`Mia action ${action.name} has an invalid risk classification.`);
+}
+
+function actionManifests(actions: MiaActionDefinition[]): MiaActionManifest[] {
+  return actions.map(({ name, description, inputSchema, risk }) => ({ name, description, inputSchema, risk }));
+}
+
+function hash(value: string): string {
+  let result = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    result ^= value.charCodeAt(index);
+    result = Math.imul(result, 0x01000193);
   }
+  return (result >>> 0).toString(36);
+}
+
+function assertActive(signal: AbortSignal): void {
+  if (signal.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
+}
+
+function toError(value: unknown): Error {
+  return value instanceof Error ? value : new Error(String(value));
+}
+
+function abortableDeferred<T>(signal: AbortSignal): { promise: Promise<T>; resolve: (value: T) => boolean } {
+  let settled = false;
+  let resolvePromise!: (value: T) => void;
+  let rejectPromise!: (reason: unknown) => void;
+  const promise = new Promise<T>((resolve, reject) => {
+    resolvePromise = resolve;
+    rejectPromise = reject;
+  });
+  const abort = () => {
+    if (settled) return;
+    settled = true;
+    rejectPromise(signal.reason ?? new DOMException("Aborted", "AbortError"));
+  };
+  if (signal.aborted) abort();
+  else signal.addEventListener("abort", abort, { once: true });
   return {
-    resultType: result.type,
-    message: result.message,
-    target: result.target ? targetLogPayload(result.target) : undefined
+    promise,
+    resolve: (value) => {
+      if (settled) return false;
+      settled = true;
+      signal.removeEventListener("abort", abort);
+      resolvePromise(value);
+      return true;
+    }
   };
 }
 
-function targetLogPayload(target: RuntimeElementContext): Record<string, unknown> {
-  return {
-    label: target.label,
-    text: target.text,
-    elementId: target.elementId,
-    selector: target.selector,
-    locators: target.locators,
-    mappedElementId: target.mappedElementId,
-    uiMapVersionId: target.uiMapVersionId,
-    fingerprint: target.fingerprint,
-    boundingBox: target.boundingBox
-  };
-}
-
-function targetLabel(target: RuntimeElementContext): string {
-  return target.label ?? target.text ?? target.elementId ?? target.selector ?? "target";
-}
-
-function wait(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
-
-function toError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error));
-}
-
-function isPushToTalkKey(event: KeyboardEvent): boolean {
-  return event.ctrlKey && event.code === "Space";
-}
-
-function normalizeRuntimeUtterance(text: string): string {
-  return text.toLowerCase().replace(/\s+/g, " ").trim();
-}
-
-function defaultPrompts(): string[] {
-  return [
-    "What can I do on this page?",
-    "Show me the most important section",
-    "Help me understand this screen"
-  ];
-}
-
-function uniqueByNormalized(value: string, index: number, values: string[]): boolean {
-  const normalized = value.toLowerCase().replace(/\s+/g, " ").trim();
-  return values.findIndex((candidate) => candidate.toLowerCase().replace(/\s+/g, " ").trim() === normalized) === index;
-}
+export type {
+  ActionDirective,
+  AgentResponse,
+  MiaActionDefinition,
+  MiaActionReceiptResult,
+  MiaContextEntry,
+  MiaContextProvider,
+  MiaEvent,
+  MiaOptions,
+  MiaVisualContext,
+  MiaVisualContextProvider,
+  Observation,
+  ObservationNode,
+  RiskLevel
+} from "./types/index.js";
