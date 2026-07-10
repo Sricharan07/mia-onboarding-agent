@@ -42,7 +42,7 @@ const schema = z.object({
   GEMINI_PLANNER_MODEL: z.string().default("gemini-3.5-flash"),
   GEMINI_VISION_MODEL: z.string().default("gemini-3.5-flash"),
   GEMINI_EMBEDDING_MODEL: z.string().default("gemini-embedding-2"),
-  GEMINI_EMBEDDING_DIMENSIONS: z.coerce.number().int().min(128).max(3_072).default(768),
+  GEMINI_EMBEDDING_DIMENSIONS: z.coerce.number().int().refine((value) => value === 768, "GEMINI_EMBEDDING_DIMENSIONS must be 768 for the v1 index.").default(768),
   GEMINI_LIVE_MODEL: z.string().default("gemini-3.1-flash-live-preview"),
   GEMINI_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().max(72_000).default(1_800),
   GEMINI_NEW_SESSION_TTL_SECONDS: z.coerce.number().int().positive().max(72_000).default(60),

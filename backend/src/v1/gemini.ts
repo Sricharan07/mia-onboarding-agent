@@ -1,4 +1,5 @@
-import { GoogleGenAI, Modality, ThinkingLevel } from "@google/genai";
+import { createPartFromUri, FileState, GoogleGenAI, Modality, ThinkingLevel } from "@google/genai";
+import type { Part } from "@google/genai";
 import { z } from "zod";
 import type { V1Config } from "./config.js";
 import { plannerDecisionSchema, type PlannerDecision, type VisualContext } from "./domain.js";
@@ -88,21 +89,25 @@ export class V1Gemini {
     if (texts.length === 0) return [];
     const client = await this.getClient();
     const embeddings: number[][] = [];
-    for (const text of texts) {
+    for (let offset = 0; offset < texts.length; offset += 100) {
+      const batch = texts.slice(offset, offset + 100);
       const response = await client.models.embedContent({
         model: this.config.GEMINI_EMBEDDING_MODEL,
-        contents: text,
+        contents: batch,
         config: {
           outputDimensionality: this.config.GEMINI_EMBEDDING_DIMENSIONS,
           httpOptions: { timeout: this.config.PROVIDER_REQUEST_TIMEOUT_MS },
           abortSignal: signal
         }
       });
-      const values = response.embeddings?.[0]?.values;
-      if (!values || values.length !== this.config.GEMINI_EMBEDDING_DIMENSIONS) {
-        throw new AppError("GEMINI_EMBEDDING_INVALID", "Gemini returned an invalid embedding.", 502);
+      if (response.embeddings?.length !== batch.length) throw new AppError("GEMINI_EMBEDDING_INVALID", "Gemini returned an incomplete embedding batch.", 502);
+      for (const embedding of response.embeddings) {
+        const values = embedding.values;
+        if (!values || values.length !== this.config.GEMINI_EMBEDDING_DIMENSIONS) {
+          throw new AppError("GEMINI_EMBEDDING_INVALID", "Gemini returned an invalid embedding.", 502);
+        }
+        embeddings.push(values);
       }
-      embeddings.push(values);
     }
     return embeddings;
   }
@@ -110,23 +115,42 @@ export class V1Gemini {
   async analyzeRecording(input: {
     sessionId?: string;
     mimeType: string;
-    data: string;
+    filePath: string;
     productName: string;
     knownRoutes: string[];
     signal?: AbortSignal;
   }): Promise<SkillAnalysis> {
-    const generated = await this.generateJson({
-      sessionId: input.sessionId,
-      purpose: "recording_to_skill",
-      model: this.config.GEMINI_VISION_MODEL,
-      system: `Convert a product walkthrough recording into an adaptive agent skill. Capture business intent and observable success evidence, not brittle click coordinates or fixed selectors. Never copy credentials, personal values, or payment data from the recording.`,
-      prompt: `Product: ${input.productName}\nKnown routes: ${input.knownRoutes.join(", ") || "none"}\nReturn a reusable reviewed skill for what the recording demonstrates.`,
-      schema: skillAnalysisSchema,
-      media: { mimeType: input.mimeType, data: input.data },
-      signal: input.signal,
-      thinkingLevel: "high"
+    const client = await this.getClient();
+    const uploaded = await client.files.upload({
+      file: input.filePath,
+      config: { mimeType: input.mimeType, displayName: "Mia product walkthrough", abortSignal: input.signal }
     });
-    return generated.data;
+    if (!uploaded.name) throw new AppError("GEMINI_FILE_INVALID", "Gemini did not return an uploaded file name.", 502);
+    try {
+      let file = uploaded;
+      const deadline = Date.now() + 5 * 60_000;
+      while (file.state === FileState.PROCESSING && Date.now() < deadline) {
+        await abortableDelay(2_000, input.signal);
+        file = await client.files.get({ name: uploaded.name });
+      }
+      if (file.state !== FileState.ACTIVE || !file.uri || !file.mimeType) {
+        throw new AppError("GEMINI_FILE_PROCESSING_FAILED", "Gemini could not process the walkthrough recording.", 502);
+      }
+      const generated = await this.generateJson({
+        sessionId: input.sessionId,
+        purpose: "recording_to_skill",
+        model: this.config.GEMINI_VISION_MODEL,
+        system: `Convert a product walkthrough recording into an adaptive agent skill. Capture business intent and observable success evidence, not brittle click coordinates or fixed selectors. Never copy credentials, personal values, or payment data from the recording.`,
+        prompt: `Product: ${input.productName}\nKnown routes: ${input.knownRoutes.join(", ") || "none"}\nReturn a reusable reviewed skill for what the recording demonstrates.`,
+        schema: skillAnalysisSchema,
+        parts: [createPartFromUri(file.uri, file.mimeType)],
+        signal: input.signal,
+        thinkingLevel: "high"
+      });
+      return generated.data;
+    } finally {
+      await client.files.delete({ name: uploaded.name }).catch(() => undefined);
+    }
   }
 
   async createLiveToken(): Promise<{ token: string; model: string; expiresAt: string; websocketUrl: string }> {
@@ -163,13 +187,14 @@ export class V1Gemini {
     schema: z.ZodType<T>;
     visualContext?: VisualContext[];
     media?: { mimeType: string; data: string };
+    parts?: Part[];
     signal?: AbortSignal;
     thinkingLevel: "minimal" | "low" | "medium" | "high";
   }): Promise<{ data: T; latencyMs: number; usage: ModelUsage }> {
     const started = Date.now();
     let error: unknown;
     try {
-      const parts: Array<Record<string, unknown>> = [{ text: input.prompt }];
+      const parts: Part[] = [{ text: input.prompt }, ...(input.parts ?? [])];
       for (const visual of input.visualContext ?? []) {
         if (visual.data && visual.mimeType) parts.push({ inlineData: { mimeType: visual.mimeType, data: visual.data } });
         if (visual.description) parts.push({ text: `<visual_context name="${visual.name}">${visual.description}</visual_context>` });
@@ -245,6 +270,17 @@ export class V1Gemini {
       // Diagnostics must never replace the provider result.
     }
   }
+}
+
+function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener("abort", () => {
+      clearTimeout(timer);
+      reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+    }, { once: true });
+  });
 }
 
 function stripCodeFence(text: string): string {

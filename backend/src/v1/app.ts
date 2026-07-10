@@ -16,6 +16,8 @@ import { V1Gemini } from "./gemini.js";
 import { V1SecretService } from "./secrets.js";
 import { V1RateLimiter } from "./rateLimit.js";
 import { registerV1Routes } from "./routes.js";
+import { V1KnowledgeService } from "./knowledge.js";
+import { V1UiScanner } from "./scanner.js";
 import { AppError } from "../utils/errors.js";
 
 export type V1AppDependencies = ReturnType<typeof createDependencies>;
@@ -73,6 +75,8 @@ export async function buildApp(config: V1Config, overrides: { model?: AgentModel
   registerErrorHandler(app);
   await registerV1Routes(app, dependencies);
   await registerConsole(app, config);
+  void dependencies.knowledge.resumePending();
+  void dependencies.scanner.resumePending();
 
   let sweeping = false;
   const sweep = async () => {
@@ -94,6 +98,7 @@ export async function buildApp(config: V1Config, overrides: { model?: AgentModel
   retentionTimer.unref();
   app.addHook("onClose", async () => {
     clearInterval(retentionTimer);
+    await Promise.allSettled([dependencies.knowledge.close(), dependencies.scanner.close()]);
     await database.close();
   });
   return app;
@@ -103,12 +108,16 @@ function createDependencies(config: V1Config, database: V1Database, model?: Agen
   const repositories = new V1Repositories(database);
   const secrets = new V1SecretService(config, repositories.secrets);
   const gemini = new V1Gemini(config, repositories.diagnostics, () => secrets.getGeminiApiKey());
+  const knowledge = new V1KnowledgeService(config, repositories, gemini);
+  const scanner = new V1UiScanner(config, repositories, secrets, gemini);
   return {
     config,
     database,
     repositories,
     secrets,
     gemini,
+    knowledge,
+    scanner,
     auth: new V1AuthService(config, repositories),
     agent: new V1AgentService(config, repositories, model ?? gemini),
     rateLimiter: new V1RateLimiter(config.RATE_LIMIT_WINDOW_MS)

@@ -2,6 +2,8 @@ import { z } from "zod";
 
 export const riskLevelSchema = z.enum(["read", "navigate", "reversible_write", "manual", "blocked"]);
 export type RiskLevel = z.infer<typeof riskLevelSchema>;
+export const uiActionPolicySchema = z.enum(["guide_only", "navigate", "reversible_write", "manual", "blocked"]);
+export type UiActionPolicy = z.infer<typeof uiActionPolicySchema>;
 
 export const targetLocatorSchema = z.discriminatedUnion("strategy", [
   z.object({ strategy: z.literal("css"), selector: z.string().min(1).max(2_000) }),

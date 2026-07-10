@@ -5,7 +5,8 @@ import type {
   HostActionManifest,
   Observation,
   PlannerDecision,
-  RiskLevel
+  RiskLevel,
+  UiActionPolicy
 } from "../domain.js";
 import type { V1Database } from "./database.js";
 import { AppError, NotFoundError } from "../../utils/errors.js";
@@ -175,6 +176,28 @@ export type HostActionRecord = HostActionManifest & {
   firstSeenAt: string;
   lastSeenAt: string;
   reviewedAt: string | null;
+};
+
+export type RecordingRecord = {
+  id: string;
+  name: string;
+  description: string | null;
+  filePath: string;
+  status: "uploaded" | "processing" | "needs_review" | "ready" | "failed";
+  analysis: Record<string, unknown> | null;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type UiMapVersionRecord = {
+  id: string;
+  status: "pending" | "scanning" | "ready" | "failed";
+  routes: string[];
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  completedAt: string | null;
+  error: string | null;
 };
 
 export class V1Repositories {
@@ -731,6 +754,33 @@ export class KnowledgeRepository {
     return result.rows;
   }
 
+  async archiveSource(id: string): Promise<KnowledgeSourceRecord> {
+    return this.updateSource(id, { status: "archived" });
+  }
+
+  async upsertSource(input: {
+    id: string;
+    kind: KnowledgeSourceRecord["kind"];
+    name: string;
+    sourceUrl?: string;
+    filePath?: string;
+    status: KnowledgeSourceRecord["status"];
+    metadata?: Record<string, unknown>;
+  }): Promise<KnowledgeSourceRecord> {
+    const result = await this.database.query<KnowledgeSourceRecord>(`
+      INSERT INTO knowledge_sources (id, kind, name, source_url, file_path, status, metadata, completed_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, CASE WHEN $6 = 'ready' THEN NOW() ELSE NULL END)
+      ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, source_url = EXCLUDED.source_url,
+        file_path = EXCLUDED.file_path, status = EXCLUDED.status, metadata = EXCLUDED.metadata,
+        error = NULL, updated_at = NOW(), completed_at = EXCLUDED.completed_at
+      RETURNING ${knowledgeSourceColumns()}
+    `, [
+      input.id, input.kind, input.name, input.sourceUrl ?? null, input.filePath ?? null,
+      input.status, JSON.stringify(input.metadata ?? {})
+    ]);
+    return result.rows[0]!;
+  }
+
   async updateSource(id: string, input: { status: KnowledgeSourceRecord["status"]; error?: string | null; metadata?: Record<string, unknown> }): Promise<KnowledgeSourceRecord> {
     const current = await this.getSource(id);
     const result = await this.database.query<KnowledgeSourceRecord>(`
@@ -813,6 +863,22 @@ export class KnowledgeRepository {
     return result.rows[0]!;
   }
 
+  async updateSkill(id: string, input: Partial<Pick<SkillRecord, "name" | "description" | "goal" | "businessContext" | "steps" | "constraints" | "expectedOutcomes">>): Promise<SkillRecord> {
+    const current = await this.getSkill(id);
+    const result = await this.database.query<SkillRecord>(`
+      UPDATE skills SET name = $2, description = $3, goal = $4, business_context = $5,
+        steps = $6::jsonb, constraints = $7::jsonb, expected_outcomes = $8::jsonb,
+        status = 'needs_review', version = version + 1, updated_at = NOW(), published_at = NULL
+      WHERE id = $1 RETURNING ${skillColumns()}
+    `, [
+      id, input.name ?? current.name, input.description ?? current.description,
+      input.goal ?? current.goal, input.businessContext ?? current.businessContext,
+      JSON.stringify(input.steps ?? current.steps), JSON.stringify(input.constraints ?? current.constraints),
+      JSON.stringify(input.expectedOutcomes ?? current.expectedOutcomes)
+    ]);
+    return result.rows[0]!;
+  }
+
   async listSkills(status?: SkillRecord["status"]): Promise<SkillRecord[]> {
     const result = status
       ? await this.database.query<SkillRecord>(`SELECT ${skillColumns()} FROM skills WHERE status = $1 ORDER BY updated_at DESC`, [status])
@@ -848,7 +914,7 @@ export class KnowledgeRepository {
     description: string | null;
     locators: unknown[];
     fingerprint: string;
-    actionPolicy: RiskLevel;
+    actionPolicy: UiActionPolicy;
   }>> {
     const result = route
       ? await this.database.query(`
@@ -856,20 +922,128 @@ export class KnowledgeRepository {
                  elements.description, elements.locators, elements.fingerprint,
                  elements.action_policy AS "actionPolicy"
           FROM ui_elements elements JOIN ui_map_versions versions ON versions.id = elements.map_version_id
-          WHERE versions.status = 'ready' AND elements.route = $1
-          ORDER BY versions.completed_at DESC LIMIT $2
+          WHERE versions.id = (SELECT id FROM ui_map_versions WHERE status = 'ready' ORDER BY completed_at DESC LIMIT 1)
+            AND elements.route = $1
+          ORDER BY elements.element_key LIMIT $2
         `, [route, limit])
       : await this.database.query(`
           SELECT elements.element_key AS "elementKey", elements.route, elements.role, elements.name,
                  elements.description, elements.locators, elements.fingerprint,
                  elements.action_policy AS "actionPolicy"
           FROM ui_elements elements JOIN ui_map_versions versions ON versions.id = elements.map_version_id
-          WHERE versions.status = 'ready' ORDER BY versions.completed_at DESC LIMIT $1
+          WHERE versions.id = (SELECT id FROM ui_map_versions WHERE status = 'ready' ORDER BY completed_at DESC LIMIT 1)
+          ORDER BY elements.route, elements.element_key LIMIT $1
         `, [limit]);
     return result.rows as Array<{
       elementKey: string; route: string; role: string | null; name: string | null;
-      description: string | null; locators: unknown[]; fingerprint: string; actionPolicy: RiskLevel;
+      description: string | null; locators: unknown[]; fingerprint: string; actionPolicy: UiActionPolicy;
     }>;
+  }
+
+  async createMapVersion(input: { id: string; routes: string[]; metadata?: Record<string, unknown> }): Promise<UiMapVersionRecord> {
+    const result = await this.database.query<UiMapVersionRecord>(`
+      INSERT INTO ui_map_versions (id, status, routes, metadata)
+      VALUES ($1, 'pending', $2::jsonb, $3::jsonb)
+      RETURNING ${uiMapVersionColumns()}
+    `, [input.id, JSON.stringify(input.routes), JSON.stringify(input.metadata ?? {})]);
+    return result.rows[0]!;
+  }
+
+  async getMapVersion(id: string): Promise<UiMapVersionRecord> {
+    const result = await this.database.query<UiMapVersionRecord>(`SELECT ${uiMapVersionColumns()} FROM ui_map_versions WHERE id = $1`, [id]);
+    if (!result.rows[0]) throw new NotFoundError(`UI map version not found: ${id}`);
+    return result.rows[0];
+  }
+
+  async listMapVersions(): Promise<UiMapVersionRecord[]> {
+    const result = await this.database.query<UiMapVersionRecord>(`SELECT ${uiMapVersionColumns()} FROM ui_map_versions ORDER BY created_at DESC`);
+    return result.rows;
+  }
+
+  async updateMapVersion(id: string, input: {
+    status: UiMapVersionRecord["status"];
+    routes?: string[];
+    metadata?: Record<string, unknown>;
+    error?: string | null;
+  }): Promise<UiMapVersionRecord> {
+    const current = await this.getMapVersion(id);
+    const result = await this.database.query<UiMapVersionRecord>(`
+      UPDATE ui_map_versions SET status = $2, routes = $3::jsonb, metadata = $4::jsonb,
+        error = $5, completed_at = CASE WHEN $2 IN ('ready', 'failed') THEN NOW() ELSE NULL END
+      WHERE id = $1 RETURNING ${uiMapVersionColumns()}
+    `, [id, input.status, JSON.stringify(input.routes ?? current.routes), JSON.stringify(input.metadata ?? current.metadata), input.error ?? null]);
+    return result.rows[0]!;
+  }
+
+  async replaceMapElements(mapVersionId: string, elements: Array<{
+    id: string;
+    elementKey: string;
+    route: string;
+    role?: string;
+    name?: string;
+    description?: string;
+    locators: unknown[];
+    fingerprint: string;
+    actionPolicy: UiActionPolicy;
+    metadata?: Record<string, unknown>;
+  }>): Promise<void> {
+    await this.database.transaction(async (client) => {
+      await client.query("DELETE FROM ui_elements WHERE map_version_id = $1", [mapVersionId]);
+      for (const element of elements) {
+        await client.query(`
+          INSERT INTO ui_elements (
+            id, map_version_id, element_key, route, role, name, description,
+            locators, fingerprint, action_policy, metadata
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11::jsonb)
+        `, [
+          element.id, mapVersionId, element.elementKey, element.route, element.role ?? null,
+          element.name ?? null, element.description ?? null, JSON.stringify(element.locators),
+          element.fingerprint, element.actionPolicy, JSON.stringify(element.metadata ?? {})
+        ]);
+      }
+    });
+  }
+
+  async updateMappedElementPolicy(elementKey: string, actionPolicy: UiActionPolicy): Promise<void> {
+    const result = await this.database.query(`
+      UPDATE ui_elements SET action_policy = $2
+      WHERE element_key = $1 AND map_version_id = (
+        SELECT id FROM ui_map_versions WHERE status = 'ready' ORDER BY completed_at DESC LIMIT 1
+      )
+    `, [elementKey, actionPolicy]);
+    if (!result.rowCount) throw new NotFoundError(`Mapped element not found: ${elementKey}`);
+  }
+
+  async createRecording(input: { id: string; name: string; description?: string; filePath: string }): Promise<RecordingRecord> {
+    const result = await this.database.query<RecordingRecord>(`
+      INSERT INTO recordings (id, name, description, file_path, status)
+      VALUES ($1, $2, $3, $4, 'uploaded') RETURNING ${recordingColumns()}
+    `, [input.id, input.name, input.description ?? null, input.filePath]);
+    return result.rows[0]!;
+  }
+
+  async getRecording(id: string): Promise<RecordingRecord> {
+    const result = await this.database.query<RecordingRecord>(`SELECT ${recordingColumns()} FROM recordings WHERE id = $1`, [id]);
+    if (!result.rows[0]) throw new NotFoundError(`Recording not found: ${id}`);
+    return result.rows[0];
+  }
+
+  async listRecordings(): Promise<RecordingRecord[]> {
+    const result = await this.database.query<RecordingRecord>(`SELECT ${recordingColumns()} FROM recordings ORDER BY created_at DESC`);
+    return result.rows;
+  }
+
+  async updateRecording(id: string, input: {
+    status: RecordingRecord["status"];
+    analysis?: Record<string, unknown> | null;
+    error?: string | null;
+  }): Promise<RecordingRecord> {
+    const current = await this.getRecording(id);
+    const result = await this.database.query<RecordingRecord>(`
+      UPDATE recordings SET status = $2, analysis = $3::jsonb, error = $4, updated_at = NOW()
+      WHERE id = $1 RETURNING ${recordingColumns()}
+    `, [id, input.status, JSON.stringify(input.analysis === undefined ? current.analysis : input.analysis), input.error ?? null]);
+    return result.rows[0]!;
   }
 }
 
@@ -1028,6 +1202,16 @@ function skillColumns(): string {
   return `id, name, description, goal, business_context AS "businessContext", steps, constraints,
     expected_outcomes AS "expectedOutcomes", status, version, recording_id AS "recordingId",
     created_at::text AS "createdAt", updated_at::text AS "updatedAt", published_at::text AS "publishedAt"`;
+}
+
+function uiMapVersionColumns(): string {
+  return `id, status, routes, metadata, created_at::text AS "createdAt",
+    completed_at::text AS "completedAt", error`;
+}
+
+function recordingColumns(): string {
+  return `id, name, description, file_path AS "filePath", status, analysis, error,
+    created_at::text AS "createdAt", updated_at::text AS "updatedAt"`;
 }
 
 function requireSessionUpdate(session: AgentSessionRecord | undefined, expectedRevision: number): AgentSessionRecord {

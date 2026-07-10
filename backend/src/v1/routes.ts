@@ -11,6 +11,7 @@ import {
   resumeSessionSchema,
   riskLevelSchema,
   submitTurnSchema,
+  uiActionPolicySchema,
   type AgentResponse
 } from "./domain.js";
 import {
@@ -22,6 +23,7 @@ import {
 } from "./auth.js";
 import { parseWithSchema } from "../utils/zod.js";
 import { AppError } from "../utils/errors.js";
+import { removeStoredUpload, storeMultipartUpload } from "./uploads.js";
 
 const setupSchema = z.object({
   setupToken: z.string().min(1),
@@ -46,7 +48,6 @@ const productUpdateSchema = z.object({
   redactedSelectors: z.array(z.string().trim().min(1).max(1_000)).max(100).optional(),
   transcriptMode: z.enum(["full", "redacted", "disabled"]).optional(),
   transcriptRetentionDays: z.number().int().min(1).max(365).optional(),
-  scanConfig: z.record(z.string(), z.unknown()).optional(),
   voiceConfig: z.object({
     enabled: z.boolean(),
     voice: z.string().trim().min(1).max(100).default("Aoede"),
@@ -62,6 +63,36 @@ const eventSchema = z.object({
   sessionId: z.string().max(200).optional(),
   eventType: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
   payload: z.record(z.string(), z.unknown()).default({})
+});
+const documentationSourceSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+  url: z.string().url(),
+  maxPages: z.number().int().min(1).max(100).optional()
+});
+const skillUpdateSchema = z.object({
+  name: z.string().trim().min(1).max(200).optional(),
+  description: z.string().trim().min(1).max(1_000).optional(),
+  goal: z.string().trim().min(1).max(2_000).optional(),
+  businessContext: z.string().max(4_000).optional(),
+  steps: z.array(z.unknown()).min(1).max(100).optional(),
+  constraints: z.array(z.string().min(1).max(1_000)).max(30).optional(),
+  expectedOutcomes: z.array(z.string().min(1).max(1_000)).max(30).optional()
+}).refine((value) => Object.keys(value).length > 0, "At least one skill field is required.");
+const scanSchema = z.object({
+  routes: z.array(z.string().min(1).max(2_000)).min(1).max(50).optional(),
+  discover: z.boolean().default(true)
+});
+const scanAuthSchema = z.object({
+  authMode: z.enum(["none", "login_form"]),
+  loginUrl: z.string().max(2_000).optional(),
+  username: z.string().max(500).optional(),
+  password: z.string().max(2_000).optional(),
+  usernameSelector: z.string().max(1_000).optional(),
+  passwordSelector: z.string().max(1_000).optional(),
+  submitSelector: z.string().max(1_000).optional(),
+  successUrlPattern: z.string().max(1_000).optional(),
+  allowedResourceOrigins: z.array(originSchema()).max(50).default([]),
+  waitAfterLoginMs: z.number().int().min(0).max(5_000).default(500)
 });
 
 export async function registerV1Routes(app: FastifyInstance, dependencies: V1AppDependencies): Promise<void> {
@@ -139,6 +170,121 @@ export async function registerV1Routes(app: FastifyInstance, dependencies: V1App
   app.get("/api/v1/actions", async (request) => {
     await requireAdmin(request, dependencies);
     return { items: await dependencies.repositories.agent.listHostActions() };
+  });
+
+  app.get("/api/v1/knowledge", async (request) => {
+    await requireAdmin(request, dependencies);
+    return { items: await dependencies.repositories.knowledge.listSources() };
+  });
+  app.post("/api/v1/knowledge/urls", async (request) => {
+    await requireAdmin(request, dependencies);
+    return dependencies.knowledge.createDocumentationSource(parseWithSchema(documentationSourceSchema, request.body));
+  });
+  app.post("/api/v1/knowledge/files", async (request) => {
+    await requireAdmin(request, dependencies);
+    const upload = await storeMultipartUpload(request, dependencies.config.LOCAL_UPLOAD_DIR, "document", dependencies.config.MAX_UPLOAD_BYTES);
+    try {
+      return await dependencies.knowledge.createDocumentFileSource({
+        ...upload,
+        name: upload.fields.name?.trim() || upload.originalName
+      });
+    } catch (error) {
+      await removeStoredUpload(upload.filePath);
+      throw error;
+    }
+  });
+  app.post("/api/v1/knowledge/:id/retry", async (request) => {
+    await requireAdmin(request, dependencies);
+    const { id } = parseWithSchema(z.object({ id: z.string().min(1).max(200) }), request.params);
+    return dependencies.knowledge.retrySource(id);
+  });
+  app.delete("/api/v1/knowledge/:id", async (request) => {
+    await requireAdmin(request, dependencies);
+    const { id } = parseWithSchema(z.object({ id: z.string().min(1).max(200) }), request.params);
+    return dependencies.repositories.knowledge.archiveSource(id);
+  });
+
+  app.get("/api/v1/skills", async (request) => {
+    await requireAdmin(request, dependencies);
+    return { items: await dependencies.repositories.knowledge.listSkills() };
+  });
+  app.patch("/api/v1/skills/:id", async (request) => {
+    await requireAdmin(request, dependencies);
+    const { id } = parseWithSchema(z.object({ id: z.string().min(1).max(200) }), request.params);
+    return dependencies.knowledge.updateSkill(id, parseWithSchema(skillUpdateSchema, request.body));
+  });
+  app.post("/api/v1/skills/:id/publish", async (request) => {
+    await requireAdmin(request, dependencies);
+    const { id } = parseWithSchema(z.object({ id: z.string().min(1).max(200) }), request.params);
+    return dependencies.knowledge.setSkillStatus(id, "published");
+  });
+  app.post("/api/v1/skills/:id/archive", async (request) => {
+    await requireAdmin(request, dependencies);
+    const { id } = parseWithSchema(z.object({ id: z.string().min(1).max(200) }), request.params);
+    return dependencies.knowledge.setSkillStatus(id, "archived");
+  });
+
+  app.get("/api/v1/recordings", async (request) => {
+    await requireAdmin(request, dependencies);
+    return { items: await dependencies.repositories.knowledge.listRecordings() };
+  });
+  app.post("/api/v1/recordings", async (request) => {
+    await requireAdmin(request, dependencies);
+    const upload = await storeMultipartUpload(request, dependencies.config.LOCAL_UPLOAD_DIR, "recording", dependencies.config.MAX_UPLOAD_BYTES);
+    try {
+      return await dependencies.knowledge.createRecording({
+        ...upload,
+        name: upload.fields.name?.trim() || upload.originalName,
+        description: upload.fields.description?.trim() || undefined
+      });
+    } catch (error) {
+      await removeStoredUpload(upload.filePath);
+      throw error;
+    }
+  });
+  app.post("/api/v1/recordings/:id/retry", async (request) => {
+    await requireAdmin(request, dependencies);
+    const { id } = parseWithSchema(z.object({ id: z.string().min(1).max(200) }), request.params);
+    void dependencies.knowledge.processRecording(id).catch(() => undefined);
+    return dependencies.repositories.knowledge.getRecording(id);
+  });
+
+  app.get("/api/v1/scans", async (request) => {
+    await requireAdmin(request, dependencies);
+    return { items: await dependencies.repositories.knowledge.listMapVersions() };
+  });
+  app.post("/api/v1/scans", async (request) => {
+    await requireAdmin(request, dependencies);
+    return dependencies.scanner.start(parseWithSchema(scanSchema, request.body ?? {}));
+  });
+  app.get("/api/v1/scans/:id", async (request) => {
+    await requireAdmin(request, dependencies);
+    const { id } = parseWithSchema(z.object({ id: z.string().min(1).max(200) }), request.params);
+    return dependencies.repositories.knowledge.getMapVersion(id);
+  });
+  app.patch("/api/v1/scans/elements/:elementKey/policy", async (request) => {
+    await requireAdmin(request, dependencies);
+    const { elementKey } = parseWithSchema(z.object({ elementKey: z.string().min(1).max(300) }), request.params);
+    const { policy } = parseWithSchema(z.object({ policy: uiActionPolicySchema }), request.body);
+    await dependencies.repositories.knowledge.updateMappedElementPolicy(elementKey, policy);
+    return { ok: true };
+  });
+  app.get("/api/v1/product/scan-auth", async (request) => {
+    await requireAdmin(request, dependencies);
+    const product = await dependencies.repositories.product.get();
+    return { config: product.scanConfig, passwordConfigured: await dependencies.secrets.scanPasswordConfigured() };
+  });
+  app.put("/api/v1/product/scan-auth", async (request) => {
+    await requireAdmin(request, dependencies);
+    const body = parseWithSchema(scanAuthSchema, request.body);
+    if (body.authMode === "login_form" && (!body.loginUrl || !body.username || !body.usernameSelector || !body.passwordSelector || !body.submitSelector)) {
+      throw new AppError("SCAN_AUTH_INCOMPLETE", "Login URL, username, and selectors are required for login-form scanning.", 400);
+    }
+    if (body.password) await dependencies.secrets.setScanPassword(body.password);
+    if (body.authMode === "none") await dependencies.secrets.clearScanPassword();
+    const { password: _password, ...scanConfig } = body;
+    const product = await dependencies.repositories.product.update({ scanConfig });
+    return { config: product.scanConfig, passwordConfigured: await dependencies.secrets.scanPasswordConfigured() };
   });
   app.patch("/api/v1/actions/:name", async (request) => {
     await requireAdmin(request, dependencies);
