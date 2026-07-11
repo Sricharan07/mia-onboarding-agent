@@ -374,9 +374,9 @@ function toError(value: unknown): Error {
 }
 
 const styles = `
-:host{all:initial;color-scheme:dark;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;letter-spacing:0}
+:host{all:initial;position:fixed;inset:0;z-index:2147483645;display:block;pointer-events:none;color-scheme:dark;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;letter-spacing:0}
 *{box-sizing:border-box;letter-spacing:0}button,textarea,input,select{font:inherit}button{cursor:pointer}
-.mia-shell{position:fixed;right:24px;bottom:24px;z-index:2147483645;color:#f7f9fc}
+.mia-shell{position:absolute;right:24px;bottom:24px;pointer-events:auto;color:#f7f9fc}
 .mia-launcher{width:164px;height:58px;display:flex;align-items:center;gap:11px;padding:8px 12px;border:1px solid rgba(255,255,255,.25);border-radius:8px;color:inherit;background:linear-gradient(145deg,rgba(22,28,40,.86),rgba(12,16,24,.78));box-shadow:0 18px 50px rgba(5,9,16,.28),inset 0 1px 0 rgba(255,255,255,.18);backdrop-filter:blur(22px) saturate(145%);transition:opacity .16s ease,transform .2s ease,border-color .2s ease}
 .mia-launcher:hover{transform:translateY(-2px);border-color:rgba(105,229,197,.5)}.mia-launcher:focus-visible,.mia-icon:focus-visible,button:focus-visible,textarea:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid #6ce8c9;outline-offset:2px}
 .mia-shell[data-open="true"] .mia-launcher{visibility:hidden;pointer-events:none;opacity:0;transform:translateY(6px) scale(.97)}

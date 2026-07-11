@@ -25,9 +25,12 @@ test("assistant panel preserves its controls across status and voice updates", (
 
     const host = document.querySelector<HTMLElement>("[data-mia-assistant-panel]")!;
     const root = host.shadowRoot!;
+    const style = root.querySelector("style")?.textContent ?? "";
     const launcher = root.querySelector<HTMLButtonElement>("[data-launcher]")!;
     assert.ok(launcher);
     assert.equal(root.querySelector("style")?.nonce, "test-csp-nonce");
+    assert.match(style, /:host\{[^}]*position:fixed;inset:0;[^}]*pointer-events:none/);
+    assert.match(style, /\.mia-shell\{[^}]*position:absolute;[^}]*pointer-events:auto/);
     assert.equal(root.querySelector("[data-status-label]")?.textContent, "Ready");
     assert.equal(root.querySelector("[data-launcher-status]")?.textContent, "Ready");
     assert.equal(root.querySelector("[data-shell]")?.getAttribute("data-status"), "idle");
