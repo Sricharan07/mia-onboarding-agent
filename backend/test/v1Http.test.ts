@@ -106,6 +106,67 @@ test("v1 HTTP API supports secure setup, runtime tokens, agent turns, and SSE", 
     assert.equal(turn.statusCode, 200, turn.body);
     assert.equal(turn.json<{ type: string }>().type, "answer");
 
+    const sdkEvent = await app.inject({
+      method: "POST",
+      url: "/api/v1/runtime/events",
+      headers: runtimeHeaders(runtimeToken),
+      payload: {
+        sessionId: session.sessionId,
+        eventType: "sdk_ready",
+        payload: { route: "/dashboard/crm", token: "abcdefghijklmnopqrstuvwxyz1234567890" }
+      }
+    });
+    assert.equal(sdkEvent.statusCode, 200, sdkEvent.body);
+
+    const checklist = await app.inject({
+      method: "GET",
+      url: "/api/v1/setup/checklist",
+      headers: { authorization: `Bearer ${adminToken}` }
+    });
+    assert.equal(checklist.statusCode, 200, checklist.body);
+    assert.equal(checklist.json<{ sdk: { detected: boolean; lastRoute: string } }>().sdk.detected, true);
+    assert.equal(checklist.json<{ sdk: { detected: boolean; lastRoute: string } }>().sdk.lastRoute, "/dashboard/crm");
+    const acceptance = checklist.json<{ acceptance: { answer: { passed: boolean }; point: { passed: boolean } } }>().acceptance;
+    assert.equal(acceptance.answer.passed, true);
+    assert.equal(acceptance.point.passed, false);
+
+    const run = await app.inject({
+      method: "GET",
+      url: `/api/v1/runs/${session.sessionId}`,
+      headers: { authorization: `Bearer ${adminToken}` }
+    });
+    assert.equal(run.statusCode, 200, run.body);
+    assert.equal(run.body.includes("resumeTokenHash"), false);
+    assert.equal(run.body.includes("bindingHash"), false);
+    assert.equal(run.body.includes("abcdefghijklmnopqrstuvwxyz1234567890"), false);
+    const sdkDiagnostic = run.json<{ events: Array<{ eventType: string; payload: { token?: string } }> }>()
+      .events.find((event) => event.eventType === "sdk_ready");
+    assert.equal(sdkDiagnostic?.payload.token, "[redacted]");
+
+    const runList = await app.inject({
+      method: "GET",
+      url: "/api/v1/runs",
+      headers: { authorization: `Bearer ${adminToken}` }
+    });
+    assert.equal(runList.statusCode, 200, runList.body);
+    assert.equal(runList.json<{ items: Array<{ id: string }> }>().items[0]?.id, session.sessionId);
+
+    await app.inject({
+      method: "PATCH",
+      url: "/api/v1/product",
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { transcriptMode: "disabled" }
+    });
+    const hiddenRun = await app.inject({
+      method: "GET",
+      url: `/api/v1/runs/${session.sessionId}`,
+      headers: { authorization: `Bearer ${adminToken}` }
+    });
+    const hidden = hiddenRun.json<{ transcriptAvailable: boolean; turns: unknown[]; session: { goal: string } }>();
+    assert.equal(hidden.transcriptAvailable, false);
+    assert.deepEqual(hidden.turns, []);
+    assert.equal(hidden.session.goal, "Transcript logging disabled");
+
     const secondSession = await app.inject({
       method: "POST",
       url: "/api/v1/runtime/sessions",

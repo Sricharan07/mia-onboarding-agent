@@ -1,194 +1,60 @@
-import { AlertTriangle, CheckCircle2, FileJson, Info, type LucideIcon } from "lucide-react";
+import { ChevronRight, CircleCheck, CircleDashed, ExternalLink } from "lucide-react";
 import type { ReactNode } from "react";
-import type { ExecutionLog } from "../api";
-import { formatDate, humanizeEventType, humanizeStatus, summarizePayload } from "../utils/format";
-import type { StatusTone } from "../types";
-import { Badge, Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "./ui";
+import { Button, StatusBadge } from "./ui";
+import type { RouteId, SetupCheck } from "../types";
+import { formatDateTime } from "../utils/format";
 
-export function MetricCard({
-  label,
-  value,
-  detail,
-  icon: Icon,
-  badge,
-  footer
-}: {
-  label: string;
-  value: string;
-  detail: string;
-  icon: LucideIcon;
-  badge?: ReactNode;
-  footer?: string;
+export function Checklist({ checks, onNavigate }: { checks: SetupCheck[]; onNavigate?: (route: RouteId) => void }) {
+  return (
+    <ol className="checklist">
+      {checks.map((check) => {
+        const route = routeForCheck(check.id);
+        return (
+          <li key={check.id} data-complete={check.complete}>
+            {check.complete ? <CircleCheck aria-hidden="true" /> : <CircleDashed aria-hidden="true" />}
+            <span>{check.label}</span>
+            {!check.complete && route && onNavigate ? <Button variant="quiet" size="sm" onClick={() => onNavigate(route)}>Open <ChevronRight /></Button> : null}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+export function RunTable({ runs, selectedId, onSelect }: {
+  runs: Array<{ id: string; goal: string; status: string; userId: string; currentRoute: string | null; stepCount: number; updatedAt: string }>;
+  selectedId?: string;
+  onSelect: (id: string) => void;
 }) {
   return (
-    <Card className="metric-card">
-      <CardHeader>
-        <CardDescription>{label}</CardDescription>
-        <CardAction>
-          <span className="metric-icon">
-            <Icon size={16} />
-          </span>
-        </CardAction>
-      </CardHeader>
-      <CardContent className="metric-content">
-        <div className="metric-value-row">
-          <div className={`metric-value ${value.length > 14 ? "is-long" : ""}`}>{value}</div>
-          {badge}
-        </div>
-        <div className="metric-detail">{detail}</div>
-        {footer && <div className="metric-footer-line">{footer}</div>}
-      </CardContent>
-    </Card>
-  );
-}
-
-export function Panel({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
-  return (
-    <Card className="panel">
-      <CardHeader>
-        <CardTitle>{title}</CardTitle>
-        {action && <CardAction>{action}</CardAction>}
-      </CardHeader>
-      <CardContent className="panel-content">{children}</CardContent>
-    </Card>
-  );
-}
-
-export function PageIntro({
-  title,
-  description,
-  action,
-  children
-}: {
-  title: string;
-  description: string;
-  action?: ReactNode;
-  children?: ReactNode;
-}) {
-  return (
-    <section className="page-intro">
-      <div>
-        <h2>{title}</h2>
-        <p>{description}</p>
-      </div>
-      {action && <div className="page-intro-action">{action}</div>}
-      {children && <div className="page-intro-extra">{children}</div>}
-    </section>
-  );
-}
-
-export function ActionEmptyState({
-  title,
-  message,
-  action
-}: {
-  title: string;
-  message: string;
-  action?: ReactNode;
-}) {
-  return (
-    <div className="action-empty-state">
-      <div>
-        <strong>{title}</strong>
-        <p>{message}</p>
-      </div>
-      {action && <div className="action-empty-state-control">{action}</div>}
+    <div className="table-scroll">
+      <table className="data-table">
+        <thead><tr><th>Run</th><th>Status</th><th>Route</th><th>Steps</th><th>Updated</th></tr></thead>
+        <tbody>
+          {runs.map((run) => (
+            <tr key={run.id} data-selected={selectedId === run.id} onClick={() => onSelect(run.id)}>
+              <td><button className="table-primary" type="button" onClick={() => onSelect(run.id)}><strong>{run.goal || "New session"}</strong><span>{run.userId}</span></button></td>
+              <td><StatusBadge value={run.status} /></td>
+              <td><code>{run.currentRoute ?? "-"}</code></td>
+              <td>{run.stepCount}</td>
+              <td>{formatDateTime(run.updatedAt)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
 
-export function SummaryItem({ label, value }: { label: string; value: ReactNode }) {
-  return (
-    <div className="summary-item">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
+export function ProductLink({ origin, path = "", children }: { origin: string; path?: string; children?: ReactNode }) {
+  const href = `${origin.replace(/\/$/, "")}${path.startsWith("/") ? path : path ? `/${path}` : ""}`;
+  return <a className="button button-secondary button-md" href={href} target="_blank" rel="noreferrer">{children ?? "Open product"}<ExternalLink /></a>;
 }
 
-export function ServiceRow({ label, value }: { label: string; value: string }) {
-  const tone: StatusTone = value === "connected" ? "green" : value.includes("missing") || value === "error" ? "red" : "yellow";
-  return (
-    <div className="service-row">
-      <span>{label}</span>
-      <StatusPill tone={tone} label={value} />
-    </div>
-  );
+function routeForCheck(id: string): RouteId | undefined {
+  if (id === "gemini" || id === "runtime_key") return "settings";
+  if (id === "knowledge" || id === "ui_map") return "knowledge";
+  if (id === "sdk" || id === "validation") return "test";
+  if (id === "actions") return "actions";
+  return undefined;
 }
-
-export function StatusBadge({ status }: { status: string }) {
-  const tone: StatusTone =
-    ["published", "approved", "completed", "mapped", "auto"].includes(status)
-      ? "green"
-      : ["needs_review", "uploaded", "analyzing", "requires_confirmation", "manual_only", "draft"].includes(status)
-        ? "yellow"
-        : ["failed", "blocked", "archived"].includes(status)
-          ? "red"
-          : "gray";
-  return <StatusPill tone={tone} label={humanizeStatus(status)} />;
-}
-
-export function SelectorQualityBadge({ quality }: { quality: "strong" | "medium" | "weak" }) {
-  return <StatusPill tone={quality === "strong" ? "green" : quality === "medium" ? "yellow" : "red"} label={quality} />;
-}
-
-export function StatusPill({ tone, label }: { tone: StatusTone; label: string }) {
-  return <span className={`status-pill ${tone}`}>{label}</span>;
-}
-
-export function InlineAlert({ tone, title, message }: { tone: StatusTone; title: string; message: string }) {
-  const Icon = tone === "red" || tone === "yellow" ? AlertTriangle : tone === "green" ? CheckCircle2 : Info;
-  return (
-    <div className={`error-item ${tone}`} role={tone === "red" ? "alert" : "status"}>
-      <Icon size={15} />
-      <strong>{title}:</strong>
-      <span>{message}</span>
-    </div>
-  );
-}
-
-export function LogTable({ logs, compact = false }: { logs: ExecutionLog[]; compact?: boolean }) {
-  return (
-    <table className={compact ? "compact-table" : ""}>
-      <thead>
-        <tr>
-          <th>Event type</th>
-          {!compact && <th>ID</th>}
-          <th>Payload</th>
-          <th>Time</th>
-        </tr>
-      </thead>
-      <tbody>
-        {logs.length === 0 && <EmptyTableRow colSpan={compact ? 3 : 4} message="No execution logs recorded yet." />}
-        {logs.map((log) => (
-          <tr key={log.id}>
-            <td>{humanizeEventType(log.eventType)}</td>
-            {!compact && <td><code>{log.id}</code></td>}
-            <td><code>{summarizePayload(log.payload)}</code></td>
-            <td>{formatDate(log.createdAt)}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
-export function RawJsonViewer({ title, data }: { title: string; data: unknown }) {
-  return (
-    <Panel title={title} action={<FileJson size={16} />}>
-      <pre className="json-viewer" aria-label={`${title} JSON`}>{JSON.stringify(data, null, 2)}</pre>
-    </Panel>
-  );
-}
-
-export function EmptyTableRow({ colSpan, message }: { colSpan: number; message: string }) {
-  return (
-    <tr>
-      <td colSpan={colSpan}>
-        <div className="empty-state">{message}</div>
-      </td>
-    </tr>
-  );
-}
-
-export { Badge };

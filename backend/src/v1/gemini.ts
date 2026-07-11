@@ -63,21 +63,25 @@ export class V1Gemini {
       signal: input.signal,
       thinkingLevel: "high"
     });
-    return { decision: generated.data, latencyMs: generated.latencyMs, usage: generated.usage };
+    const decision = generated.data.type === "actions"
+      ? generated.data
+      : { ...generated.data, actions: [] };
+    return { decision, latencyMs: generated.latencyMs, usage: generated.usage };
   }
 
   async judge(input: {
     sessionId: string;
     goal: string;
     evidence: string;
+    proposedResult: string;
     signal?: AbortSignal;
   }): Promise<{ satisfied: boolean; summary: string; missingEvidence: string[] }> {
     const generated = await this.generateJson({
       sessionId: input.sessionId,
       purpose: "agent_judge",
       model: this.config.GEMINI_PLANNER_MODEL,
-      system: "You are a strict completion judge. Decide only from supplied action receipts and current page evidence. Never assume an unobserved outcome. Return JSON.",
-      prompt: `Goal:\n${input.goal}\n\nTrusted execution evidence:\n${input.evidence}`,
+      system: "You are a strict completion judge. Decide whether the proposed user-facing result, supplied action receipts, and current page evidence satisfy the goal. Never assume an unobserved action outcome or accept an ungrounded factual claim. Return JSON.",
+      prompt: `Goal:\n${input.goal}\n\nProposed user-facing result:\n${input.proposedResult}\n\nTrusted execution evidence:\n${input.evidence}`,
       schema: judgeSchema,
       signal: input.signal,
       thinkingLevel: "medium"
@@ -85,7 +89,7 @@ export class V1Gemini {
     return generated.data;
   }
 
-  async embed(texts: string[], signal?: AbortSignal): Promise<number[][]> {
+  async embed(texts: string[], signal?: AbortSignal, taskType: "RETRIEVAL_DOCUMENT" | "RETRIEVAL_QUERY" = "RETRIEVAL_DOCUMENT"): Promise<number[][]> {
     if (texts.length === 0) return [];
     const client = await this.getClient();
     const embeddings: number[][] = [];
@@ -93,8 +97,9 @@ export class V1Gemini {
       const batch = texts.slice(offset, offset + 100);
       const response = await client.models.embedContent({
         model: this.config.GEMINI_EMBEDDING_MODEL,
-        contents: batch,
+        contents: batch.map((text) => ({ role: "user", parts: [{ text }] })),
         config: {
+          taskType,
           outputDimensionality: this.config.GEMINI_EMBEDDING_DIMENSIONS,
           httpOptions: { timeout: this.config.PROVIDER_REQUEST_TIMEOUT_MS },
           abortSignal: signal
@@ -192,57 +197,72 @@ export class V1Gemini {
     thinkingLevel: "minimal" | "low" | "medium" | "high";
   }): Promise<{ data: T; latencyMs: number; usage: ModelUsage }> {
     const started = Date.now();
-    let error: unknown;
-    try {
-      const parts: Part[] = [{ text: input.prompt }, ...(input.parts ?? [])];
-      for (const visual of input.visualContext ?? []) {
-        if (visual.data && visual.mimeType) parts.push({ inlineData: { mimeType: visual.mimeType, data: visual.data } });
-        if (visual.description) parts.push({ text: `<visual_context name="${visual.name}">${visual.description}</visual_context>` });
-      }
-      if (input.media) parts.push({ inlineData: input.media });
-      const response = await (await this.getClient()).models.generateContent({
-        model: input.model,
-        contents: [{ role: "user", parts }],
-        config: {
-          systemInstruction: input.system,
-          responseMimeType: "application/json",
-          responseJsonSchema: z.toJSONSchema(input.schema),
-          temperature: 0.1,
-          thinkingConfig: { thinkingLevel: thinkingLevel(input.thinkingLevel) },
-          httpOptions: { timeout: this.config.PROVIDER_REQUEST_TIMEOUT_MS, retryOptions: { attempts: this.config.PROVIDER_RETRY_ATTEMPTS } },
-          abortSignal: input.signal
-        }
-      });
-      if (!response.text) throw new AppError("GEMINI_EMPTY_RESPONSE", "Gemini returned no response text.", 502);
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(stripCodeFence(response.text));
-      } catch {
-        throw new AppError("GEMINI_JSON_INVALID", "Gemini returned invalid JSON.", 502);
-      }
-      const data = input.schema.parse(parsed);
-      const usage = readUsage(response.usageMetadata);
-      await this.logRequest({
-        sessionId: input.sessionId,
-        purpose: input.purpose,
-        model: input.model,
-        latencyMs: Date.now() - started,
-        ...usage
-      });
-      return { data, latencyMs: Date.now() - started, usage };
-    } catch (caught) {
-      error = caught;
-      await this.logRequest({
-        sessionId: input.sessionId,
-        purpose: input.purpose,
-        model: input.model,
-        latencyMs: Date.now() - started,
-        error: caught instanceof Error ? caught.message : String(caught)
-      });
-      throw caught;
-    } finally {
-      void error;
+    const parts: Part[] = [{ text: input.prompt }, ...(input.parts ?? [])];
+    for (const visual of input.visualContext ?? []) {
+      if (visual.data && visual.mimeType) parts.push({ inlineData: { mimeType: visual.mimeType, data: visual.data } });
+      if (visual.description) parts.push({ text: `<visual_context name="${visual.name}">${visual.description}</visual_context>` });
     }
+    if (input.media) parts.push({ inlineData: input.media });
+    const client = await this.getClient();
+    const structuredAttempts = Math.min(3, Math.max(1, this.config.PROVIDER_RETRY_ATTEMPTS));
+    let correction = "";
+    for (let attempt = 1; attempt <= structuredAttempts; attempt += 1) {
+      const attemptStarted = Date.now();
+      try {
+        const response = await client.models.generateContent({
+          model: input.model,
+          contents: [{
+            role: "user",
+            parts: correction ? [...parts, { text: correction }] : parts
+          }],
+          config: {
+            systemInstruction: input.system,
+            responseMimeType: "application/json",
+            responseJsonSchema: z.toJSONSchema(input.schema),
+            temperature: 0.1,
+            thinkingConfig: { thinkingLevel: thinkingLevel(input.thinkingLevel) },
+            httpOptions: { timeout: this.config.PROVIDER_REQUEST_TIMEOUT_MS, retryOptions: { attempts: this.config.PROVIDER_RETRY_ATTEMPTS } },
+            abortSignal: input.signal
+          }
+        });
+        if (!response.text) throw new AppError("GEMINI_EMPTY_RESPONSE", "Gemini returned no response text.", 502);
+        const validated = parseStructuredResponse(response.text, input.schema);
+        if (!validated.success) {
+          await this.logRequest({
+            sessionId: input.sessionId,
+            purpose: input.purpose,
+            model: input.model,
+            latencyMs: Date.now() - attemptStarted,
+            error: validated.error
+          });
+          if (attempt === structuredAttempts) {
+            throw new AppError("GEMINI_RESPONSE_INVALID", "Gemini returned a structured response that failed validation.", 502);
+          }
+          correction = `Your previous response failed schema validation: ${validated.error.slice(0, 1_500)}\nReturn a corrected JSON object only. Preserve the original user goal and evidence.`;
+          continue;
+        }
+        const usage = readUsage(response.usageMetadata);
+        await this.logRequest({
+          sessionId: input.sessionId,
+          purpose: input.purpose,
+          model: input.model,
+          latencyMs: Date.now() - attemptStarted,
+          ...usage
+        });
+        return { data: validated.data, latencyMs: Date.now() - started, usage };
+      } catch (caught) {
+        if (caught instanceof AppError && caught.code === "GEMINI_RESPONSE_INVALID") throw caught;
+        await this.logRequest({
+          sessionId: input.sessionId,
+          purpose: input.purpose,
+          model: input.model,
+          latencyMs: Date.now() - attemptStarted,
+          error: caught instanceof Error ? caught.message : String(caught)
+        });
+        throw caught;
+      }
+    }
+    throw new AppError("GEMINI_RESPONSE_INVALID", "Gemini returned a structured response that failed validation.", 502);
   }
 
   private async getClient(): Promise<GoogleGenAI> {
@@ -285,6 +305,18 @@ function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
 
 function stripCodeFence(text: string): string {
   return text.trim().replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/i, "");
+}
+
+function parseStructuredResponse<T>(text: string, schema: z.ZodType<T>): { success: true; data: T } | { success: false; error: string } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stripCodeFence(text));
+  } catch {
+    return { success: false, error: "Response was not valid JSON." };
+  }
+  const validated = schema.safeParse(parsed);
+  if (validated.success) return { success: true, data: validated.data };
+  return { success: false, error: validated.error.issues.map((issue) => `${issue.path.join(".") || "response"}: ${issue.message}`).join("; ") };
 }
 
 function readUsage(value: unknown): ModelUsage {

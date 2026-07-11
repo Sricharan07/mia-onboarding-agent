@@ -163,31 +163,47 @@ export class V1UiScanner {
     await this.repositories.knowledge.upsertSource({
       id: sourceId, kind: "ui_map", name: `UI map ${id}`, status: "processing", metadata: { mapVersionId: id }
     });
-    const chunks = elements.map((element) => ({
-      content: [
+    const chunksByHash = new Map<string, {
+      content: string;
+      contentHash: string;
+      metadata: { mapVersionId: string; elementKey: string; elementKeys: string[]; route: string };
+    }>();
+    for (const element of elements) {
+      const content = [
         `Route: ${element.route}`,
         `Control: ${element.name ?? element.elementKey}`,
         `Role: ${element.role ?? element.metadata.tagName ?? "element"}`,
         element.description ? `Description: ${element.description}` : "",
         `Policy: ${element.actionPolicy}`
-      ].filter(Boolean).join("\n"),
-      metadata: { mapVersionId: id, elementKey: element.elementKey, route: element.route }
-    }));
-    const embeddings = await this.model.embed(chunks.map((chunk) => chunk.content));
+      ].filter(Boolean).join("\n");
+      const contentHash = hash(content);
+      const existing = chunksByHash.get(contentHash);
+      if (existing) {
+        existing.metadata.elementKeys.push(element.elementKey);
+      } else {
+        chunksByHash.set(contentHash, {
+          content,
+          contentHash,
+          metadata: { mapVersionId: id, elementKey: element.elementKey, elementKeys: [element.elementKey], route: element.route }
+        });
+      }
+    }
+    const chunks = [...chunksByHash.values()];
+    const embeddings = await this.model.embed(chunks.map((chunk) => chunk.content), undefined, "RETRIEVAL_DOCUMENT");
     await this.repositories.knowledge.replaceChunks(sourceId, chunks.map((chunk, index) => ({
       id: createId("chunk"), kind: "ui_map", content: chunk.content,
-      contentHash: hash(chunk.content), metadata: chunk.metadata, embedding: embeddings[index]
+      contentHash: chunk.contentHash, metadata: chunk.metadata, embedding: embeddings[index]
     })));
     await this.repositories.knowledge.upsertSource({
       id: sourceId, kind: "ui_map", name: `UI map ${id}`, status: "ready",
-      metadata: { mapVersionId: id, elementCount: elements.length }
+      metadata: { mapVersionId: id, elementCount: elements.length, chunkCount: chunks.length }
     });
   }
 }
 
 export function actionPolicyForElement(element: Pick<BrowserElement, "role" | "name" | "description" | "tagName" | "type">): UiActionPolicy {
   const semantic = [element.role, element.name, element.description, element.tagName, element.type].filter(Boolean).join(" ");
-  if (/\b(delete|remove permanently|send|publish|approve|pay|purchase|checkout|transfer|submit final|final submission|refund|cancel subscription)\b/i.test(semantic)) return "blocked";
+  if (/\b(delete|remove permanently|send|publish|approve|pay|purchase|checkout|transfer|wire|post publicly|submit|external(?:ly)? communicat(?:e|ion)|external message|email|refund|cancel subscription)\b/i.test(semantic)) return "blocked";
   if (element.type === "password" || /\b(password|passcode|verification code|payment|card number|cvv|cvc|captcha|web.?authn)\b/i.test(semantic)) return "manual";
   if (element.role === "link" || element.tagName === "a") return "navigate";
   if (["button", "textbox", "checkbox", "radio", "switch", "combobox", "listbox", "option", "slider", "spinbutton"].includes(element.role ?? "")

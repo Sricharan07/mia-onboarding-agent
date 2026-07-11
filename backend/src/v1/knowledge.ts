@@ -83,7 +83,7 @@ export class V1KnowledgeService {
         metadata: { url: page.url, title: page.title, chunk: index }
       })));
       if (prepared.length === 0) throw new AppError("KNOWLEDGE_EMPTY", "No indexable content was found.", 400);
-      const embeddings = await this.model.embed(prepared.map((chunk) => chunk.content));
+      const embeddings = await this.model.embed(prepared.map((chunk) => chunk.content), undefined, "RETRIEVAL_DOCUMENT");
       await this.repositories.knowledge.replaceChunks(source.id, prepared.map((chunk, index) => ({
         id: createId("chunk"),
         kind: source.kind,
@@ -184,7 +184,7 @@ export class V1KnowledgeService {
       return skill;
     }
     const content = skillContent(skill);
-    const [embedding] = await this.model.embed([content]);
+    const [embedding] = await this.model.embed([content], undefined, "RETRIEVAL_DOCUMENT");
     const source = await this.repositories.knowledge.upsertSource({
       id: skillSourceId(skill.id), kind: "skill", name: skill.name, status: "ready", metadata: { skillId: skill.id, version: skill.version }
     });

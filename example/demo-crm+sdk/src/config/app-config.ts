@@ -8,6 +8,6 @@ export const APP_CONFIG = {
   copyright: `© ${currentYear}, Mia Demo CRM.`,
   meta: {
     title: "Mia Demo CRM",
-    description: "A local sample CRM for testing Mia's text, voice, pointing, and reviewed workflow execution.",
+    description: "A local sample CRM for testing Mia's text, voice, pointing, and reviewed product actions.",
   },
 };

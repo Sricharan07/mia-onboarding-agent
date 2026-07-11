@@ -2,7 +2,7 @@
 
 import * as React from "react";
 
-import type { CrmOpportunity, CrmSnapshot, OpportunityPatch } from "@/lib/crm-types";
+import type { CrmOpportunity, CrmSnapshot, DraftOpportunityInput, OpportunityPatch } from "@/lib/crm-types";
 
 import { KpiCards } from "./kpi-cards";
 import { OpportunitiesSection } from "./opportunities-section";
@@ -19,6 +19,12 @@ export function CrmDashboard({ initialState }: { initialState: CrmSnapshot }) {
   const [selectedOpportunityId, setSelectedOpportunityId] = React.useState<string | null>(null);
   const selectedOpportunity =
     state.opportunities.find((opportunity) => opportunity.id === selectedOpportunityId) ?? null;
+
+  React.useEffect(() => {
+    const update = (event: WindowEventMap["mia:crm-state"]) => setState(event.detail);
+    window.addEventListener("mia:crm-state", update);
+    return () => window.removeEventListener("mia:crm-state", update);
+  }, []);
 
   const updateFromResponse = async (response: Response) => {
     if (!response.ok) {
@@ -45,6 +51,16 @@ export function CrmDashboard({ initialState }: { initialState: CrmSnapshot }) {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ body, author: "Sales Ops" }),
+      }),
+    );
+  };
+
+  const handleCreateDraft = async (input: DraftOpportunityInput) => {
+    await updateFromResponse(
+      await fetch("/api/v1/crm/opportunities/drafts", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(input),
       }),
     );
   };
@@ -84,7 +100,7 @@ export function CrmDashboard({ initialState }: { initialState: CrmSnapshot }) {
         onCompleteMeeting={handleCompleteMeeting}
         onOpenOpportunity={handleOpenOpportunityById}
       />
-      <OpportunitiesSection opportunities={state.opportunities} onOpenOpportunity={handleOpenOpportunity} />
+      <OpportunitiesSection opportunities={state.opportunities} onOpenOpportunity={handleOpenOpportunity} onCreateDraft={handleCreateDraft} />
       <OpportunityDrawer
         opportunity={selectedOpportunity}
         open={Boolean(selectedOpportunity)}

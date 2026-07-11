@@ -40,7 +40,7 @@ export function TaskReminders({
           <CardTitle>Upcoming Meetings</CardTitle>
           <CardAction>
             <Button
-              data-ai-id="crm.calendar.view_button"
+              data-mia-key="crm.calendar.view_button"
               variant="outline"
               size="sm"
               onClick={() => setCalendarOpen(true)}
@@ -153,7 +153,7 @@ export function TaskReminders({
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <Button
-                    data-ai-id={`crm.calendar.meeting.${meeting.id}.complete_button`}
+                    data-mia-key={`crm.calendar.meeting.${meeting.id}.complete_button`}
                     variant="outline"
                     size="sm"
                     onClick={() => onCompleteMeeting(meeting.id)}
@@ -162,7 +162,7 @@ export function TaskReminders({
                     {meeting.status === "completed" ? "Reopen" : "Mark complete"}
                   </Button>
                   <Button
-                    data-ai-id={`crm.calendar.meeting.${meeting.id}.open_opportunity_button`}
+                    data-mia-key={`crm.calendar.meeting.${meeting.id}.open_opportunity_button`}
                     variant="outline"
                     size="sm"
                     disabled={!meeting.opportunityId}

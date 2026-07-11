@@ -24,6 +24,7 @@ import {
 import { parseWithSchema } from "../utils/zod.js";
 import { AppError } from "../utils/errors.js";
 import { removeStoredUpload, storeMultipartUpload } from "./uploads.js";
+import { redactSensitiveJson } from "./redaction.js";
 
 const setupSchema = z.object({
   setupToken: z.string().min(1),
@@ -82,6 +83,12 @@ const scanSchema = z.object({
   routes: z.array(z.string().min(1).max(2_000)).min(1).max(50).optional(),
   discover: z.boolean().default(true)
 });
+const mappedElementsQuerySchema = z.object({
+  route: z.string().max(2_000).optional(),
+  search: z.string().max(200).optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(100),
+  offset: z.coerce.number().int().min(0).max(100_000).default(0)
+});
 const scanAuthSchema = z.object({
   authMode: z.enum(["none", "login_form"]),
   loginUrl: z.string().max(2_000).optional(),
@@ -108,6 +115,52 @@ export async function registerV1Routes(app: FastifyInstance, dependencies: V1App
     const token = bearerToken(request.headers.authorization);
     const auth = await dependencies.auth.status(token);
     return { ...auth, gemini: await dependencies.secrets.geminiStatus() };
+  });
+  app.get("/api/v1/setup/checklist", async (request) => {
+    await requireAdmin(request, dependencies);
+    const [product, gemini, keys, sources, skills, recordings, scans, actions, sdk, usage, acceptance] = await Promise.all([
+      dependencies.repositories.product.get(),
+      dependencies.secrets.geminiStatus(),
+      dependencies.auth.listIntegrationKeys(),
+      dependencies.repositories.knowledge.listSources(),
+      dependencies.repositories.knowledge.listSkills(),
+      dependencies.repositories.knowledge.listRecordings(),
+      dependencies.repositories.knowledge.listMapVersions(),
+      dependencies.repositories.agent.listHostActions(),
+      dependencies.repositories.diagnostics.sdkActivity(),
+      dependencies.repositories.diagnostics.usage(),
+      dependencies.repositories.diagnostics.acceptanceEvidence()
+    ]);
+    const activeKeys = keys.filter((key) => !key.revokedAt);
+    const documentation = sources.filter((source) => ["documentation_url", "document_file"].includes(source.kind) && source.status !== "archived");
+    const latestScan = scans[0] ?? null;
+    const pendingActions = actions.filter((action) => ["detected", "needs_review"].includes(action.status));
+    const checks = [
+      { id: "product", label: "Product configured", complete: Boolean(product.origin) },
+      { id: "gemini", label: "Gemini connected", complete: gemini.configured },
+      { id: "runtime_key", label: "Runtime key created", complete: activeKeys.length > 0 },
+      { id: "knowledge", label: "Product knowledge ready", complete: documentation.some((source) => source.status === "ready") },
+      { id: "ui_map", label: "UI map ready", complete: latestScan?.status === "ready" },
+      { id: "sdk", label: "SDK detected", complete: sdk.detected },
+      { id: "actions", label: "Detected actions reviewed", complete: actions.length > 0 && pendingActions.length === 0 },
+      { id: "validation", label: "Live validation completed", complete: Object.values(acceptance).every((scenario) => scenario.passed) }
+    ];
+    return {
+      checks,
+      completed: checks.filter((check) => check.complete).length,
+      total: checks.length,
+      product,
+      gemini,
+      integrationKeys: { active: activeKeys.length, total: keys.length, lastUsedAt: activeKeys.map((key) => key.lastUsedAt).filter(Boolean).sort().at(-1) ?? null },
+      knowledge: { total: documentation.length, ready: documentation.filter((source) => source.status === "ready").length },
+      skills: { total: skills.length, published: skills.filter((skill) => skill.status === "published").length, needsReview: skills.filter((skill) => skill.status === "needs_review").length },
+      recordings: { total: recordings.length, processing: recordings.filter((recording) => ["uploaded", "processing"].includes(recording.status)).length },
+      scan: latestScan,
+      sdk,
+      acceptance,
+      actions: { total: actions.length, published: actions.filter((action) => action.status === "published").length, pending: pendingActions.length, blocked: actions.filter((action) => action.status === "blocked").length },
+      usage
+    };
   });
   app.post("/api/v1/setup", async (request) => {
     dependencies.rateLimiter.consume(`setup:${request.ip}`, 8);
@@ -257,6 +310,11 @@ export async function registerV1Routes(app: FastifyInstance, dependencies: V1App
     await requireAdmin(request, dependencies);
     return dependencies.scanner.start(parseWithSchema(scanSchema, request.body ?? {}));
   });
+  app.get("/api/v1/scans/elements", async (request) => {
+    await requireAdmin(request, dependencies);
+    const query = parseWithSchema(mappedElementsQuerySchema, request.query ?? {});
+    return dependencies.repositories.knowledge.listMappedElementsPage(query);
+  });
   app.get("/api/v1/scans/:id", async (request) => {
     await requireAdmin(request, dependencies);
     const { id } = parseWithSchema(z.object({ id: z.string().min(1).max(200) }), request.params);
@@ -298,12 +356,14 @@ export async function registerV1Routes(app: FastifyInstance, dependencies: V1App
 
   app.get("/api/v1/runs", async (request) => {
     await requireAdmin(request, dependencies);
-    return { items: await dependencies.repositories.diagnostics.listRuns() };
+    const product = await dependencies.repositories.product.get();
+    return { items: await dependencies.repositories.diagnostics.listRuns(100, product.transcriptMode), transcriptMode: product.transcriptMode };
   });
   app.get("/api/v1/runs/:id", async (request) => {
     await requireAdmin(request, dependencies);
     const { id } = parseWithSchema(z.object({ id: z.string().min(1).max(200) }), request.params);
-    return dependencies.repositories.diagnostics.getRun(id);
+    const product = await dependencies.repositories.product.get();
+    return dependencies.repositories.diagnostics.getRun(id, product.transcriptMode);
   });
   app.get("/api/v1/usage", async (request) => {
     await requireAdmin(request, dependencies);
@@ -374,7 +434,7 @@ export async function registerV1Routes(app: FastifyInstance, dependencies: V1App
       sessionId: event.sessionId,
       userId: runtime.userId,
       eventType: event.eventType,
-      payload: event.payload
+      payload: redactSensitiveJson(event.payload)
     });
     return { ok: true };
   });

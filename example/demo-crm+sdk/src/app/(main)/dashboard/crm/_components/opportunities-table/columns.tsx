@@ -62,7 +62,7 @@ export function getOpportunitiesColumns(input: {
     {
       accessorKey: "account",
       header: "Account",
-      cell: ({ row }) => <div className="font-medium text-sm">{row.original.account}</div>,
+      cell: ({ row }) => <div className="flex items-center gap-2 font-medium text-sm">{row.original.account}{row.original.isDraft ? <Badge variant="secondary">Draft</Badge> : null}</div>,
     },
     {
       accessorKey: "stage",
@@ -109,7 +109,7 @@ export function getOpportunitiesColumns(input: {
       cell: ({ row }) => (
         <div className="text-right">
           <Button
-            data-ai-id={`crm.opportunities.${row.original.id}.edit_button`}
+            data-mia-key={`crm.opportunities.${row.original.id}.edit_button`}
             variant="ghost"
             size="icon"
             className="size-8 rounded-full text-muted-foreground hover:bg-transparent focus-visible:bg-transparent"

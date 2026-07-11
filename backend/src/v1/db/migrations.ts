@@ -282,6 +282,14 @@ const migrations: Migration[] = [{
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `
+}, {
+  id: 3,
+  name: "diagnostic_lookup_indexes",
+  sql: `
+    CREATE INDEX IF NOT EXISTS runtime_events_session_idx ON runtime_events (session_id, created_at);
+    CREATE INDEX IF NOT EXISTS ai_requests_session_idx ON ai_requests (session_id, created_at);
+    CREATE INDEX IF NOT EXISTS confirmations_session_idx ON confirmations (session_id, created_at);
+  `
 }];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {

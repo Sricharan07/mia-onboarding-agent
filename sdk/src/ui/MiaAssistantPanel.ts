@@ -168,7 +168,7 @@ export class MiaAssistantPanel {
       <div class="mia-shell" data-shell data-open="false">
         <section class="mia-panel" data-panel role="dialog" aria-label="Mia" hidden>
           <header class="mia-header">
-            <div class="mia-brand"><span class="mia-mark" aria-hidden="true">M</span><div><strong>Mia</strong><span data-status>${STATUS[this.status]}</span></div></div>
+            <div class="mia-brand"><span class="mia-mark" aria-hidden="true">M</span><div><strong>Mia</strong><span data-status-label>${STATUS[this.status]}</span></div></div>
             <button class="mia-icon" type="button" data-close title="Close" aria-label="Close Mia"></button>
           </header>
           <div class="mia-progress" data-progress role="status" aria-live="polite" hidden></div>
@@ -329,7 +329,7 @@ export class MiaAssistantPanel {
 
   private updateState(): void {
     const label = STATUS[this.status];
-    const status = this.shadow.querySelector<HTMLElement>("[data-status]");
+    const status = this.shadow.querySelector<HTMLElement>("[data-status-label]");
     const launcherStatus = this.shadow.querySelector<HTMLElement>("[data-launcher-status]");
     if (status) status.textContent = label;
     if (launcherStatus) launcherStatus.textContent = label;
@@ -366,24 +366,26 @@ const styles = `
 :host{all:initial;color-scheme:dark;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;letter-spacing:0}
 *{box-sizing:border-box;letter-spacing:0}button,textarea,input,select{font:inherit}button{cursor:pointer}
 .mia-shell{position:fixed;right:24px;bottom:24px;z-index:2147483645;color:#f7f9fc}
-.mia-launcher{width:164px;height:58px;display:flex;align-items:center;gap:11px;padding:8px 12px;border:1px solid rgba(255,255,255,.25);border-radius:8px;color:inherit;background:linear-gradient(145deg,rgba(22,28,40,.86),rgba(12,16,24,.78));box-shadow:0 18px 50px rgba(5,9,16,.28),inset 0 1px 0 rgba(255,255,255,.18);backdrop-filter:blur(22px) saturate(145%);transition:transform .2s ease,border-color .2s ease}
+.mia-launcher{width:164px;height:58px;display:flex;align-items:center;gap:11px;padding:8px 12px;border:1px solid rgba(255,255,255,.25);border-radius:8px;color:inherit;background:linear-gradient(145deg,rgba(22,28,40,.86),rgba(12,16,24,.78));box-shadow:0 18px 50px rgba(5,9,16,.28),inset 0 1px 0 rgba(255,255,255,.18);backdrop-filter:blur(22px) saturate(145%);transition:opacity .16s ease,transform .2s ease,border-color .2s ease}
 .mia-launcher:hover{transform:translateY(-2px);border-color:rgba(105,229,197,.5)}.mia-launcher:focus-visible,.mia-icon:focus-visible,button:focus-visible,textarea:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid #6ce8c9;outline-offset:2px}
+.mia-shell[data-open="true"] .mia-launcher{visibility:hidden;pointer-events:none;opacity:0;transform:translateY(6px) scale(.97)}
 .mia-launcher-mark,.mia-mark{display:grid;place-items:center;width:38px;height:38px;flex:0 0 auto;border-radius:7px;background:linear-gradient(145deg,#5876ff,#5f47d8 62%,#28b99a);font-weight:800;color:white;box-shadow:inset 0 1px 0 rgba(255,255,255,.3)}
 .mia-launcher-copy{min-width:0;display:flex;flex:1;flex-direction:column;align-items:flex-start;line-height:1.15}.mia-launcher-copy strong{font-size:15px}.mia-launcher-copy span{margin-top:3px;color:#bcc6d7;font-size:12px}
 .mia-dot{width:8px;height:8px;border-radius:50%;background:#45d6a9;box-shadow:0 0 0 4px rgba(69,214,169,.1)}.mia-chevron{display:none}
-.mia-panel{position:absolute;right:0;bottom:70px;width:390px;max-height:min(680px,calc(100vh - 118px));display:grid;grid-template-rows:auto auto minmax(120px,1fr) auto auto;overflow:hidden;border:1px solid rgba(255,255,255,.22);border-radius:8px;background:linear-gradient(155deg,rgba(27,34,47,.82),rgba(11,15,23,.9) 56%,rgba(14,21,29,.84));box-shadow:0 28px 90px rgba(3,7,13,.4),inset 0 1px 0 rgba(255,255,255,.2);backdrop-filter:blur(28px) saturate(155%)}
+.mia-panel{position:absolute;right:0;bottom:0;width:390px;max-height:min(680px,calc(100vh - 48px));display:grid;grid-template-rows:auto auto minmax(120px,1fr) auto auto;overflow:hidden;border:1px solid rgba(255,255,255,.22);border-radius:8px;background:linear-gradient(155deg,rgba(27,34,47,.82),rgba(11,15,23,.9) 56%,rgba(14,21,29,.84));box-shadow:0 28px 90px rgba(3,7,13,.4),inset 0 1px 0 rgba(255,255,255,.2);backdrop-filter:blur(28px) saturate(155%);animation:mia-panel-in .2s cubic-bezier(.22,1,.36,1)}
 .mia-panel[hidden]{display:none}.mia-header{height:66px;display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid rgba(255,255,255,.1)}
 .mia-brand{display:flex;align-items:center;gap:11px}.mia-brand>div{display:flex;flex-direction:column;line-height:1.15}.mia-brand strong{font-size:16px}.mia-brand span{margin-top:3px;color:#aeb9ca;font-size:12px}.mia-mark{width:36px;height:36px}
 .mia-icon{width:38px;height:38px;display:grid;place-items:center;flex:0 0 auto;padding:0;border:1px solid rgba(255,255,255,.14);border-radius:7px;color:#e9eef7;background:rgba(255,255,255,.07)}.mia-icon:hover{background:rgba(255,255,255,.13);border-color:rgba(255,255,255,.24)}
 .mia-progress{min-height:34px;padding:9px 14px;border-bottom:1px solid rgba(255,255,255,.08);color:#8ee7cf;background:rgba(53,214,178,.055);font-size:12px;line-height:1.3}.mia-progress[hidden]{display:none}
 .mia-transcript{min-height:120px;overflow:auto;padding:15px 14px 10px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.2) transparent}.mia-empty{margin:18px 0;color:#aab5c6;text-align:center;font-size:13px}
-.mia-message{display:grid;grid-template-columns:42px 1fr;gap:8px;padding:8px 0;color:#e7ecf5;font-size:13px;line-height:1.45}.mia-message+ .mia-message{border-top:1px solid rgba(255,255,255,.07)}.mia-message strong{color:#8fe5ce;font-size:11px;text-transform:uppercase}.mia-message.user strong{color:#9eb1ff}.mia-message.system{color:#b8c2d1}
+.mia-message{display:grid;grid-template-columns:42px minmax(0,1fr);gap:8px;padding:8px 0;color:#e7ecf5;font-size:13px;line-height:1.45}.mia-message+ .mia-message{border-top:1px solid rgba(255,255,255,.07)}.mia-message strong{color:#8fe5ce;font-size:11px;text-transform:uppercase}.mia-message span{white-space:pre-wrap;overflow-wrap:anywhere}.mia-message.user strong{color:#9eb1ff}.mia-message.system{color:#b8c2d1}
 .mia-context{padding:13px 14px;border-top:1px solid rgba(255,255,255,.1);background:rgba(6,10,16,.24)}.mia-context[hidden]{display:none}.mia-context p{margin:0 0 11px;color:#edf1f8;font-size:13px;line-height:1.45}
 .mia-context-actions{display:flex;justify-content:flex-end;gap:8px}.mia-primary,.mia-secondary{min-height:36px;padding:0 13px;border-radius:6px}.mia-primary{display:inline-flex;align-items:center;gap:7px;border:1px solid rgba(132,246,216,.6);color:#071812;background:#70e7c6;font-weight:700}.mia-primary svg{width:16px}.mia-secondary{border:1px solid rgba(255,255,255,.17);color:#e3e9f2;background:rgba(255,255,255,.07)}
 .mia-context-input{display:flex;gap:8px}.mia-context-input input,.mia-context-input select{min-width:0;flex:1;height:38px;padding:0 10px;border:1px solid rgba(255,255,255,.18);border-radius:6px;color:#f5f7fb;background:rgba(7,11,18,.62)}
 .mia-composer{display:grid;grid-template-columns:minmax(0,1fr) 38px 38px 38px;gap:7px;padding:11px 12px;border-top:1px solid rgba(255,255,255,.11);background:rgba(5,8,13,.2)}.mia-composer textarea{height:38px;max-height:92px;resize:none;padding:9px 11px;border:1px solid rgba(255,255,255,.16);border-radius:7px;color:#f6f8fb;background:rgba(6,10,17,.58);line-height:1.35}.mia-composer textarea::placeholder{color:#8f9bad}.mia-send{color:#071812;background:#70e7c6;border-color:rgba(132,246,216,.6)}.mia-stop{color:#ffb7bd}.mia-icon:disabled,button:disabled,textarea:disabled{cursor:not-allowed;opacity:.45}
 .mia-shell[data-status="thinking"] .mia-dot,.mia-shell[data-status="connecting"] .mia-dot{background:#f2c96f;animation:mia-pulse 1.2s ease-in-out infinite}.mia-shell[data-status="error"] .mia-dot{background:#ff7781}.mia-shell[data-status="offline"] .mia-dot,.mia-shell[data-status="ended"] .mia-dot{background:#8792a3}.mia-shell[data-status="listening"] .mia-dot{animation:mia-pulse .8s ease-in-out infinite}
 @keyframes mia-pulse{50%{transform:scale(1.35);box-shadow:0 0 0 7px rgba(69,214,169,.06)}}
-@media(max-width:520px){.mia-shell{right:10px;bottom:10px;left:10px}.mia-launcher{width:154px;margin-left:auto}.mia-panel{position:fixed;left:10px;right:10px;bottom:78px;width:auto;max-height:calc(100vh - 98px)}.mia-composer{grid-template-columns:minmax(0,1fr) 38px 38px}.mia-stop{grid-column:3}.mia-mic[hidden]+.mia-send{grid-column:2}}
+@keyframes mia-panel-in{from{opacity:0;transform:translateY(8px) scale(.985)}to{opacity:1;transform:none}}
+@media(max-width:520px){.mia-shell{right:10px;bottom:10px;left:10px}.mia-launcher{width:154px;margin-left:auto}.mia-panel{position:fixed;left:10px;right:10px;bottom:10px;width:auto;max-height:calc(100vh - 20px)}.mia-composer{grid-template-columns:minmax(0,1fr) 38px 38px}.mia-stop{grid-column:3}.mia-mic[hidden]+.mia-send{grid-column:2}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 `;

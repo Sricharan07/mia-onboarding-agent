@@ -6,6 +6,38 @@ import { AgentObservationCollector } from "../src/context/AgentObservationCollec
 import { DomAgentActor } from "../src/agent/DomAgentActuator.js";
 import type { MiaShadowCursor } from "../src/cursor/MiaShadowCursor.js";
 import type { ActionDirective, MiaOptions } from "../src/types/index.js";
+import { MiaAssistantPanel } from "../src/ui/MiaAssistantPanel.js";
+
+test("assistant panel preserves its controls across status and voice updates", () => {
+  const cleanup = installDom("");
+  try {
+    const panel = new MiaAssistantPanel({
+      voiceEnabled: true,
+      onAsk: async () => undefined,
+      onToggleVoice: async () => undefined,
+      onStop: async () => undefined
+    });
+    panel.mount();
+    panel.setStatus("thinking");
+    panel.setVoiceActive(true);
+    panel.setStatus("idle");
+
+    const host = document.querySelector<HTMLElement>("[data-mia-assistant-panel]")!;
+    const root = host.shadowRoot!;
+    const launcher = root.querySelector<HTMLButtonElement>("[data-launcher]")!;
+    assert.ok(launcher);
+    assert.equal(root.querySelector("[data-status-label]")?.textContent, "Ready");
+    assert.equal(root.querySelector("[data-launcher-status]")?.textContent, "Ready");
+    assert.equal(root.querySelector("[data-shell]")?.getAttribute("data-status"), "idle");
+    assert.equal(root.querySelectorAll("button").length, 5);
+
+    launcher.click();
+    assert.equal(root.querySelector("[data-panel]")?.hasAttribute("hidden"), false);
+    panel.destroy();
+  } finally {
+    cleanup();
+  }
+});
 
 test("semantic observer traverses open shadow roots, preserves stable IDs, and redacts secrets", () => {
   const cleanup = installDom(`

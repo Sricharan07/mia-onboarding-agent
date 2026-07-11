@@ -1,772 +1,273 @@
-export type ApiErrorBody = {
-  error?: {
-    code?: string;
-    message?: string;
-    details?: unknown;
-  };
+import type {
+  AdminUser,
+  AuthResponse,
+  CreatedIntegrationKey,
+  GeminiStatus,
+  HostAction,
+  IntegrationKey,
+  KnowledgeSource,
+  MappedElementPage,
+  Product,
+  Recording,
+  RiskLevel,
+  RunDetail,
+  RunSummary,
+  ScanAuth,
+  SetupChecklist,
+  SetupStatus,
+  Skill,
+  TranscriptMode,
+  UiActionPolicy,
+  UiMapVersion,
+  Usage
+} from "./types";
+
+type RequestOptions = {
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  body?: unknown;
+  form?: FormData;
+  authenticated?: boolean;
 };
 
-export type BackendHealth = {
-  ok: boolean;
-  service: string;
-  mode: string;
-  time: string;
-};
-
-export type ProviderReadiness = {
-  configured: boolean;
-  reachable: boolean | null;
-  status: "ok" | "missing_config" | "unverified" | "error";
-  message: string;
-};
-
-export type SystemReadiness = {
-  database: ProviderReadiness;
-  secrets: ProviderReadiness;
-  providers: {
-    gemini: ProviderReadiness;
-    semanticSearch: ProviderReadiness;
-  };
-};
-
-export type UiScanAuthMode = "none" | "login_form" | "manual";
-export type TelemetryMode = "events_only" | "redacted" | "full";
-
-export type AppUiScanConfig = {
-  runtimeMode: "qa_only" | "workflow";
-  routes: string[];
-  authMode: UiScanAuthMode;
-  loginUrl?: string;
-  username?: string;
-  passwordConfigured: boolean;
-  usernameSelector?: string;
-  passwordSelector?: string;
-  submitSelector?: string;
-  successUrlPattern?: string;
-  postLoginWaitMs: number;
-  ignoredSelectors: string[];
-  redactedSelectors: string[];
-  routeDiscovery: {
-    enabled: boolean;
-    maxRoutes: number;
-  };
-};
-
-export type AppRecord = {
-  id: string;
-  name: string;
-  slug: string;
-  baseUrl: string;
-  uiScanConfig: AppUiScanConfig;
-  privacyPolicy: {
-    telemetryMode: TelemetryMode;
-    retentionDays: number;
-  };
-  createdAt: string;
-  updatedAt: string;
-  archivedAt?: string | null;
-};
-
-export type UiMapVersion = {
-  id: string;
-  appId: string;
-  version: string;
-  source: string;
-  status: string;
-  createdAt: string;
-  completedAt?: string | null;
-  error?: string | null;
-  routes?: string[];
-  routeCount?: number;
-  pageCount?: number;
-  failedPageCount?: number;
-  elementCount?: number;
-  strongSelectorCount?: number;
-  mediumSelectorCount?: number;
-  weakSelectorCount?: number;
-};
-
-export type UiPage = {
-  id: string;
-  name: string;
-  route: string;
-  url: string;
-  title?: string | null;
-  status: string;
-  error?: string | null;
-  createdAt: string;
-  elementCount?: number;
-  stateCount?: number;
-  strongSelectorCount?: number;
-  mediumSelectorCount?: number;
-  weakSelectorCount?: number;
-};
-
-export type UiElement = {
-  id: string;
-  elementId: string;
-  appId: string;
-  uiMapVersionId: string;
-  pageId: string;
-  pageName: string;
-  route: string;
-  elementType: string;
-  label?: string;
-  description: string;
-  selector: string;
-  selectorType: string;
-  fallbackSelectors: string[];
-  locators: TargetLocator[];
-  tags: string[];
-  selectorQuality: "strong" | "medium" | "weak";
-  selectorWarnings: string[];
-  stateName?: string;
-  stateReason?: string;
-  discoveredBy?: "route_scan" | "auto_expansion" | "manual_capture";
-  fingerprint?: string;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type UiMapCaptureResult = {
-  pageId: string;
-  route: string;
-  url: string;
-  stateName: string;
-  scannedElements: number;
-  savedElements: number;
-  duplicateElements: number;
-  weakSelectors: number;
-};
-
-export type InteractiveUiMapSession = {
-  sessionId: string;
-  appId: string;
-  uiMapVersionId: string;
-  currentRoute: string;
-  createdAt: string;
-  initialCapture?: UiMapCaptureResult;
-  capture?: UiMapCaptureResult;
-};
-
-export type UiMapPreflightCheck = {
-  id: string;
-  label: string;
-  status: "passed" | "warning" | "failed";
-  message: string;
-  fix?: string;
-};
-
-export type UiMapPreflightReport = {
-  appId: string;
-  ok: boolean;
-  checks: UiMapPreflightCheck[];
-};
-
-export type UiMapRouteDiscoveryReport = {
-  appId: string;
-  baseUrl: string;
-  routes: string[];
-  checkedRoutes: Array<{
-    route: string;
-    status: "passed" | "failed";
-    url?: string;
-    discoveredRoutes: string[];
-    error?: string;
-  }>;
-  truncated: boolean;
-};
-
-export type WorkflowJob = {
-  id: string;
-  appId: string;
-  videoId: string;
-  filename: string;
-  status: string;
-  error: string | null;
-  createdAt: string;
-  updatedAt: string;
-  workflowId?: string;
-};
-
-export type WorkflowSummary = {
-  workflowId: string;
-  name: string;
-  description: string;
-  status: string;
-  version: number;
-};
-
-export type WorkflowStep =
-  | {
-      id: string;
-      type: "review_required";
-      message: string;
-      observedAction?: string;
-      label?: string;
-      description?: string;
-      source?: WorkflowStepSource;
-    }
-  | {
-      id: string;
-      type: "navigate";
-      route: string;
-      label?: string;
-      description?: string;
-    }
-  | {
-      id: string;
-      type: "click" | "focus";
-      target: WorkflowTarget;
-      executionPolicy: ExecutionPolicy;
-      label?: string;
-      description?: string;
-      source?: WorkflowStepSource;
-    }
-  | {
-      id: string;
-      type: "fill" | "select";
-      target: WorkflowTarget;
-      valueFrom: string;
-      executionPolicy: ExecutionPolicy;
-      label?: string;
-      description?: string;
-      source?: WorkflowStepSource;
-    }
-  | {
-      id: string;
-      type: "ask_user";
-      field: string;
-      prompt: string;
-      inputType?: string;
-      sensitivity?: "standard" | "personal" | "secret" | "payment";
-      choices?: string[];
-      label?: string;
-      description?: string;
-    }
-  | {
-      id: string;
-      type: "wait_for_element";
-      target: WorkflowTarget;
-      timeoutMs: number;
-      label?: string;
-      description?: string;
-    }
-  | {
-      id: string;
-      type: "confirm";
-      message: string;
-      confirmLabel?: string;
-      cancelLabel?: string;
-      label?: string;
-      description?: string;
-    }
-  | {
-      id: string;
-      type: "complete";
-      message: string;
-      label?: string;
-      description?: string;
-    };
-
-export type ExecutionPolicy = "auto" | "requires_confirmation" | "manual_only" | "blocked";
-
-export type WorkflowTarget = {
-  elementId: string;
-  label?: string;
-  selector: string;
-  fallbackSelectors?: string[];
-  locators: TargetLocator[];
-  route?: string;
-  pageName?: string;
-  uiMapVersionId?: string;
-  fingerprint?: string;
-  elementType?: string;
-};
-
-export type TargetLocator =
-  | { strategy: "css"; selector: string }
-  | { strategy: "role"; role: string; name?: string }
-  | { strategy: "label"; label: string }
-  | { strategy: "text"; text: string; tagName?: string };
-
-export type WorkflowStepSource = {
-  extractedStepId?: string;
-  extractionConfidence?: number;
-  matchConfidence?: number;
-};
-
-export type Workflow = {
-  workflowId: string;
-  appId: string;
-  name: string;
-  description: string;
-  status: string;
-  version: number;
-  triggerPhrases: string[];
-  requiredContext: {
-    app: string;
-    startingRoutes: string[];
-  };
-  steps: WorkflowStep[];
-  createdFrom?: {
-    videoId?: string;
-    jobId?: string;
-    uiMapVersionId?: string;
-  };
-  review: {
-    reviewedBy?: string;
-    reviewedAt?: string;
-    notes?: string;
-    uiMapVersionId?: string;
-  };
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type WorkflowReviewIssue = {
-  id: string;
-  severity: "blocker" | "warning" | "info";
-  label: string;
-  message: string;
-  stepId?: string;
-  fix?: string;
-};
-
-export type WorkflowReviewReport = {
-  workflowId: string;
-  publishable: boolean;
-  blockerCount: number;
-  warningCount: number;
-  issues: WorkflowReviewIssue[];
-};
-
-export type ExecutionLog = {
-  id: string;
-  appId?: string | null;
-  sessionId?: string | null;
-  workflowId?: string | null;
-  stepId?: string | null;
-  eventType: string;
-  userId?: string | null;
-  telemetryLevel?: TelemetryMode;
-  createdAt: string;
-  payload: unknown;
-};
-
-export type RuntimeElementContext = {
-  tagName: string;
-  role?: string;
-  label?: string;
-  text?: string;
-  selector?: string;
-  locators?: TargetLocator[];
-  elementId?: string;
-  mappedElementId?: string;
-  uiMapVersionId?: string;
-  fingerprint?: string;
-  boundingBox?: { x: number; y: number; width: number; height: number };
-};
-
-export type RuntimeResolveResponse =
-  | { type: "workflow"; workflow: Workflow; message: string }
-  | { type: "control"; action: "cancel" | "pause" | "resume"; message: string }
-  | { type: "element_action"; action: "click" | "focus"; target: RuntimeElementContext; executionPolicy: "requires_confirmation"; message: string }
-  | { type: "answer"; message: string; target?: RuntimeElementContext }
-  | { type: "no_match"; message: string; target?: RuntimeElementContext };
-
-export type RuntimeResolveContext = {
-  currentUrl: string;
-  currentRoute: string;
-  pageTitle?: string;
-  focusedElement?: RuntimeElementContext | null;
-  hoveredElement?: RuntimeElementContext | null;
-  visibleElements?: RuntimeElementContext[];
-  userMetadata?: Record<string, unknown>;
-};
-
-export type ApiKeyScope = "apps:read" | "ui-map:read" | "workflows:read" | "runtime:tokens:create" | "logs:read" | "admin";
-
-export type ApiKeyRecord = {
-  id: string;
-  name: string;
-  prefix: string;
-  scopes: ApiKeyScope[];
-  appId: string | null;
-  allowedOrigins: string[];
-  createdAt: string;
-  lastUsedAt: string | null;
-  revokedAt: string | null;
-};
-
-export type CreatedApiKey = ApiKeyRecord & {
-  key: string;
-};
-
-export type ConsoleAuthUser = {
-  id: string;
-  email: string;
-  name: string;
-  role: "admin";
-  createdAt: string;
-  updatedAt: string;
-  lastLoginAt: string | null;
-  disabledAt: string | null;
-};
-
-export type ConsoleAuthStatus = {
-  setupRequired: boolean;
-  authenticated: boolean;
-  user?: ConsoleAuthUser;
-};
-
-export type ConsoleLoginResponse = {
-  token: string;
-  expiresAt: string;
-  user: ConsoleAuthUser;
-};
-
-export type ConsoleSession = {
-  id: string;
-  userId: string;
-  createdAt: string;
-  expiresAt: string;
-  lastUsedAt: string | null;
-  revokedAt: string | null;
-  user: ConsoleAuthUser;
-};
-
-export type UsageSummary = {
-  totals: {
-    sdkEvents: number;
-    workflowRuns: number;
-    aiRequests: number;
-    errors: number;
-    averageAiLatencyMs: number | null;
-  };
-  eventCounts: Array<{ eventType: string; count: number }>;
-  providerCounts: Array<{ provider: string; count: number }>;
-};
-
-export type UsageTimeseriesPoint = {
-  bucket: string;
-  sdkEvents: number;
-  workflowRuns: number;
-  aiRequests: number;
-  errors: number;
-};
-
-type Items<T> = { items: T[] };
-type PagedItems<T> = Items<T> & { total: number; limit: number; offset: number };
-
-export type BackendApiCredentials = {
-  sessionToken?: string;
-};
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code: string,
+    readonly details?: unknown
+  ) {
+    super(message);
+    this.name = code;
+  }
+}
 
 export class BackendApi {
-  constructor(
-    private readonly baseUrl: string,
-    private readonly credentials: BackendApiCredentials = {}
-  ) {}
+  private readonly baseUrl: string;
 
-  health(): Promise<BackendHealth> {
-    return this.request("/api/v1/health");
+  constructor(baseUrl: string, private readonly token: string, private readonly onUnauthorized?: () => void) {
+    this.baseUrl = baseUrl.replace(/\/+$/, "");
   }
 
-  readiness(): Promise<SystemReadiness> {
-    return this.request("/api/v1/system/readiness");
+  setupStatus(): Promise<SetupStatus> {
+    return this.request("/api/v1/setup/status");
   }
 
-  authStatus(): Promise<ConsoleAuthStatus> {
-    return this.request("/api/v1/console/auth/status");
+  setup(input: {
+    setupToken: string;
+    productName: string;
+    origin: string;
+    adminEmail: string;
+    adminName: string;
+    password: string;
+  }): Promise<AuthResponse> {
+    return this.request("/api/v1/setup", { method: "POST", body: input, authenticated: false });
   }
 
-  setupConsoleUser(input: { email: string; name: string; password: string }, bootstrapToken: string): Promise<ConsoleLoginResponse> {
-    return this.request("/api/v1/console/auth/setup", {
-      method: "POST",
-      body: input,
-      headers: { "x-bootstrap-admin-token": bootstrapToken }
-    });
+  login(email: string, password: string): Promise<AuthResponse> {
+    return this.request("/api/v1/auth/login", { method: "POST", body: { email, password }, authenticated: false });
   }
 
-  loginConsole(input: { email: string; password: string }): Promise<ConsoleLoginResponse> {
-    return this.request("/api/v1/console/auth/login", { method: "POST", body: input });
+  logout(): Promise<{ ok: boolean }> {
+    return this.request("/api/v1/auth/logout", { method: "POST" });
   }
 
-  logoutConsole(): Promise<{ ok: true }> {
-    return this.request("/api/v1/console/auth/logout", { method: "POST", body: {} });
+  checklist(): Promise<SetupChecklist> {
+    return this.request("/api/v1/setup/checklist");
   }
 
-  listApps(): Promise<Items<AppRecord>> {
-    return this.request("/api/v1/apps");
+  product(): Promise<Product> {
+    return this.request("/api/v1/product");
   }
 
-  saveApp(input: {
+  updateProduct(input: Partial<{
     name: string;
-    slug: string;
-    baseUrl: string;
-    privacyPolicy?: { telemetryMode: TelemetryMode; retentionDays: number };
-    uiScanConfig?: Partial<Omit<AppUiScanConfig, "passwordConfigured">> & { password?: string; clearPassword?: boolean };
-  }): Promise<AppRecord> {
-    return this.request("/api/v1/apps", { method: "POST", body: input });
+    origin: string;
+    documentationOrigins: string[];
+    redactedSelectors: string[];
+    transcriptMode: TranscriptMode;
+    transcriptRetentionDays: number;
+    voiceConfig: Product["voiceConfig"];
+  }>): Promise<Product> {
+    return this.request("/api/v1/product", { method: "PATCH", body: input });
   }
 
-  archiveApp(appId: string): Promise<AppRecord> {
-    return this.request(`/api/v1/apps/${encodeURIComponent(appId)}/archive`, { method: "POST", body: {} });
+  gemini(): Promise<GeminiStatus> {
+    return this.request("/api/v1/product/gemini");
   }
 
-  exportAppData(appId: string): Promise<Record<string, unknown>> {
-    return this.request(`/api/v1/apps/${encodeURIComponent(appId)}/data-export`);
+  setGemini(apiKey: string): Promise<GeminiStatus> {
+    return this.request("/api/v1/product/gemini", { method: "PUT", body: { apiKey } });
   }
 
-  purgeAppData(appId: string): Promise<{ executionLogs: number; runtimeSessions: number; aiRequestLogs: number; runtimeTokens: number }> {
-    return this.request(`/api/v1/apps/${encodeURIComponent(appId)}/data-retention/purge`, { method: "POST", body: {} });
+  clearGemini(): Promise<GeminiStatus> {
+    return this.request("/api/v1/product/gemini", { method: "DELETE" });
   }
 
-  deleteAppUserData(appId: string, userId: string): Promise<{ executionLogs: number; runtimeSessions: number; runtimeTokens: number }> {
-    return this.request(`/api/v1/apps/${encodeURIComponent(appId)}/user-data/${encodeURIComponent(userId)}`, { method: "DELETE" });
+  integrationKeys(): Promise<IntegrationKey[]> {
+    return this.request<{ items: IntegrationKey[] }>("/api/v1/integration-keys").then((result) => result.items);
   }
 
-  preflightUiMap(appId: string, routes: string[], authMode: UiScanAuthMode = "none"): Promise<UiMapPreflightReport> {
-    return this.request(`/api/v1/apps/${encodeURIComponent(appId)}/ui-map/preflight`, { method: "POST", body: { routes, auth: { mode: authMode } } });
+  createIntegrationKey(name: string): Promise<CreatedIntegrationKey> {
+    return this.request("/api/v1/integration-keys", { method: "POST", body: { name } });
   }
 
-  scanUiMap(appId: string, routes: string[], authMode: UiScanAuthMode = "none"): Promise<{ uiMapVersionId: string; status: string }> {
-    return this.request(`/api/v1/apps/${encodeURIComponent(appId)}/ui-map/scan`, { method: "POST", body: { routes, auth: { mode: authMode } } });
+  revokeIntegrationKey(id: string): Promise<{ ok: boolean }> {
+    return this.request(`/api/v1/integration-keys/${encodeURIComponent(id)}`, { method: "DELETE" });
   }
 
-  discoverUiMapRoutes(appId: string, input: { routes: string[]; authMode?: UiScanAuthMode; maxRoutes?: number }): Promise<UiMapRouteDiscoveryReport> {
-    return this.request(`/api/v1/apps/${encodeURIComponent(appId)}/ui-map/discover-routes`, {
-      method: "POST",
-      body: { routes: input.routes, auth: { mode: input.authMode ?? "none" }, maxRoutes: input.maxRoutes }
-    });
+  changePassword(currentPassword: string, nextPassword: string): Promise<{ user: AdminUser }> {
+    return this.request("/api/v1/auth/password", { method: "PUT", body: { currentPassword, nextPassword } });
   }
 
-  startInteractiveUiMapSession(appId: string, input: { routes: string[]; authMode: UiScanAuthMode }): Promise<InteractiveUiMapSession> {
-    return this.request(`/api/v1/apps/${encodeURIComponent(appId)}/ui-map/interactive-sessions`, {
-      method: "POST",
-      body: { routes: input.routes, auth: { mode: input.authMode } }
-    });
+  knowledge(): Promise<KnowledgeSource[]> {
+    return this.request<{ items: KnowledgeSource[] }>("/api/v1/knowledge").then((result) => result.items);
   }
 
-  gotoInteractiveUiMapSession(sessionId: string, input: { route: string; captureDefault?: boolean }): Promise<InteractiveUiMapSession> {
-    return this.request(`/api/v1/ui-map/interactive-sessions/${encodeURIComponent(sessionId)}/goto`, { method: "POST", body: input });
+  addDocumentationUrl(input: { name: string; url: string; maxPages?: number }): Promise<KnowledgeSource> {
+    return this.request("/api/v1/knowledge/urls", { method: "POST", body: input });
   }
 
-  captureInteractiveUiMapState(sessionId: string, input: { stateName: string; stateReason?: string }): Promise<InteractiveUiMapSession> {
-    return this.request(`/api/v1/ui-map/interactive-sessions/${encodeURIComponent(sessionId)}/capture-state`, { method: "POST", body: input });
+  uploadDocument(name: string, file: File): Promise<KnowledgeSource> {
+    const form = new FormData();
+    form.set("name", name);
+    form.set("file", file);
+    return this.request("/api/v1/knowledge/files", { method: "POST", form });
   }
 
-  finishInteractiveUiMapSession(sessionId: string): Promise<{ uiMapVersionId: string; status: string }> {
-    return this.request(`/api/v1/ui-map/interactive-sessions/${encodeURIComponent(sessionId)}/finish`, { method: "POST", body: {} });
+  retryKnowledge(id: string): Promise<KnowledgeSource> {
+    return this.request(`/api/v1/knowledge/${encodeURIComponent(id)}/retry`, { method: "POST" });
   }
 
-  cancelInteractiveUiMapSession(sessionId: string, reason?: string): Promise<{ uiMapVersionId: string; status: string }> {
-    return this.request(`/api/v1/ui-map/interactive-sessions/${encodeURIComponent(sessionId)}/cancel`, { method: "POST", body: { reason } });
+  archiveKnowledge(id: string): Promise<KnowledgeSource> {
+    return this.request(`/api/v1/knowledge/${encodeURIComponent(id)}`, { method: "DELETE" });
   }
 
-  listUiMapVersions(appId: string): Promise<Items<UiMapVersion>> {
-    return this.request(`/api/v1/apps/${encodeURIComponent(appId)}/ui-map/versions`);
+  scans(): Promise<UiMapVersion[]> {
+    return this.request<{ items: UiMapVersion[] }>("/api/v1/scans").then((result) => result.items);
   }
 
-  listPages(uiMapVersionId: string): Promise<Items<UiPage>> {
-    return this.request(`/api/v1/ui-map/${encodeURIComponent(uiMapVersionId)}/pages`);
+  startScan(routes?: string[]): Promise<UiMapVersion> {
+    return this.request("/api/v1/scans", { method: "POST", body: { routes: routes?.length ? routes : undefined, discover: true } });
   }
 
-  async listAllElements(uiMapVersionId: string): Promise<UiElement[]> {
-    const items: UiElement[] = [];
-    const limit = 1_000;
-    let offset = 0;
-    let total = Number.POSITIVE_INFINITY;
-
-    while (offset < total) {
-      const response = await this.request<PagedItems<UiElement>>(
-        `/api/v1/ui-map/${encodeURIComponent(uiMapVersionId)}/elements?limit=${limit}&offset=${offset}`
-      );
-      total = response.total;
-      items.push(...response.items);
-      if (response.items.length === 0) break;
-      offset += response.items.length;
-    }
-
-    return items;
+  mappedElements(input: { route?: string; search?: string; limit?: number; offset?: number } = {}): Promise<MappedElementPage> {
+    const query = new URLSearchParams();
+    if (input.route) query.set("route", input.route);
+    if (input.search) query.set("search", input.search);
+    query.set("limit", String(input.limit ?? 100));
+    query.set("offset", String(input.offset ?? 0));
+    return this.request(`/api/v1/scans/elements?${query}`);
   }
 
-  listElements(pageId: string, filters: { selectorQuality?: string; elementType?: string } = {}): Promise<Items<UiElement>> {
-    const params = new URLSearchParams();
-    if (filters.selectorQuality) params.set("selectorQuality", filters.selectorQuality);
-    if (filters.elementType) params.set("elementType", filters.elementType);
-    return this.request(`/api/v1/pages/${encodeURIComponent(pageId)}/elements${params.size ? `?${params}` : ""}`);
+  updateElementPolicy(elementKey: string, policy: UiActionPolicy): Promise<{ ok: boolean }> {
+    return this.request(`/api/v1/scans/elements/${encodeURIComponent(elementKey)}/policy`, { method: "PATCH", body: { policy } });
   }
 
-  updateElement(appId: string, elementRowId: string, input: { description?: string; tags?: string[] }): Promise<{ ok: true }> {
-    return this.request(`/api/v1/apps/${encodeURIComponent(appId)}/ui-map/elements/${encodeURIComponent(elementRowId)}`, { method: "PATCH", body: input });
+  scanAuth(): Promise<ScanAuth> {
+    return this.request("/api/v1/product/scan-auth");
   }
 
-  uploadWorkflowVideo(appId: string, input: { file: File; name?: string; description?: string }): Promise<{ videoId: string; jobId: string; status: string }> {
-    const body = new FormData();
-    body.set("file", input.file);
-    if (input.name) body.set("name", input.name);
-    if (input.description) body.set("description", input.description);
-    return this.request(`/api/v1/apps/${encodeURIComponent(appId)}/workflow-videos`, { method: "POST", formData: body });
+  updateScanAuth(input: {
+    authMode: "none" | "login_form";
+    loginUrl?: string;
+    username?: string;
+    password?: string;
+    usernameSelector?: string;
+    passwordSelector?: string;
+    submitSelector?: string;
+    successUrlPattern?: string;
+    allowedResourceOrigins: string[];
+    waitAfterLoginMs: number;
+  }): Promise<ScanAuth> {
+    return this.request("/api/v1/product/scan-auth", { method: "PUT", body: input });
   }
 
-  listWorkflowJobs(appId: string): Promise<Items<WorkflowJob>> {
-    return this.request(`/api/v1/apps/${encodeURIComponent(appId)}/workflow-jobs`);
+  recordings(): Promise<Recording[]> {
+    return this.request<{ items: Recording[] }>("/api/v1/recordings").then((result) => result.items);
   }
 
-  processWorkflowJob(jobId: string): Promise<{ jobId: string; status: string }> {
-    return this.request(`/api/v1/workflow-jobs/${encodeURIComponent(jobId)}/process`, { method: "POST", body: {} });
+  uploadRecording(input: { name: string; description?: string; file: File }): Promise<Recording> {
+    const form = new FormData();
+    form.set("name", input.name);
+    if (input.description) form.set("description", input.description);
+    form.set("file", input.file);
+    return this.request("/api/v1/recordings", { method: "POST", form });
   }
 
-  listWorkflows(appId: string, status?: string): Promise<Items<WorkflowSummary>> {
-    const search = status ? `?status=${encodeURIComponent(status)}` : "";
-    return this.request(`/api/v1/apps/${encodeURIComponent(appId)}/workflows${search}`);
+  retryRecording(id: string): Promise<Recording> {
+    return this.request(`/api/v1/recordings/${encodeURIComponent(id)}/retry`, { method: "POST" });
   }
 
-  getWorkflow(workflowId: string): Promise<Workflow> {
-    return this.request(`/api/v1/workflows/${encodeURIComponent(workflowId)}`);
+  skills(): Promise<Skill[]> {
+    return this.request<{ items: Skill[] }>("/api/v1/skills").then((result) => result.items);
   }
 
-  getWorkflowReviewReport(workflowId: string): Promise<WorkflowReviewReport> {
-    return this.request(`/api/v1/workflows/${encodeURIComponent(workflowId)}/review-report`);
+  updateSkill(id: string, input: Partial<Pick<Skill, "name" | "description" | "goal" | "businessContext" | "steps" | "constraints" | "expectedOutcomes">>): Promise<Skill> {
+    return this.request(`/api/v1/skills/${encodeURIComponent(id)}`, { method: "PATCH", body: input });
   }
 
-  updateWorkflow(workflowId: string, input: Partial<Workflow>): Promise<{ ok: true }> {
-    return this.request(`/api/v1/workflows/${encodeURIComponent(workflowId)}`, { method: "PATCH", body: input });
+  publishSkill(id: string): Promise<Skill> {
+    return this.request(`/api/v1/skills/${encodeURIComponent(id)}/publish`, { method: "POST" });
   }
 
-  approveWorkflow(workflowId: string, input: { reviewedBy: string; notes?: string }): Promise<{ workflowId: string; status: string }> {
-    return this.request(`/api/v1/workflows/${encodeURIComponent(workflowId)}/approve`, { method: "POST", body: input });
+  archiveSkill(id: string): Promise<Skill> {
+    return this.request(`/api/v1/skills/${encodeURIComponent(id)}/archive`, { method: "POST" });
   }
 
-  publishWorkflow(workflowId: string): Promise<{ workflowId: string; status: string }> {
-    return this.request(`/api/v1/workflows/${encodeURIComponent(workflowId)}/publish`, { method: "POST", body: {} });
+  actions(): Promise<HostAction[]> {
+    return this.request<{ items: HostAction[] }>("/api/v1/actions").then((result) => result.items);
   }
 
-  archiveWorkflow(workflowId: string): Promise<{ workflowId: string; status: string }> {
-    return this.request(`/api/v1/workflows/${encodeURIComponent(workflowId)}/archive`, { method: "POST", body: {} });
+  reviewAction(name: string, status: "published" | "blocked", risk: RiskLevel): Promise<HostAction> {
+    return this.request(`/api/v1/actions/${encodeURIComponent(name)}`, { method: "PATCH", body: { status, risk } });
   }
 
-  addWorkflowStep(workflowId: string, step: WorkflowStep): Promise<Workflow> {
-    return this.request(`/api/v1/workflows/${encodeURIComponent(workflowId)}/steps`, { method: "POST", body: step });
+  runs(): Promise<{ items: RunSummary[]; transcriptMode: TranscriptMode }> {
+    return this.request("/api/v1/runs");
   }
 
-  updateWorkflowStep(workflowId: string, stepId: string, patch: Partial<WorkflowStep>): Promise<Workflow> {
-    return this.request(`/api/v1/workflows/${encodeURIComponent(workflowId)}/steps/${encodeURIComponent(stepId)}`, { method: "PATCH", body: patch });
+  run(id: string): Promise<RunDetail> {
+    return this.request(`/api/v1/runs/${encodeURIComponent(id)}`);
   }
 
-  deleteWorkflowStep(workflowId: string, stepId: string): Promise<Workflow> {
-    return this.request(`/api/v1/workflows/${encodeURIComponent(workflowId)}/steps/${encodeURIComponent(stepId)}`, { method: "DELETE" });
+  usage(): Promise<Usage> {
+    return this.request("/api/v1/usage");
   }
 
-  reorderWorkflowSteps(workflowId: string, stepIds: string[]): Promise<Workflow> {
-    return this.request(`/api/v1/workflows/${encodeURIComponent(workflowId)}/steps/reorder`, { method: "POST", body: { stepIds } });
-  }
-
-  listLogs(filters: { appId?: string; workflowId?: string; sessionId?: string } = {}): Promise<Items<ExecutionLog>> {
-    const params = new URLSearchParams();
-    for (const [key, value] of Object.entries(filters)) {
-      if (value) params.set(key, value);
-    }
-    return this.request(`/api/v1/logs${params.size ? `?${params}` : ""}`);
-  }
-
-  resolveRuntime(input: {
-    appId: string;
-    sessionId: string;
-    utterance: string;
-    context: RuntimeResolveContext;
-  }): Promise<RuntimeResolveResponse> {
-    return this.request("/api/v1/runtime/resolve", { method: "POST", body: input });
-  }
-
-  usage(filters: { appId?: string; from?: string; to?: string } = {}): Promise<UsageSummary> {
-    const params = new URLSearchParams();
-    for (const [key, value] of Object.entries(filters)) {
-      if (value) params.set(key, value);
-    }
-    return this.request(`/api/v1/metrics/usage${params.size ? `?${params}` : ""}`);
-  }
-
-  usageTimeseries(filters: { appId?: string; from?: string; to?: string; bucket?: "day" } = {}): Promise<Items<UsageTimeseriesPoint>> {
-    const params = new URLSearchParams();
-    for (const [key, value] of Object.entries(filters)) {
-      if (value) params.set(key, value);
-    }
-    return this.request(`/api/v1/metrics/usage/timeseries${params.size ? `?${params}` : ""}`);
-  }
-
-  listApiKeys(): Promise<Items<ApiKeyRecord>> {
-    return this.request("/api/v1/api-keys");
-  }
-
-  createApiKey(input: { name: string; scopes: ApiKeyScope[]; appId?: string; allowedOrigins?: string[] }): Promise<CreatedApiKey> {
-    return this.request("/api/v1/api-keys", { method: "POST", body: input });
-  }
-
-  revokeApiKey(keyId: string): Promise<ApiKeyRecord> {
-    return this.request(`/api/v1/api-keys/${encodeURIComponent(keyId)}`, { method: "DELETE" });
-  }
-
-  listConsoleUsers(): Promise<Items<ConsoleAuthUser>> {
-    return this.request("/api/v1/console/users");
-  }
-
-  createConsoleUser(input: { email: string; name: string; password: string }): Promise<ConsoleAuthUser> {
-    return this.request("/api/v1/console/users", { method: "POST", body: input });
-  }
-
-  changeConsoleUserPassword(userId: string, input: { currentPassword?: string; nextPassword: string }): Promise<ConsoleAuthUser> {
-    return this.request(`/api/v1/console/users/${encodeURIComponent(userId)}/password`, { method: "PATCH", body: input });
-  }
-
-  disableConsoleUser(userId: string): Promise<ConsoleAuthUser> {
-    return this.request(`/api/v1/console/users/${encodeURIComponent(userId)}/disable`, { method: "POST", body: {} });
-  }
-
-  listConsoleSessions(): Promise<Items<ConsoleSession>> {
-    return this.request("/api/v1/console/sessions");
-  }
-
-  revokeConsoleSession(sessionId: string): Promise<{ ok: true }> {
-    return this.request(`/api/v1/console/sessions/${encodeURIComponent(sessionId)}/revoke`, { method: "POST", body: {} });
-  }
-
-  private async request<T>(
-    path: string,
-    init: { method?: string; body?: unknown; formData?: FormData; headers?: Record<string, string> } = {}
-  ): Promise<T> {
-    const headers = new Headers();
-    for (const [key, value] of Object.entries(init.headers ?? {})) {
-      headers.set(key, value);
-    }
+  private async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+    const headers: Record<string, string> = { accept: "application/json" };
+    const authenticated = options.authenticated !== false;
+    if (authenticated && this.token) headers.authorization = `Bearer ${this.token}`;
     let body: BodyInit | undefined;
-    const method = init.method ?? "GET";
-    if (init.formData) {
-      body = init.formData;
-    } else if (init.body !== undefined) {
-      headers.set("content-type", "application/json");
-      body = JSON.stringify(init.body);
+    if (options.form) body = options.form;
+    else if (options.body !== undefined) {
+      headers["content-type"] = "application/json";
+      body = JSON.stringify(options.body);
     }
-
-    if (this.credentials.sessionToken) {
-      headers.set("authorization", `Bearer ${this.credentials.sessionToken}`);
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}${path}`, { method: options.method ?? "GET", headers, body, cache: "no-store" });
+    } catch {
+      throw new ApiError("Mia Console could not reach the backend.", 0, "NETWORK_ERROR");
     }
-
-    const response = await fetch(`${this.baseUrl.replace(/\/+$/, "")}${path}`, {
-      method,
-      headers,
-      body
-    });
-
-    const contentType = response.headers.get("content-type") ?? "";
-    const payload = contentType.includes("application/json") ? await response.json() as unknown : await response.text();
+    const payload = await parsePayload(response);
     if (!response.ok) {
-      const errorBody = payload as ApiErrorBody;
-      const message = errorBody.error?.message ?? `Backend request failed with ${response.status}`;
-      throw new Error(message);
+      const error = payload && typeof payload === "object" && "error" in payload
+        ? (payload as { error?: { message?: string; code?: string; details?: unknown } }).error
+        : undefined;
+      if (response.status === 401 && authenticated) this.onUnauthorized?.();
+      throw new ApiError(error?.message ?? `Request failed with HTTP ${response.status}.`, response.status, error?.code ?? "REQUEST_FAILED", error?.details);
     }
     return payload as T;
+  }
+}
+
+async function parsePayload(response: Response): Promise<unknown> {
+  const text = await response.text();
+  if (!text) return undefined;
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    throw new ApiError("Mia backend returned an invalid response.", response.status, "INVALID_RESPONSE");
   }
 }

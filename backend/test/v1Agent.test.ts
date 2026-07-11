@@ -76,6 +76,7 @@ test("v1 agent persists an observe-act-verify run and enforces confirmations and
     }), /approved before it can be completed/i);
 
     const confirmation = issued.actions[0]!.confirmation!;
+    assert.match(confirmation.prompt, /^Approve (?:this|these) reversible change/);
     await assert.rejects(() => agent.resolveConfirmation({
       sessionId: created.sessionId,
       confirmationId: confirmation.id,
@@ -122,6 +123,9 @@ test("v1 agent persists an observe-act-verify run and enforces confirmations and
     const steps = run.steps as Array<{ directive: { actions: Array<{ confirmation?: Record<string, unknown> }> } }>;
     assert.equal(steps.length, 2);
     assert.equal(steps[0]?.directive.actions[0]?.confirmation?.binding, undefined, "confirmation bindings must not be logged");
+    const acceptance = await repositories.diagnostics.acceptanceEvidence();
+    assert.equal(acceptance.mutation.passed, true);
+    assert.equal(acceptance.mutation.runId, created.sessionId);
   } finally {
     await database.close();
   }
@@ -175,20 +179,33 @@ test("v1 agent keeps a goal across questions and blocks protected operations bef
     assert.equal(answered.status, "completed");
     assert.equal((await repositories.agent.getSession(created.sessionId)).goal, "Create a draft lead");
 
-    model.push(decision("actions", {
-      message: "I will delete the account.",
-      actions: [planned("click", "live:delete", "Delete the account")]
-    }));
-    const blocked = await agent.submitTurn({
-      sessionId: created.sessionId,
-      userId: "user_2",
-      revision: answered.revision,
-      utterance: "Delete this account",
-      source: "text",
-      runtime: runtime(3)
-    });
-    assert.equal(blocked.type, "unable");
-    assert.equal(blocked.status, "failed");
+    let revision = answered.revision;
+    const prohibited = [
+      ["Delete this account", "Delete the account"],
+      ["Send this proposal", "Send the proposal"],
+      ["Publish this draft", "Publish the draft"],
+      ["Approve this request", "Approve the request"],
+      ["Pay this invoice", "Pay the invoice"],
+      ["Email the customer", "Email the customer"],
+      ["Submit the final application", "Submit the final application"]
+    ] as const;
+    for (const [utterance, actionMessage] of prohibited) {
+      model.push(decision("actions", {
+        message: actionMessage,
+        actions: [planned("click", "live:create", actionMessage)]
+      }));
+      const blocked = await agent.submitTurn({
+        sessionId: created.sessionId,
+        userId: "user_2",
+        revision,
+        utterance,
+        source: "text",
+        runtime: runtime(3)
+      });
+      assert.equal(blocked.type, "unable", utterance);
+      assert.equal(blocked.status, "failed", utterance);
+      revision = blocked.revision;
+    }
     const confirmationCount = await database.query<{ count: number }>("SELECT COUNT(*)::int AS count FROM confirmations");
     assert.equal(confirmationCount.rows[0]?.count, 0);
   } finally {

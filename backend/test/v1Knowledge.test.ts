@@ -108,6 +108,7 @@ test("document extraction, SSRF policy, and UI action policy preserve product se
 
   assert.equal(actionPolicyForElement({ role: "button", name: "Create draft", tagName: "button" }), "reversible_write");
   assert.equal(actionPolicyForElement({ role: "button", name: "Delete account", tagName: "button" }), "blocked");
+  assert.equal(actionPolicyForElement({ role: "button", name: "Submit the final application", tagName: "button" }), "blocked");
   assert.equal(actionPolicyForElement({ role: "textbox", name: "Password", tagName: "input", type: "password" }), "manual");
   assert.equal(actionPolicyForElement({ role: "link", name: "Pipeline", tagName: "a" }), "navigate");
 });
@@ -126,6 +127,7 @@ test("Playwright scanner discovers routes, redacts private regions, and auto-ind
       <main>
         <h1>Pipeline</h1>
         <button data-mia-key="create-draft">Create draft</button>
+        <button data-mia-key="create-draft-secondary">Create draft</button>
         <button>Delete account</button>
         <section data-private><button>Private customer action</button></section>
         <a href="/settings">Settings</a>
@@ -166,8 +168,17 @@ test("Playwright scanner discovers routes, redacts private regions, and auto-ind
     assert.deepEqual(new Set(completed.routes), new Set(["/", "/settings"]));
     const home = await repositories.knowledge.listMappedElements("/");
     assert.equal(home.find((element) => element.elementKey === "create-draft")?.actionPolicy, "reversible_write");
+    assert.equal(home.find((element) => element.elementKey === "create-draft-secondary")?.actionPolicy, "reversible_write");
     assert.equal(home.find((element) => element.name === "Delete account")?.actionPolicy, "blocked");
     assert.equal(home.some((element) => element.name === "Private customer action"), false);
+    const firstPage = await repositories.knowledge.listMappedElementsPage({ search: "Create draft", limit: 1, offset: 0 });
+    const secondPage = await repositories.knowledge.listMappedElementsPage({ search: "Create draft", limit: 1, offset: 1 });
+    assert.equal(firstPage.total, 2);
+    assert.ok(firstPage.overallTotal > firstPage.total);
+    assert.equal(firstPage.items.length, 1);
+    assert.equal(secondPage.items.length, 1);
+    assert.notEqual(firstPage.items[0]?.elementKey, secondPage.items[0]?.elementKey);
+    assert.ok(firstPage.routes.includes("/"));
     const mapSource = (await repositories.knowledge.listSources()).find((source) => source.kind === "ui_map");
     assert.equal(mapSource?.status, "ready");
     await scanner.close();

@@ -13,7 +13,7 @@ import {
   useReactTable,
   type VisibilityState,
 } from "@tanstack/react-table";
-import { ChevronDownIcon, ListFilter } from "lucide-react";
+import { ChevronDownIcon, ListFilter, Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -25,6 +25,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import {
   Pagination,
   PaginationContent,
@@ -35,7 +37,7 @@ import {
   PaginationPrevious,
 } from "@/components/ui/pagination";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import type { CrmOpportunity } from "@/lib/crm-types";
+import type { CrmOpportunity, DraftOpportunityInput } from "@/lib/crm-types";
 
 import { getOpportunitiesColumns } from "./opportunities-table/columns";
 
@@ -48,9 +50,11 @@ function preventPaginationNavigation(event: React.MouseEvent<HTMLAnchorElement>)
 export function OpportunitiesSection({
   opportunities,
   onOpenOpportunity,
+  onCreateDraft,
 }: {
   opportunities: CrmOpportunity[];
   onOpenOpportunity: (opportunity: CrmOpportunity) => void;
+  onCreateDraft: (input: DraftOpportunityInput) => Promise<void>;
 }) {
   const [rowSelection, setRowSelection] = React.useState({});
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([]);
@@ -60,6 +64,9 @@ export function OpportunitiesSection({
     pageIndex: 0,
     pageSize: 10,
   });
+  const [draftOpen, setDraftOpen] = React.useState(false);
+  const [draft, setDraft] = React.useState({ account: "", contactName: "", amount: "" });
+  const [creating, setCreating] = React.useState(false);
   const columns = React.useMemo(() => getOpportunitiesColumns({ onOpenOpportunity }), [onOpenOpportunity]);
 
   const table = useReactTable({
@@ -102,7 +109,7 @@ export function OpportunitiesSection({
   }, [currentPage, pageCount]);
 
   return (
-    <section aria-label="Recent Opportunities" data-ai-id="crm.opportunities.section">
+    <section aria-label="Recent Opportunities" data-mia-key="crm.opportunities.section">
       <Card>
         <CardHeader>
           <CardTitle className="leading-none">Recent Opportunities</CardTitle>
@@ -111,8 +118,12 @@ export function OpportunitiesSection({
           </CardDescription>
           <CardAction>
             <div className="flex items-center gap-2">
+              <Button data-mia-key="crm.opportunities.create_draft_button" size="sm" onClick={() => setDraftOpen(true)}>
+                <Plus data-icon="inline-start" />
+                Create draft
+              </Button>
               <Input
-                data-ai-id="crm.opportunities.search_input"
+                data-mia-key="crm.opportunities.search_input"
                 className="h-7 w-44 md:w-52"
                 placeholder="Search deals..."
                 value={searchQuery}
@@ -123,7 +134,7 @@ export function OpportunitiesSection({
               />
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button data-ai-id="crm.opportunities.stage_filter_button" variant="outline" size="sm">
+                  <Button data-mia-key="crm.opportunities.stage_filter_button" variant="outline" size="sm">
                     <ListFilter data-icon="inline-start" />
                     Stage
                     <ChevronDownIcon data-icon="inline-end" />
@@ -147,7 +158,7 @@ export function OpportunitiesSection({
               </DropdownMenu>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button data-ai-id="crm.opportunities.health_filter_button" variant="outline" size="sm">
+                  <Button data-mia-key="crm.opportunities.health_filter_button" variant="outline" size="sm">
                     <ListFilter data-icon="inline-start" />
                     Health
                     <ChevronDownIcon data-icon="inline-end" />
@@ -261,6 +272,29 @@ export function OpportunitiesSection({
           </div>
         </CardContent>
       </Card>
+      <Dialog open={draftOpen} onOpenChange={setDraftOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Create opportunity draft</DialogTitle>
+            <DialogDescription>The draft stays internal until a sales owner reviews it.</DialogDescription>
+          </DialogHeader>
+          <form
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              setCreating(true);
+              void onCreateDraft({ account: draft.account, contactName: draft.contactName || undefined, amount: draft.amount ? Number(draft.amount) : undefined })
+                .then(() => { setDraft({ account: "", contactName: "", amount: "" }); setDraftOpen(false); })
+                .finally(() => setCreating(false));
+            }}
+          >
+            <div className="space-y-1.5"><Label htmlFor="draft-account">Account</Label><Input id="draft-account" data-mia-key="crm.draft.account_input" required value={draft.account} onChange={(event) => setDraft((current) => ({ ...current, account: event.target.value }))} /></div>
+            <div className="space-y-1.5"><Label htmlFor="draft-contact">Contact</Label><Input id="draft-contact" data-mia-key="crm.draft.contact_input" value={draft.contactName} onChange={(event) => setDraft((current) => ({ ...current, contactName: event.target.value }))} /></div>
+            <div className="space-y-1.5"><Label htmlFor="draft-amount">Value</Label><Input id="draft-amount" data-mia-key="crm.draft.amount_input" type="number" min={0} value={draft.amount} onChange={(event) => setDraft((current) => ({ ...current, amount: event.target.value }))} /></div>
+            <div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => setDraftOpen(false)}>Cancel</Button><Button data-mia-key="crm.draft.save_button" type="submit" disabled={creating}>{creating ? "Creating" : "Create draft"}</Button></div>
+          </form>
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

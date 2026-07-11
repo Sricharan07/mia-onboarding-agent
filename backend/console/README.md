@@ -1,52 +1,19 @@
-# Console UI
+# Mia v1 Console
 
-Local Vite console for operating the MIA onboarding backend.
+The production operations console for one Mia product. It uses only the v1 backend APIs and contains eight workflows: Setup, Overview, Knowledge, Skills, Actions & Safety, Test Mia, Runs, and Settings.
 
-The console connects to the backend APIs in `backend/src/routes` and intentionally avoids local mock data for backend-backed features.
+## Development
 
-In the production Docker image, the backend serves the built console at `/` and API routes under `/api/v1`.
-
-## Run Locally
+Start PostgreSQL and the backend, then run:
 
 ```bash
-npm install
 npm run dev
 ```
 
-Start the backend separately from the repo root:
+`VITE_MIA_BACKEND_URL` defaults to the current browser origin. The checked-in local example points Vite at `http://localhost:4000`.
 
-```bash
-npm run dev:backend
-```
+## Production
 
-The console uses `VITE_MIA_BACKEND_URL` when it is set, otherwise it defaults to the current browser origin. You can change this in the console Settings page.
-For local Vite development, copy `backend/console/.env.example` to `backend/console/.env` so the console talks to `http://localhost:4000`.
+`npm run build` writes `dist/`. The Mia backend serves that directory at `/` while keeping v1 APIs under `/api/v1`.
 
-Console login:
-
-```text
-Create the first admin with BOOTSTRAP_ADMIN_TOKEN, then sign in with admin email and password.
-```
-
-## Current Backend Coverage
-
-- Apps: list and create/update.
-- Health: backend status.
-- UI map: discover routes, run full preflight, start scans, poll progress, review pages/elements, and copy source-fix reports for weak selectors.
-- Workflow videos: upload and start processing.
-- Workflow jobs: list and process.
-- Workflows: list, review metadata, add/edit/delete/reorder steps, approve, publish, archive.
-- Logs: list execution logs.
-- Usage: aggregate metrics and daily timeseries from backend logs.
-- API keys: create, list, and revoke scoped server credentials, including app-bound integration keys that mint browser runtime tokens for allowed origins.
-- Provider readiness: database access, provider configuration, and encrypted secret-storage checks. The check does not spend provider credits or claim live provider reachability.
-- First-run activation: app setup, scan profile, UI map, server integration key, and live SDK verification checklist.
-- UI map preflight: base URL, every selected route, auth selector, privacy selector, and route-discovery readiness before scan.
-- Console admins: create admins, change password, disable users, and revoke console sessions.
-
-## Operator Docs
-
-- [Production deployment](../../docs/production.md)
-- [HTTP API](../../docs/api.md)
-- [Security model](../../docs/security.md)
-- [Troubleshooting](../../docs/troubleshooting.md)
+First run requires the deployment's `SETUP_TOKEN`. The console creates one administrator and one product; it has no default credentials, app switching, invitations, or environments.

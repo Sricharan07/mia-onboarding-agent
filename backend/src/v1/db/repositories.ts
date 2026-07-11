@@ -10,6 +10,7 @@ import type {
 } from "../domain.js";
 import type { V1Database } from "./database.js";
 import { AppError, NotFoundError } from "../../utils/errors.js";
+import { redactSensitiveJson } from "../redaction.js";
 
 type Json = Record<string, unknown> | unknown[];
 
@@ -276,24 +277,31 @@ export class ProductRepository {
 
   async update(input: Partial<Pick<ProductRecord, "name" | "origin" | "documentationOrigins" | "redactedSelectors" | "transcriptMode" | "transcriptRetentionDays" | "scanConfig" | "voiceConfig">>): Promise<ProductRecord> {
     const current = await this.get();
-    await this.database.query(`
-      UPDATE product SET
-        name = $1, origin = $2, documentation_origins = $3::jsonb,
-        redacted_selectors = $4::jsonb, transcript_mode = $5,
-        transcript_retention_days = $6, scan_config = $7::jsonb,
-        voice_config = $8::jsonb, updated_at = NOW()
-      WHERE singleton = TRUE
-    `, [
-      input.name ?? current.name,
-      input.origin ?? current.origin,
-      JSON.stringify(input.documentationOrigins ?? current.documentationOrigins),
-      JSON.stringify(input.redactedSelectors ?? current.redactedSelectors),
-      input.transcriptMode ?? current.transcriptMode,
-      input.transcriptRetentionDays ?? current.transcriptRetentionDays,
-      JSON.stringify(input.scanConfig ?? current.scanConfig),
-      JSON.stringify(input.voiceConfig ?? current.voiceConfig)
-    ]);
-    return this.get();
+    const nextOrigin = input.origin ?? current.origin;
+    return this.database.transaction(async (client) => {
+      await client.query(`
+        UPDATE product SET
+          name = $1, origin = $2, documentation_origins = $3::jsonb,
+          redacted_selectors = $4::jsonb, transcript_mode = $5,
+          transcript_retention_days = $6, scan_config = $7::jsonb,
+          voice_config = $8::jsonb, updated_at = NOW()
+        WHERE singleton = TRUE
+      `, [
+        input.name ?? current.name,
+        nextOrigin,
+        JSON.stringify(input.documentationOrigins ?? current.documentationOrigins),
+        JSON.stringify(input.redactedSelectors ?? current.redactedSelectors),
+        input.transcriptMode ?? current.transcriptMode,
+        input.transcriptRetentionDays ?? current.transcriptRetentionDays,
+        JSON.stringify(input.scanConfig ?? current.scanConfig),
+        JSON.stringify(input.voiceConfig ?? current.voiceConfig)
+      ]);
+      if (nextOrigin !== current.origin) {
+        await client.query("UPDATE integration_keys SET allowed_origin = $1 WHERE revoked_at IS NULL", [nextOrigin]);
+        await client.query("UPDATE runtime_tokens SET revoked_at = NOW() WHERE revoked_at IS NULL", []);
+      }
+      return productWithClient(client);
+    });
   }
 }
 
@@ -738,7 +746,7 @@ export class AgentRepository {
     await this.database.query(`
       INSERT INTO runtime_events (id, session_id, user_id, event_type, payload)
       VALUES ($1, $2, $3, $4, $5::jsonb)
-    `, [input.id, input.sessionId ?? null, input.userId ?? null, input.eventType, JSON.stringify(input.payload ?? {})]);
+    `, [input.id, input.sessionId ?? null, input.userId ?? null, input.eventType, JSON.stringify(redactSensitiveJson(input.payload ?? {}))]);
   }
 }
 
@@ -819,7 +827,8 @@ export class KnowledgeRepository {
   }>): Promise<void> {
     await this.database.transaction(async (client) => {
       await client.query("DELETE FROM knowledge_chunks WHERE source_id = $1", [sourceId]);
-      for (const chunk of chunks) {
+      const uniqueChunks = [...new Map(chunks.map((chunk) => [chunk.contentHash, chunk])).values()];
+      for (const chunk of uniqueChunks) {
         await client.query(`
           INSERT INTO knowledge_chunks (id, source_id, kind, content, content_hash, metadata, embedding)
           VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::vector)
@@ -958,6 +967,61 @@ export class KnowledgeRepository {
     }>;
   }
 
+  async listMappedElementsPage(input: { route?: string; search?: string; limit: number; offset: number }): Promise<{
+    items: Array<{
+      elementKey: string; route: string; role: string | null; name: string | null;
+      description: string | null; locators: unknown[]; fingerprint: string; actionPolicy: UiActionPolicy;
+    }>;
+    total: number;
+    overallTotal: number;
+    routes: string[];
+  }> {
+    const route = input.route?.trim() || null;
+    const search = input.search?.trim() || "";
+    const base = `
+      FROM ui_elements elements
+      WHERE elements.map_version_id = (
+        SELECT id FROM ui_map_versions WHERE status = 'ready' ORDER BY completed_at DESC LIMIT 1
+      )
+        AND ($1::text IS NULL OR elements.route = $1)
+        AND ($2::text = '' OR CONCAT_WS(' ', elements.name, elements.description, elements.element_key, elements.route, elements.role) ILIKE '%' || $2 || '%')
+    `;
+    const [items, count, overallCount, routeRows] = await Promise.all([
+      this.database.query(`
+        SELECT elements.element_key AS "elementKey", elements.route, elements.role, elements.name,
+               elements.description, elements.locators, elements.fingerprint,
+               elements.action_policy AS "actionPolicy"
+        ${base}
+        ORDER BY elements.route, COALESCE(elements.name, elements.element_key), elements.element_key
+        LIMIT $3 OFFSET $4
+      `, [route, search, input.limit, input.offset]),
+      this.database.query<{ total: number }>(`SELECT COUNT(*)::int AS total ${base}`, [route, search]),
+      this.database.query<{ total: number }>(`
+        SELECT COUNT(*)::int AS total FROM ui_elements elements
+        WHERE elements.map_version_id = (
+          SELECT id FROM ui_map_versions WHERE status = 'ready' ORDER BY completed_at DESC LIMIT 1
+        )
+      `),
+      this.database.query<{ route: string }>(`
+        SELECT DISTINCT elements.route
+        FROM ui_elements elements
+        WHERE elements.map_version_id = (
+          SELECT id FROM ui_map_versions WHERE status = 'ready' ORDER BY completed_at DESC LIMIT 1
+        )
+        ORDER BY elements.route
+      `)
+    ]);
+    return {
+      items: items.rows as Array<{
+        elementKey: string; route: string; role: string | null; name: string | null;
+        description: string | null; locators: unknown[]; fingerprint: string; actionPolicy: UiActionPolicy;
+      }>,
+      total: count.rows[0]?.total ?? 0,
+      overallTotal: overallCount.rows[0]?.total ?? 0,
+      routes: routeRows.rows.map((entry) => entry.route)
+    };
+  }
+
   async createMapVersion(input: { id: string; routes: string[]; metadata?: Record<string, unknown> }): Promise<UiMapVersionRecord> {
     const result = await this.database.query<UiMapVersionRecord>(`
       INSERT INTO ui_map_versions (id, status, routes, metadata)
@@ -1084,7 +1148,7 @@ export class DiagnosticsRepository {
     `, [input.id, input.sessionId ?? null, input.purpose, input.model, input.latencyMs ?? null, input.inputTokens ?? null, input.outputTokens ?? null, input.error ?? null]);
   }
 
-  async listRuns(limit = 100): Promise<Array<Record<string, unknown>>> {
+  async listRuns(limit = 100, transcriptMode: ProductRecord["transcriptMode"] = "full"): Promise<Array<Record<string, unknown>>> {
     const result = await this.database.query(`
       SELECT sessions.id, sessions.user_id AS "userId", sessions.status, sessions.goal,
              sessions.current_route AS "currentRoute", sessions.step_count AS "stepCount",
@@ -1094,11 +1158,17 @@ export class DiagnosticsRepository {
              (SELECT COUNT(*)::int FROM agent_turns turns WHERE turns.session_id = sessions.id) AS "turnCount"
       FROM agent_sessions sessions ORDER BY sessions.updated_at DESC LIMIT $1
     `, [limit]);
-    return result.rows;
+    return result.rows.map((run) => diagnosticSummary(run as Record<string, unknown>, transcriptMode));
   }
 
-  async getRun(id: string): Promise<Record<string, unknown>> {
-    const session = await this.database.query(`SELECT ${agentSessionColumns()} FROM agent_sessions WHERE id = $1`, [id]);
+  async getRun(id: string, transcriptMode: ProductRecord["transcriptMode"] = "full"): Promise<Record<string, unknown>> {
+    const session = await this.database.query(`
+      SELECT id, user_id AS "userId", status, revision, goal, current_route AS "currentRoute",
+             step_count AS "stepCount", consecutive_failures AS "consecutiveFailures",
+             loop_count AS "loopCount", created_at::text AS "createdAt", updated_at::text AS "updatedAt",
+             completed_at::text AS "completedAt", error
+      FROM agent_sessions WHERE id = $1
+    `, [id]);
     if (!session.rows[0]) throw new NotFoundError(`Agent session not found: ${id}`);
     const turns = await this.database.query(`
       SELECT id, role, source, content, created_at::text AS "createdAt"
@@ -1110,7 +1180,81 @@ export class DiagnosticsRepository {
              target_ref AS "targetRef", status, message, evidence, created_at::text AS "createdAt"
       FROM action_receipts WHERE session_id = $1 ORDER BY created_at
     `, [id]);
-    return { session: session.rows[0], turns: turns.rows, steps: steps.rows, receipts: receipts.rows };
+    const confirmations = await this.database.query(`
+      SELECT id, action_id AS "actionId", prompt, status, source, expires_at::text AS "expiresAt",
+             created_at::text AS "createdAt", resolved_at::text AS "resolvedAt"
+      FROM confirmations WHERE session_id = $1 ORDER BY created_at
+    `, [id]);
+    const events = await this.database.query(`
+      SELECT id, event_type AS "eventType", payload, created_at::text AS "createdAt"
+      FROM runtime_events WHERE session_id = $1 ORDER BY created_at
+    `, [id]);
+    const aiRequests = await this.database.query(`
+      SELECT id, purpose, model, latency_ms AS "latencyMs", input_tokens AS "inputTokens",
+             output_tokens AS "outputTokens", error, created_at::text AS "createdAt"
+      FROM ai_requests WHERE session_id = $1 ORDER BY created_at
+    `, [id]);
+    return diagnosticRun({
+      session: session.rows[0],
+      turns: turns.rows,
+      steps: steps.rows,
+      receipts: receipts.rows,
+      confirmations: confirmations.rows,
+      events: events.rows,
+      aiRequests: aiRequests.rows
+    }, transcriptMode);
+  }
+
+  async sdkActivity(): Promise<{ detected: boolean; eventCount: number; lastSeenAt: string | null; lastRoute: string | null }> {
+    const result = await this.database.query<{ eventCount: number; lastSeenAt: string | null; lastRoute: string | null }>(`
+      SELECT COUNT(*)::int AS "eventCount", MAX(created_at)::text AS "lastSeenAt",
+             (ARRAY_AGG(payload->>'route' ORDER BY created_at DESC))[1] AS "lastRoute"
+      FROM runtime_events WHERE event_type = 'sdk_ready'
+    `);
+    const activity = result.rows[0] ?? { eventCount: 0, lastSeenAt: null, lastRoute: null };
+    return { detected: activity.eventCount > 0, ...activity };
+  }
+
+  async acceptanceEvidence(): Promise<Record<"answer" | "point" | "navigate" | "mutation" | "voice", { passed: boolean; runId: string | null; at: string | null }>> {
+    const result = await this.database.query<{ scenario: "answer" | "point" | "navigate" | "mutation" | "voice"; runId: string; at: string }>(`
+      WITH evidence AS (
+        SELECT 'answer'::text AS scenario, turns.session_id AS "runId", turns.created_at AS at
+        FROM agent_turns turns
+        JOIN agent_sessions sessions ON sessions.id = turns.session_id
+        WHERE sessions.status = 'completed' AND turns.role = 'assistant'
+        UNION ALL
+        SELECT 'point', receipts.session_id, receipts.created_at
+        FROM action_receipts receipts
+        JOIN agent_sessions sessions ON sessions.id = receipts.session_id
+        WHERE sessions.status = 'completed' AND receipts.status = 'completed'
+          AND receipts.action_type IN ('point', 'highlight', 'hover', 'scroll_to')
+        UNION ALL
+        SELECT 'navigate', receipts.session_id, receipts.created_at
+        FROM action_receipts receipts
+        JOIN agent_sessions sessions ON sessions.id = receipts.session_id
+        WHERE sessions.status = 'completed' AND receipts.status = 'completed'
+          AND receipts.action_type IN ('navigate', 'go_back')
+        UNION ALL
+        SELECT 'mutation', receipts.session_id, receipts.created_at
+        FROM action_receipts receipts
+        JOIN agent_sessions sessions ON sessions.id = receipts.session_id
+        WHERE sessions.status = 'completed' AND receipts.status = 'completed'
+          AND receipts.action_type IN ('click', 'fill', 'clear', 'select', 'toggle', 'host_action')
+          AND EXISTS (SELECT 1 FROM confirmations WHERE confirmations.session_id = receipts.session_id AND confirmations.status = 'approved')
+        UNION ALL
+        SELECT 'voice', turns.session_id, turns.created_at
+        FROM agent_turns turns
+        JOIN agent_sessions sessions ON sessions.id = turns.session_id
+        WHERE sessions.status = 'completed' AND turns.role = 'user' AND turns.source = 'voice'
+      )
+      SELECT DISTINCT ON (scenario) scenario, "runId", at::text
+      FROM evidence ORDER BY scenario, at DESC
+    `);
+    const scenarios = ["answer", "point", "navigate", "mutation", "voice"] as const;
+    return Object.fromEntries(scenarios.map((scenario) => {
+      const evidence = result.rows.find((row) => row.scenario === scenario);
+      return [scenario, { passed: Boolean(evidence), runId: evidence?.runId ?? null, at: evidence?.at ?? null }];
+    })) as Record<typeof scenarios[number], { passed: boolean; runId: string | null; at: string | null }>;
   }
 
   async usage(): Promise<Record<string, number>> {
@@ -1148,6 +1292,59 @@ export class DiagnosticsRepository {
       };
     });
   }
+}
+
+function diagnosticSummary(run: Record<string, unknown>, mode: ProductRecord["transcriptMode"]): Record<string, unknown> {
+  const safe = redactSensitiveJson(run);
+  return mode === "full" ? safe : { ...safe, goal: mode === "disabled" ? "Transcript logging disabled" : "Transcript redacted" };
+}
+
+function diagnosticRun(run: Record<string, unknown>, mode: ProductRecord["transcriptMode"]): Record<string, unknown> {
+  const safe = redactSensitiveJson(run) as {
+    session: Record<string, unknown>;
+    turns: Array<Record<string, unknown>>;
+    steps: Array<Record<string, unknown>>;
+    receipts: Array<Record<string, unknown>>;
+    confirmations: Array<Record<string, unknown>>;
+    events: Array<Record<string, unknown>>;
+    aiRequests: Array<Record<string, unknown>>;
+  };
+  if (mode === "full") return { ...safe, transcriptMode: mode, transcriptAvailable: true };
+  const hidden = mode === "disabled" ? "Transcript logging disabled" : "Transcript redacted";
+  return {
+    ...safe,
+    transcriptMode: mode,
+    transcriptAvailable: mode !== "disabled",
+    session: { ...safe.session, goal: hidden, error: safe.session.error ? "Run ended with an error." : null },
+    turns: mode === "disabled" ? [] : safe.turns.map((turn) => ({ ...turn, content: "[redacted]" })),
+    steps: safe.steps.map((step) => ({
+      ...step,
+      assessment: "[redacted]",
+      progress: "[redacted]",
+      directive: redactDirectiveDetail(step.directive)
+    })),
+    receipts: safe.receipts.map((receipt) => ({ ...receipt, message: "[redacted]", evidence: {} })),
+    confirmations: safe.confirmations.map((confirmation) => ({ ...confirmation, prompt: "[redacted]" })),
+    events: safe.events.map((event) => ({ ...event, payload: {} }))
+  };
+}
+
+function redactDirectiveDetail(value: unknown): unknown {
+  if (!value || typeof value !== "object") return value;
+  const directive = structuredClone(value as Record<string, unknown>);
+  if (typeof directive.message === "string") directive.message = "[redacted]";
+  if (Array.isArray(directive.actions)) {
+    directive.actions = directive.actions.map((entry) => {
+      if (!entry || typeof entry !== "object") return entry;
+      const action = { ...(entry as Record<string, unknown>) };
+      if ("message" in action) action.message = "[redacted]";
+      if ("expectedOutcome" in action) action.expectedOutcome = "[redacted]";
+      delete action.value;
+      delete action.arguments;
+      return action;
+    });
+  }
+  return directive;
 }
 
 async function productWithClient(client: PoolClient): Promise<ProductRecord> {

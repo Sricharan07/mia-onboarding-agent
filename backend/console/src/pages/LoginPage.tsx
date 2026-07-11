@@ -1,205 +1,105 @@
-import { Command, Lock, Mail, Server, UserPlus } from "lucide-react";
-import { useEffect, useState, type FormEvent } from "react";
+import { ArrowRight, Check, KeyRound, LockKeyhole, ShieldCheck } from "lucide-react";
+import { useState, type FormEvent } from "react";
+import { Alert, Button, Field } from "../components/ui";
 import { errorMessage } from "../utils/format";
 
-type LoginInput = {
-  backendUrl: string;
-  email: string;
-  password: string;
-};
-
-type SetupInput = LoginInput & {
-  name: string;
-  bootstrapToken: string;
-};
-
-export function LoginPage({
-  backendUrl,
-  setupRequired,
-  onLogin,
-  onSetup,
-  onCheckSetupRequired
-}: {
-  backendUrl: string;
+export function LoginPage({ setupRequired, backendUrl, onLogin, onSetup }: {
   setupRequired: boolean;
-  onLogin: (input: LoginInput) => Promise<void>;
-  onSetup: (input: SetupInput) => Promise<void>;
-  onCheckSetupRequired: (backendUrl: string) => Promise<boolean>;
+  backendUrl: string;
+  onLogin: (email: string, password: string) => Promise<void>;
+  onSetup: (input: {
+    setupToken: string;
+    productName: string;
+    origin: string;
+    adminEmail: string;
+    adminName: string;
+    password: string;
+  }) => Promise<void>;
 }) {
-  const [urlDraft, setUrlDraft] = useState(backendUrl);
-  const [draftSetupRequired, setDraftSetupRequired] = useState(setupRequired);
+  return setupRequired
+    ? <FirstRun backendUrl={backendUrl} onSubmit={onSetup} />
+    : <SignIn backendUrl={backendUrl} onSubmit={onLogin} />;
+}
+
+function SignIn({ backendUrl, onSubmit }: { backendUrl: string; onSubmit: (email: string, password: string) => Promise<void> }) {
   const [email, setEmail] = useState("");
-  const [name, setName] = useState("");
   const [password, setPassword] = useState("");
-  const [bootstrapToken, setBootstrapToken] = useState("");
-  const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
-
-  useEffect(() => {
-    setUrlDraft(backendUrl);
-    setDraftSetupRequired(setupRequired);
-  }, [backendUrl, setupRequired]);
-
-  const checkSetupRequired = async (nextBackendUrl: string): Promise<boolean> => {
-    const nextSetupRequired = await onCheckSetupRequired(nextBackendUrl);
-    setDraftSetupRequired(nextSetupRequired);
-    return nextSetupRequired;
-  };
-
+  const [busy, setBusy] = useState(false);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    const nextBackendUrl = urlDraft.trim();
-    const nextEmail = email.trim();
-    const nextName = name.trim();
-    const nextPassword = password;
-    const nextBootstrapToken = bootstrapToken.trim();
-
-    if (!nextBackendUrl) {
-      setError("Enter the backend URL.");
-      return;
-    }
-    if (!nextEmail || !nextPassword) {
-      setError("Enter your email and password.");
-      return;
-    }
-    setPending(true);
+    setBusy(true);
     setError("");
-    try {
-      const nextSetupRequired = await checkSetupRequired(nextBackendUrl);
-      if (nextSetupRequired && !nextName) {
-        setError("Enter the admin name.");
-        return;
-      }
-      if (nextSetupRequired && !nextBootstrapToken) {
-        setError("Enter the bootstrap token from the backend environment.");
-        return;
-      }
-
-      if (nextSetupRequired) {
-        await onSetup({
-          backendUrl: nextBackendUrl,
-          email: nextEmail,
-          name: nextName,
-          password: nextPassword,
-          bootstrapToken: nextBootstrapToken
-        });
-      } else {
-        await onLogin({ backendUrl: nextBackendUrl, email: nextEmail, password: nextPassword });
-      }
-    } catch (cause) {
-      setError(errorMessage(cause, "Unable to sign in."));
-    } finally {
-      setPending(false);
-    }
+    try { await onSubmit(email, password); } catch (cause) { setError(errorMessage(cause, "Sign in failed.")); } finally { setBusy(false); }
   };
-
   return (
-    <main className="login-page">
-      <section className="login-visual" aria-hidden="true">
-        <div className="login-visual-brand">
-          <span className="brand-tile large">
-            <Command size={18} />
-          </span>
-          <span>Mia Console</span>
-        </div>
-        <blockquote>
-          <p>Review UI maps, approve workflow steps, publish onboarding flows, and manage SDK access from one console.</p>
-          <footer>Self-hosted admin console</footer>
-        </blockquote>
-      </section>
-      <section className="login-card">
-        <div className="login-brand-row">
-          <span className="brand-tile">
-            <Command size={17} />
-          </span>
-          <div>
-            <div className="brand-name">Mia Console</div>
-            <div className="brand-subtitle">{draftSetupRequired ? "Create admin account" : "Admin sign in"}</div>
-          </div>
-        </div>
-        <form className="login-form" onSubmit={(event) => void submit(event)} aria-busy={pending} aria-describedby={error ? "login-error" : undefined}>
-          <div>
-            <h1>{draftSetupRequired ? "Create the first admin" : "Sign in to console"}</h1>
-            <p>
-              {draftSetupRequired
-                ? "Set up the first console admin with the backend bootstrap token."
-                : "Use your console email and password to manage this backend."}
-            </p>
-          </div>
-
-          <label>
-            Backend URL
-            <span className="input-with-icon">
-              <Server size={15} />
-              <input
-                id="backend-url"
-                value={urlDraft}
-                onBlur={() => {
-                  const nextBackendUrl = urlDraft.trim();
-                  if (nextBackendUrl) void checkSetupRequired(nextBackendUrl).catch((cause) => setError(errorMessage(cause, "Unable to check backend auth status.")));
-                }}
-                onChange={(event) => setUrlDraft(event.target.value)}
-                type="url"
-                autoComplete="url"
-                required
-                disabled={pending}
-              />
-            </span>
-          </label>
-
-          {draftSetupRequired && (
-            <label>
-              Name
-              <span className="input-with-icon">
-                <UserPlus size={15} />
-                <input id="admin-name" value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" required disabled={pending} />
-              </span>
-            </label>
-          )}
-
-          <label>
-            Email
-            <span className="input-with-icon">
-              <Mail size={15} />
-              <input id="admin-email" value={email} onChange={(event) => setEmail(event.target.value)} type="email" autoComplete="email" required disabled={pending} />
-            </span>
-          </label>
-
-          <label>
-            Password
-            <span className="input-with-icon">
-              <Lock size={15} />
-              <input
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                type="password"
-                autoComplete={draftSetupRequired ? "new-password" : "current-password"}
-                minLength={draftSetupRequired ? 12 : undefined}
-                required
-                disabled={pending}
-              />
-            </span>
-          </label>
-
-          {draftSetupRequired && (
-            <label>
-              Bootstrap token
-              <span className="input-with-icon">
-                <Lock size={15} />
-                <input id="bootstrap-token" value={bootstrapToken} onChange={(event) => setBootstrapToken(event.target.value)} type="password" autoComplete="off" required disabled={pending} />
-              </span>
-              <span className="field-help">Use the backend environment value named BOOTSTRAP_ADMIN_TOKEN. It only works before the first admin exists.</span>
-            </label>
-          )}
-
-          {error && <div id="login-error" className="error-line" role="alert">{error}</div>}
-          <button className="button primary full" type="submit" disabled={pending}>
-            {draftSetupRequired ? <UserPlus size={16} /> : <Lock size={16} />}
-            {pending ? draftSetupRequired ? "Creating admin" : "Signing in" : draftSetupRequired ? "Create admin" : "Sign in"}
-          </button>
-          {draftSetupRequired && <div className="login-hint">After setup, sign in with this admin email and password. Do not use the bootstrap token as a normal password.</div>}
+    <main className="auth-page">
+      <section className="auth-shell" aria-labelledby="auth-title">
+        <AuthBrand />
+        <div className="auth-heading"><span className="eyebrow">Administrator console</span><h1 id="auth-title">Sign in to Mia</h1><p>Manage one production product, its knowledge, permissions, and agent runs.</p></div>
+        {error ? <Alert tone="danger">{error}</Alert> : null}
+        <form className="auth-form" onSubmit={(event) => void submit(event)}>
+          <Field label="Email"><input type="email" autoComplete="username" required value={email} onChange={(event) => setEmail(event.target.value)} /></Field>
+          <Field label="Password"><input type="password" autoComplete="current-password" required value={password} onChange={(event) => setPassword(event.target.value)} /></Field>
+          <Button type="submit" disabled={busy}>{busy ? "Signing in" : "Sign in"}<ArrowRight /></Button>
         </form>
+        <AuthFooter backendUrl={backendUrl} />
       </section>
     </main>
   );
+}
+
+function FirstRun({ backendUrl, onSubmit }: {
+  backendUrl: string;
+  onSubmit: (input: { setupToken: string; productName: string; origin: string; adminEmail: string; adminName: string; password: string }) => Promise<void>;
+}) {
+  const [values, setValues] = useState({ setupToken: "", productName: "", origin: "", adminEmail: "", adminName: "", password: "", confirm: "" });
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const set = (key: keyof typeof values, value: string) => setValues((current) => ({ ...current, [key]: value }));
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (values.password !== values.confirm) { setError("Passwords do not match."); return; }
+    setBusy(true);
+    setError("");
+    try {
+      await onSubmit({
+        setupToken: values.setupToken,
+        productName: values.productName,
+        origin: values.origin.replace(/\/$/, ""),
+        adminEmail: values.adminEmail,
+        adminName: values.adminName,
+        password: values.password
+      });
+    } catch (cause) { setError(errorMessage(cause, "Setup failed.")); } finally { setBusy(false); }
+  };
+  return (
+    <main className="auth-page first-run">
+      <section className="auth-shell auth-shell-wide" aria-labelledby="setup-title">
+        <AuthBrand />
+        <div className="auth-heading"><span className="eyebrow">Secure first run</span><h1 id="setup-title">Create your Mia deployment</h1><p>This initializes the only product and administrator. No default account is created.</p></div>
+        <div className="security-strip"><ShieldCheck /><span>PostgreSQL is connected</span><Check /><span>Fresh v1 data</span><Check /><span>Single administrator</span></div>
+        {error ? <Alert tone="danger">{error}</Alert> : null}
+        <form className="auth-form auth-grid" onSubmit={(event) => void submit(event)}>
+          <Field label="Setup token" hint="The SETUP_TOKEN configured on the Mia backend." className="span-2"><input type="password" autoComplete="off" required value={values.setupToken} onChange={(event) => set("setupToken", event.target.value)} /></Field>
+          <Field label="Product name"><input required maxLength={200} value={values.productName} onChange={(event) => set("productName", event.target.value)} placeholder="Acme CRM" /></Field>
+          <Field label="Production origin" hint="Exact HTTPS origin; localhost may use HTTP."><input type="url" required value={values.origin} onChange={(event) => set("origin", event.target.value)} placeholder="https://app.example.com" /></Field>
+          <Field label="Administrator name"><input required autoComplete="name" value={values.adminName} onChange={(event) => set("adminName", event.target.value)} /></Field>
+          <Field label="Administrator email"><input type="email" required autoComplete="username" value={values.adminEmail} onChange={(event) => set("adminEmail", event.target.value)} /></Field>
+          <Field label="Password" hint="At least 12 characters."><input type="password" minLength={12} required autoComplete="new-password" value={values.password} onChange={(event) => set("password", event.target.value)} /></Field>
+          <Field label="Confirm password"><input type="password" minLength={12} required autoComplete="new-password" value={values.confirm} onChange={(event) => set("confirm", event.target.value)} /></Field>
+          <div className="span-2 auth-submit"><Button type="submit" disabled={busy}>{busy ? "Creating deployment" : "Create deployment"}<ArrowRight /></Button></div>
+        </form>
+        <AuthFooter backendUrl={backendUrl} />
+      </section>
+    </main>
+  );
+}
+
+function AuthBrand() {
+  return <div className="auth-brand"><div className="brand-mark"><span>M</span></div><div><strong>Mia</strong><span>Product Agent</span></div></div>;
+}
+
+function AuthFooter({ backendUrl }: { backendUrl: string }) {
+  return <footer className="auth-footer"><LockKeyhole /><span>{backendUrl}</span><KeyRound /><span>Credentials stay on this deployment</span></footer>;
 }

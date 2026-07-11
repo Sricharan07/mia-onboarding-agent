@@ -21,7 +21,8 @@ test("v1 PostgreSQL foundation migrates and enforces singleton setup plus sessio
     const migrations = await database.query<{ id: number; name: string }>("SELECT id, name FROM schema_migrations ORDER BY id");
     assert.deepEqual(migrations.rows, [
       { id: 1, name: "mia_v1_initial" },
-      { id: 2, name: "encrypted_product_settings" }
+      { id: 2, name: "encrypted_product_settings" },
+      { id: 3, name: "diagnostic_lookup_indexes" }
     ]);
     assert.equal((await database.query<{ count: number }>(`
       SELECT COUNT(*)::int AS count FROM information_schema.tables WHERE table_schema = 'public'

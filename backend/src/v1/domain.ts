@@ -192,9 +192,6 @@ export const plannerDecisionSchema = z.object({
   if (decision.type === "actions" && decision.actions.length === 0) {
     context.addIssue({ code: "custom", path: ["actions"], message: "Action decisions require at least one action." });
   }
-  if (decision.type !== "actions" && decision.actions.length > 0) {
-    context.addIssue({ code: "custom", path: ["actions"], message: "Only action decisions may include actions." });
-  }
   if (decision.type === "ask_user" && !decision.field) {
     context.addIssue({ code: "custom", path: ["field"], message: "User questions require a field name." });
   }

@@ -6,6 +6,7 @@ import {
   type CrmPipelineSeries,
   type CrmSnapshot,
   type CrmTask,
+  type DraftOpportunityInput,
   crmSnapshotSchema,
   type OpportunityHealth,
   type OpportunityPatch,
@@ -55,6 +56,39 @@ export async function updateOpportunity(id: string, patch: OpportunityPatch): Pr
       }),
     );
   });
+}
+
+export async function createDraftOpportunity(input: DraftOpportunityInput, idempotencyKey?: string): Promise<{ state: CrmSnapshot; draftId: string }> {
+  const draftId = idempotencyKey ? `DRAFT-${stableId(idempotencyKey)}` : `DRAFT-${Date.now().toString(36).toUpperCase()}`;
+  const state = await mutateState((current) => {
+    if (current.opportunities.some((opportunity) => opportunity.id === draftId)) return;
+    const amount = input.amount ?? 0;
+    current.opportunities.unshift({
+      id: draftId,
+      account: input.account,
+      contactName: input.contactName ?? "Unassigned",
+      owner: "Unassigned",
+      stage: "Qualified",
+      priority: 3,
+      health: "Needs Review",
+      amount,
+      value: formatCurrency(amount),
+      probability: 20,
+      closeDate: futureDate(21),
+      lastActivityAt: "Just now",
+      nextStep: "Review and qualify this draft opportunity.",
+      outcome: "open",
+      isDraft: true,
+      notes: [],
+    });
+    current.activities.unshift(activity({
+      title: `Created draft opportunity for ${input.account}`,
+      actor: "Mia Assistant",
+      type: "mia_action",
+      opportunityId: draftId,
+    }));
+  });
+  return { state, draftId };
 }
 
 export async function addOpportunityNote(id: string, body: string, author = "Sales Ops"): Promise<CrmSnapshot> {
@@ -174,6 +208,7 @@ function enrichOpportunity(row: SeedRow, index: number): CrmOpportunity {
     lastActivityAt: index < 4 ? "Today" : `${(index % 9) + 1} days ago`,
     nextStep: nextStepForStage(row.stage, row.account),
     outcome: "open",
+    isDraft: false,
     notes:
       index < 3
         ? [
@@ -360,4 +395,13 @@ function countProposalSent(opportunities: CrmOpportunity[]): number {
 
 function createId(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function stableId(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36).toUpperCase();
 }

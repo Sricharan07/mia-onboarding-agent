@@ -56,7 +56,14 @@ export const crmOpportunitySchema = z.object({
   lastActivityAt: z.string(),
   nextStep: z.string(),
   outcome: opportunityOutcomeSchema,
+  isDraft: z.boolean().default(false),
   notes: z.array(crmNoteSchema),
+});
+
+export const draftOpportunityInputSchema = z.object({
+  account: z.string().trim().min(1).max(120),
+  contactName: z.string().trim().min(1).max(120).optional(),
+  amount: z.coerce.number().min(0).max(100_000_000).optional(),
 });
 
 export const crmPipelinePointSchema = z.object({
@@ -127,3 +134,4 @@ export type CrmPipelineSeries = z.infer<typeof crmPipelineSeriesSchema>;
 export type CrmMetrics = z.infer<typeof crmMetricsSchema>;
 export type CrmSnapshot = z.infer<typeof crmSnapshotSchema>;
 export type OpportunityPatch = z.infer<typeof opportunityPatchSchema>;
+export type DraftOpportunityInput = z.infer<typeof draftOpportunityInputSchema>;
