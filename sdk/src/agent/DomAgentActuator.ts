@@ -65,7 +65,7 @@ export class DomAgentActor {
       if (directive.type === "scroll_by") return { receipt: await this.scrollBy(directive, signal), visualContext: [] };
       if (directive.type === "wait") return { receipt: await this.wait(directive, signal), visualContext: [] };
 
-      const target = resolveTarget(directive, this.options.collector);
+      const target = await resolveTarget(directive, this.options.collector);
       if (!target.element) return { receipt: receipt(directive, "failed", target.error ?? "The target is no longer available."), visualContext: [] };
       if (directive.target?.route && normalizeRoute(directive.target.route) !== normalizeRoute(location.pathname)) {
         return { receipt: receipt(directive, "failed", "The target belongs to a different page."), visualContext: [] };
@@ -76,6 +76,7 @@ export class DomAgentActor {
         if (directive.risk === "manual") {
           return { receipt: receipt(directive, "manual", "This protected step must be completed by the user.", { targetVisible: true }), visualContext: [] };
         }
+        assertTargetCanExecute(target.element, directive.type);
         const before = snapshot(target.element, this.options.collector.getRevision());
         switch (directive.type) {
           case "point":
@@ -215,7 +216,7 @@ export class DomAgentActor {
   }
 }
 
-function resolveTarget(directive: ActionDirective, collector: AgentObservationCollector): { element?: HTMLElement; error?: string } {
+async function resolveTarget(directive: ActionDirective, collector: AgentObservationCollector): Promise<{ element?: HTMLElement; error?: string }> {
   const target = directive.target;
   if (!target) return { error: "The action did not include a target." };
   if (target.nodeId) {
@@ -224,9 +225,9 @@ function resolveTarget(directive: ActionDirective, collector: AgentObservationCo
   }
   for (const locator of target.locators) {
     const matches = resolveLocator(locator);
-    if (matches.length === 1) return { element: matches[0] };
+    if (matches.length === 1 && await matchesTarget(matches[0]!, target)) return { element: matches[0] };
   }
-  return { error: "The target changed and could not be resolved uniquely." };
+  return { error: "The target changed and no longer matches the reviewed page element." };
 }
 
 function resolveLocator(locator: TargetLocator): HTMLElement[] {
@@ -238,7 +239,7 @@ function resolveLocator(locator: TargetLocator): HTMLElement[] {
     } else {
       for (const element of root.querySelectorAll<HTMLElement>("*")) {
         if (!visible(element)) continue;
-        const name = normalize(element.getAttribute("aria-label") || labelText(element) || element.textContent || "");
+        const name = normalize(accessibleName(element));
         if (locator.strategy === "role" && roleOf(element) === locator.role && (!locator.name || name === normalize(locator.name))) found.push(element);
         if (locator.strategy === "label" && labelText(element) === normalize(locator.label)) found.push(element);
         if (locator.strategy === "text" && name === normalize(locator.text) && (!locator.tagName || element.tagName.toLowerCase() === locator.tagName.toLowerCase())) found.push(element);
@@ -306,12 +307,15 @@ function verify(directive: ActionDirective, before: ElementSnapshot, after: Elem
     openChanged: before.open !== after.open,
     domChanged: after.revision !== before.revision
   };
+  const interactionChanged = evidence.routeChanged || evidence.valueChanged || evidence.checkedChanged
+    || evidence.selectedIndexChanged || evidence.expandedChanged || evidence.pressedChanged
+    || evidence.openChanged || evidence.domChanged;
   const exact = directive.type === "focus" ? after.focused
     : directive.type === "fill" ? after.value === directive.value
       : directive.type === "clear" ? after.value === ""
         : directive.type === "select" ? after.value === directive.value
           : directive.type === "toggle" ? evidence.checkedChanged || evidence.pressedChanged
-            : Object.values(evidence).some(Boolean);
+            : interactionChanged;
   return {
     verified: exact,
     message: exact ? "The page state confirms the action completed." : "The action was dispatched, but the page exposed no confirming state change.",
@@ -323,6 +327,9 @@ function setControlValue(element: HTMLElement, value: string): void {
   const view = element.ownerDocument.defaultView ?? window;
   const tag = element.tagName.toLowerCase();
   if (tag === "input" || tag === "textarea") {
+    const control = element as HTMLInputElement | HTMLTextAreaElement;
+    if (control.disabled || control.getAttribute("aria-disabled") === "true") throw new Error("The target control is disabled.");
+    if (control.readOnly || control.getAttribute("aria-readonly") === "true") throw new Error("The target control is read-only.");
     const prototype = tag === "input" ? view.HTMLInputElement.prototype : view.HTMLTextAreaElement.prototype;
     const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
     if (!setter) throw new Error("The target does not expose a writable value.");
@@ -332,6 +339,8 @@ function setControlValue(element: HTMLElement, value: string): void {
     return;
   }
   if (element.isContentEditable) {
+    if (element.getAttribute("aria-disabled") === "true") throw new Error("The target control is disabled.");
+    if (element.getAttribute("aria-readonly") === "true") throw new Error("The target control is read-only.");
     element.textContent = value;
     element.dispatchEvent(new view.InputEvent("input", { bubbles: true, composed: true, inputType: "insertText", data: value }));
     return;
@@ -342,6 +351,7 @@ function setControlValue(element: HTMLElement, value: string): void {
 function selectValue(element: HTMLElement, value: string): void {
   if (element.tagName.toLowerCase() !== "select") throw new Error("The target is not a select control.");
   const select = element as HTMLSelectElement;
+  if (select.disabled || select.getAttribute("aria-disabled") === "true") throw new Error("The target control is disabled.");
   if (![...select.options].some((option) => option.value === value)) throw new Error("The requested option is not available.");
   select.value = value;
   const view = element.ownerDocument.defaultView ?? window;
@@ -402,14 +412,92 @@ function roleOf(element: HTMLElement): string | undefined {
   const tag = element.tagName.toLowerCase();
   if (tag === "button") return "button";
   if (tag === "a" && element.hasAttribute("href")) return "link";
-  if (tag === "textarea" || tag === "input") return "textbox";
-  if (tag === "select") return "combobox";
+  if (tag === "textarea" || element.isContentEditable) return "textbox";
+  if (tag === "select") return (element as HTMLSelectElement).multiple ? "listbox" : "combobox";
+  if (tag === "input") {
+    const type = (element as HTMLInputElement).type;
+    if (["button", "submit", "reset", "image"].includes(type)) return "button";
+    if (type === "checkbox") return "checkbox";
+    if (type === "radio") return "radio";
+    if (type === "range") return "slider";
+    if (type === "number") return "spinbutton";
+    if (type === "search") return "searchbox";
+    return "textbox";
+  }
   return undefined;
 }
 
 function labelText(element: HTMLElement): string {
   const labels = (element as HTMLInputElement).labels;
   return normalize(labels?.[0]?.textContent || "");
+}
+
+function accessibleName(element: HTMLElement): string {
+  const labelled = element.getAttribute("aria-labelledby")?.split(/\s+/)
+    .map((id) => element.ownerDocument.getElementById(id)?.textContent ?? "").join(" ").trim();
+  const input = element.tagName.toLowerCase() === "input" ? element as HTMLInputElement : undefined;
+  const value = input && ["button", "submit", "reset"].includes(input.type) ? input.value : "";
+  return element.getAttribute("aria-label") || labelled || labelText(element)
+    || element.getAttribute("alt") || value || element.textContent || "";
+}
+
+async function matchesTarget(element: HTMLElement, target: NonNullable<ActionDirective["target"]>): Promise<boolean> {
+  if (target.fingerprint) {
+    const fingerprint = await mappedFingerprint(element, target.route);
+    return fingerprint === target.fingerprint;
+  }
+  if (target.tagName && element.tagName.toLowerCase() !== target.tagName.toLowerCase()) return false;
+  if (target.inputType && (element as HTMLInputElement).type !== target.inputType) return false;
+  if (target.role && roleOf(element) !== target.role) return false;
+  if (target.label && normalize(accessibleName(element)) !== normalize(target.label)) return false;
+  return true;
+}
+
+async function mappedFingerprint(element: HTMLElement, route: string | undefined): Promise<string | undefined> {
+  if (!globalThis.crypto?.subtle || !route) return undefined;
+  const value = JSON.stringify({
+    route,
+    role: scannedRoleOf(element),
+    name: normalize(scannedAccessibleName(element)) || undefined,
+    tag: element.tagName.toLowerCase(),
+    type: element.tagName.toLowerCase() === "input" ? (element as HTMLInputElement).type : undefined
+  });
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function scannedRoleOf(element: HTMLElement): string | undefined {
+  const explicit = element.getAttribute("role")?.trim();
+  if (explicit) return explicit;
+  const tag = element.tagName.toLowerCase();
+  if (tag === "a" && element.hasAttribute("href")) return "link";
+  if (tag === "button") return "button";
+  if (tag === "textarea") return "textbox";
+  if (tag === "select") return "combobox";
+  if (/^h[1-6]$/.test(tag)) return "heading";
+  if (tag !== "input") return undefined;
+  const type = (element as HTMLInputElement).type;
+  if (["button", "submit", "reset"].includes(type)) return "button";
+  if (type === "checkbox") return "checkbox";
+  if (type === "radio") return "radio";
+  if (type === "range") return "slider";
+  return "textbox";
+}
+
+function scannedAccessibleName(element: HTMLElement): string {
+  const labelled = element.getAttribute("aria-labelledby")?.split(/\s+/)
+    .map((id) => element.ownerDocument.getElementById(id)?.textContent ?? "").join(" ").trim();
+  return element.getAttribute("aria-label") || labelled || labelText(element)
+    || element.getAttribute("alt") || element.textContent || "";
+}
+
+function assertTargetCanExecute(element: HTMLElement, type: ActionDirective["type"]): void {
+  const disabled = Boolean((element as HTMLButtonElement).disabled) || element.getAttribute("aria-disabled") === "true";
+  if (disabled && ["focus", "click", "fill", "clear", "select", "toggle", "press_key"].includes(type)) {
+    throw new Error("The target control is disabled.");
+  }
+  const readOnly = Boolean((element as HTMLInputElement).readOnly) || element.getAttribute("aria-readonly") === "true";
+  if (readOnly && ["fill", "clear"].includes(type)) throw new Error("The target control is read-only.");
 }
 
 function visible(element: HTMLElement): boolean {

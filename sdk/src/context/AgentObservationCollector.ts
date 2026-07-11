@@ -158,7 +158,9 @@ export class AgentObservationCollector {
       const Observer = view
         ? (view as unknown as { MutationObserver: typeof MutationObserver }).MutationObserver
         : MutationObserver;
-      const observer = new Observer(() => { this.revision += 1; });
+      const observer = new Observer((records) => {
+        if (records.some(isProductMutation)) this.revision += 1;
+      });
       observer.observe(root, { childList: true, subtree: true, attributes: true, characterData: true });
       this.observers.set(root, observer);
     }
@@ -344,7 +346,7 @@ function isSensitive(element: HTMLElement, options: MiaOptions): boolean {
   const control = element as HTMLInputElement | HTMLTextAreaElement;
   const type = tag === "input" ? (control as HTMLInputElement).type : "";
   const semantic = [type, control.getAttribute("name"), control.id, control.getAttribute("autocomplete"), control.getAttribute("aria-label")].join(" ");
-  return ["password", "hidden"].includes(type)
+  return ["password", "hidden", "file"].includes(type)
     || /\b(password|passcode|otp|verification|token|secret|api.?key|card|credit|cvv|cvc|ssn|social.?security|webauthn|captcha)\b/i.test(semantic);
 }
 
@@ -356,6 +358,18 @@ function isRedacted(element: HTMLElement, options: MiaOptions): boolean {
 
 function isSdkElement(element: Element): boolean {
   return Boolean(element.closest("[data-mia-sdk-root],[data-mia-assistant-panel],[data-mia-shadow-cursor],[data-mia-prompt-ui]"));
+}
+
+function isProductMutation(record: MutationRecord): boolean {
+  if (record.type !== "childList") return !isSdkNode(record.target);
+  if (isSdkNode(record.target)) return false;
+  const changed = [...record.addedNodes, ...record.removedNodes];
+  return changed.length === 0 || changed.some((node) => !isSdkNode(node));
+}
+
+function isSdkNode(node: Node): boolean {
+  const element = node.nodeType === Node.ELEMENT_NODE ? node as Element : node.parentElement;
+  return Boolean(element && isSdkElement(element));
 }
 
 function collectPageText(roots: RootContext[], options: MiaOptions): string | undefined {

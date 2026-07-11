@@ -123,6 +123,9 @@ export type AgentTarget = {
   ref: string;
   nodeId?: string;
   elementKey?: string;
+  fingerprint?: string;
+  tagName?: string;
+  inputType?: string;
   label?: string;
   role?: string;
   route?: string;

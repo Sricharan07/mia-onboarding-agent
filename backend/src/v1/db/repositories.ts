@@ -942,12 +942,13 @@ export class KnowledgeRepository {
     locators: unknown[];
     fingerprint: string;
     actionPolicy: UiActionPolicy;
+    metadata: Record<string, unknown>;
   }>> {
     const result = route
       ? await this.database.query(`
           SELECT elements.element_key AS "elementKey", elements.route, elements.role, elements.name,
                  elements.description, elements.locators, elements.fingerprint,
-                 elements.action_policy AS "actionPolicy"
+                 elements.action_policy AS "actionPolicy", elements.metadata
           FROM ui_elements elements JOIN ui_map_versions versions ON versions.id = elements.map_version_id
           WHERE versions.id = (SELECT id FROM ui_map_versions WHERE status = 'ready' ORDER BY completed_at DESC LIMIT 1)
             AND elements.route = $1
@@ -956,7 +957,7 @@ export class KnowledgeRepository {
       : await this.database.query(`
           SELECT elements.element_key AS "elementKey", elements.route, elements.role, elements.name,
                  elements.description, elements.locators, elements.fingerprint,
-                 elements.action_policy AS "actionPolicy"
+                 elements.action_policy AS "actionPolicy", elements.metadata
           FROM ui_elements elements JOIN ui_map_versions versions ON versions.id = elements.map_version_id
           WHERE versions.id = (SELECT id FROM ui_map_versions WHERE status = 'ready' ORDER BY completed_at DESC LIMIT 1)
           ORDER BY elements.route, elements.element_key LIMIT $1
@@ -964,6 +965,7 @@ export class KnowledgeRepository {
     return result.rows as Array<{
       elementKey: string; route: string; role: string | null; name: string | null;
       description: string | null; locators: unknown[]; fingerprint: string; actionPolicy: UiActionPolicy;
+      metadata: Record<string, unknown>;
     }>;
   }
 

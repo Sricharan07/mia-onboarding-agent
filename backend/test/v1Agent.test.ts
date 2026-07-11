@@ -208,6 +208,37 @@ test("v1 agent keeps a goal across questions and blocks protected operations bef
     }
     const confirmationCount = await database.query<{ count: number }>("SELECT COUNT(*)::int AS count FROM confirmations");
     assert.equal(confirmationCount.rows[0]?.count, 0);
+
+    model.push(decision("actions", {
+      message: "I will point to the email field.",
+      actions: [planned("point", "live:email", "Point to the email field")]
+    }));
+    const guided = await agent.submitTurn({
+      sessionId: created.sessionId,
+      userId: "user_2",
+      revision,
+      utterance: "Where is the email field?",
+      source: "text",
+      runtime: runtime(4)
+    });
+    assert.equal(guided.type, "actions");
+    assert.equal(guided.actions[0]?.risk, "read");
+    revision = guided.revision;
+
+    model.push(decision("actions", {
+      message: "I will save the reversible draft.",
+      actions: [planned("click", "live:save", "Save the draft")]
+    }));
+    const write = await agent.submitTurn({
+      sessionId: created.sessionId,
+      userId: "user_2",
+      revision,
+      utterance: "Save this draft",
+      source: "text",
+      runtime: runtime(5)
+    });
+    assert.equal(write.status, "waiting_confirmation");
+    assert.equal(write.actions[0]?.risk, "reversible_write");
   } finally {
     await database.close();
   }
@@ -369,6 +400,28 @@ function observation(revision = 1) {
         name: "Delete account",
         locators: [{ strategy: "role" as const, role: "button", name: "Delete account" }],
         bounds: { x: 200, y: 20, width: 140, height: 40 },
+        viewportVisible: true,
+        sensitive: false
+      },
+      {
+        nodeId: "email",
+        tagName: "input",
+        role: "textbox",
+        name: "Email address",
+        inputType: "email",
+        locators: [{ strategy: "role" as const, role: "textbox", name: "Email address" }],
+        bounds: { x: 20, y: 80, width: 220, height: 40 },
+        viewportVisible: true,
+        sensitive: false
+      },
+      {
+        nodeId: "save",
+        tagName: "button",
+        role: "button",
+        name: "Save draft",
+        actionPolicy: "navigate" as const,
+        locators: [{ strategy: "role" as const, role: "button", name: "Save draft" }],
+        bounds: { x: 260, y: 80, width: 140, height: 40 },
         viewportVisible: true,
         sensitive: false
       }

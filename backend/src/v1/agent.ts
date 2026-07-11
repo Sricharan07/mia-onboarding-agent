@@ -780,6 +780,8 @@ function resolveTarget(
         ref,
         nodeId: node.nodeId,
         elementKey: node.elementKey,
+        tagName: node.tagName,
+        inputType: node.inputType,
         label: node.name ?? node.text,
         role: node.role,
         route: node.route,
@@ -796,6 +798,9 @@ function resolveTarget(
       target: {
         ref,
         elementKey: map.elementKey,
+        fingerprint: map.fingerprint,
+        tagName: typeof map.metadata.tagName === "string" ? map.metadata.tagName : undefined,
+        inputType: typeof map.metadata.type === "string" ? map.metadata.type : undefined,
         label: map.name ?? map.description ?? map.elementKey,
         role: map.role ?? undefined,
         route: map.route,
@@ -812,18 +817,20 @@ function riskForAction(
   map?: Awaited<ReturnType<V1Repositories["knowledge"]["listMappedElements"]>>[number],
   host?: HostActionRecord
 ): RiskLevel {
+  const readAction = ["point", "highlight", "hover", "scroll_to", "scroll_by", "focus", "wait", "request_visual"].includes(action.type);
+  if (readAction) return "read";
+  if (["navigate", "go_back"].includes(action.type)) return "navigate";
+
   const semantic = [action.type, action.message, action.hostAction, node?.name, node?.text, node?.elementKey, map?.name, map?.description, map?.elementKey]
     .filter(Boolean).join(" ");
   if (PROHIBITED_OPERATION.test(semantic)) return "blocked";
   if (host) return host.risk;
   if (node?.sensitive || map?.actionPolicy === "manual") return "manual";
   if (map?.actionPolicy === "blocked" || node?.actionPolicy === "blocked") return "blocked";
-  if (["point", "highlight", "hover", "scroll_to", "scroll_by", "focus", "wait", "request_visual"].includes(action.type)) return "read";
-  if (["navigate", "go_back"].includes(action.type) || map?.actionPolicy === "navigate" || node?.actionPolicy === "navigate") return "navigate";
   return "reversible_write";
 }
 
-const PROHIBITED_OPERATION = /\b(delete|remove permanently|send|publish|approve|pay|purchase|checkout|transfer|wire|post publicly|submit|external(?:ly)? communicat(?:e|ion)|external message|email|issue refund|cancel subscription)\b/i;
+const PROHIBITED_OPERATION = /\b(delete|remove permanently|send|publish|approve|pay|purchase|checkout|transfer|wire|post publicly|submit|external(?:ly)? communicat(?:e|ion)|external message|issue refund|cancel subscription)\b/i;
 
 function actionNeedsTarget(type: PlannedAction["type"]): boolean {
   return ["point", "highlight", "hover", "scroll_to", "focus", "click", "fill", "clear", "select", "toggle"].includes(type);

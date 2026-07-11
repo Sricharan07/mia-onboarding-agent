@@ -109,6 +109,8 @@ test("document extraction, SSRF policy, and UI action policy preserve product se
   assert.equal(actionPolicyForElement({ role: "button", name: "Create draft", tagName: "button" }), "reversible_write");
   assert.equal(actionPolicyForElement({ role: "button", name: "Delete account", tagName: "button" }), "blocked");
   assert.equal(actionPolicyForElement({ role: "button", name: "Submit the final application", tagName: "button" }), "blocked");
+  assert.equal(actionPolicyForElement({ role: "textbox", name: "Email address", tagName: "input", type: "email" }), "reversible_write");
+  assert.equal(actionPolicyForElement({ role: "button", name: "Choose attachment", tagName: "input", type: "file" }), "manual");
   assert.equal(actionPolicyForElement({ role: "textbox", name: "Password", tagName: "input", type: "password" }), "manual");
   assert.equal(actionPolicyForElement({ role: "link", name: "Pipeline", tagName: "a" }), "navigate");
 });

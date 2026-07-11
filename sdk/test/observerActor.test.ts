@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { webcrypto } from "node:crypto";
+import { createHash, webcrypto } from "node:crypto";
 import { JSDOM } from "jsdom";
 import { AgentObservationCollector } from "../src/context/AgentObservationCollector.js";
 import { DomAgentActor } from "../src/agent/DomAgentActuator.js";
@@ -137,6 +137,84 @@ test("DOM actor fills and verifies a live control and never executes a manual ac
     const protectedResult = await actor.executeBatch([manual], collector.collect(), new AbortController().signal);
     assert.equal(protectedResult.receipts[0]?.status, "manual");
     assert.equal((document.querySelector("input") as HTMLInputElement).value, "Avery");
+    collector.destroy();
+  } finally {
+    cleanup();
+  }
+});
+
+test("DOM actor rejects no-op clicks, stale mapped targets, and immutable controls", async () => {
+  const cleanup = installDom(`
+    <main>
+      <button id="noop">No operation</button>
+      <input id="disabled" aria-label="Disabled value" disabled value="unchanged">
+      <input id="readonly" aria-label="Read-only value" readonly value="unchanged">
+      <button id="stale">Replacement action</button>
+    </main>
+  `);
+  try {
+    const collector = new AgentObservationCollector(options());
+    const observation = collector.collect();
+    const node = (id: string) => observation.nodes.find((candidate) => candidate.locators.some((locator) => locator.strategy === "css" && locator.selector === `#${id}`))!;
+    const cursor = { navigateTo: () => undefined, returnToCursor: () => undefined } as unknown as MiaShadowCursor;
+    const actor = new DomAgentActor({ collector, cursor, config: options() });
+
+    const noOp = await actor.executeBatch([{
+      actionId: "noop_click",
+      idempotencyKey: "noop_click_key",
+      type: "click",
+      message: "Click the no-op control",
+      expectedOutcome: "The page state changes",
+      risk: "reversible_write",
+      target: { ref: `live:${node("noop").nodeId}`, nodeId: node("noop").nodeId, label: "No operation", role: "button", locators: [] }
+    }], observation, new AbortController().signal);
+    assert.equal(noOp.receipts[0]?.status, "unverified");
+    assert.equal(noOp.receipts[0]?.evidence.domChanged, false);
+
+    for (const id of ["disabled", "readonly"] as const) {
+      const target = node(id);
+      const result = await actor.executeBatch([{
+        actionId: `${id}_fill`,
+        idempotencyKey: `${id}_fill_key`,
+        type: "fill",
+        message: `Fill ${id}`,
+        expectedOutcome: "The field changes",
+        risk: "reversible_write",
+        target: { ref: `live:${target.nodeId}`, nodeId: target.nodeId, label: target.name, role: "textbox", locators: [] },
+        value: "changed"
+      }], collector.collect(), new AbortController().signal);
+      assert.equal(result.receipts[0]?.status, "failed");
+      assert.match(result.receipts[0]?.message ?? "", id === "disabled" ? /disabled/i : /read-only/i);
+      assert.equal((document.querySelector(`#${id}`) as HTMLInputElement).value, "unchanged");
+    }
+
+    const staleFingerprint = createHash("sha256").update(JSON.stringify({
+      route: "/dashboard/crm",
+      role: "button",
+      name: "Original action",
+      tag: "button",
+      type: undefined
+    })).digest("hex");
+    const stale = await actor.executeBatch([{
+      actionId: "stale_point",
+      idempotencyKey: "stale_point_key",
+      type: "point",
+      message: "Point to the scanned action",
+      expectedOutcome: "The reviewed control is highlighted",
+      risk: "read",
+      target: {
+        ref: "map:stale",
+        elementKey: "stale",
+        fingerprint: staleFingerprint,
+        tagName: "button",
+        role: "button",
+        route: "/dashboard/crm",
+        label: "Original action",
+        locators: [{ strategy: "css", selector: "#stale" }]
+      }
+    }], collector.collect(), new AbortController().signal);
+    assert.equal(stale.receipts[0]?.status, "failed");
+    assert.match(stale.receipts[0]?.message ?? "", /no longer matches/i);
     collector.destroy();
   } finally {
     cleanup();
