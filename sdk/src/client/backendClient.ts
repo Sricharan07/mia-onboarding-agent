@@ -90,8 +90,11 @@ export class BackendClient {
     });
   }
 
-  async createLiveToken(voice?: string): Promise<GeminiLiveToken> {
-    return this.request("/api/v1/runtime/voice/token", { method: "POST", body: voice ? { voice } : {} });
+  async createLiveToken(voice?: string, sessionHandle?: string): Promise<GeminiLiveToken> {
+    return this.request("/api/v1/runtime/voice/token", {
+      method: "POST",
+      body: { ...(voice ? { voice } : {}), ...(sessionHandle ? { sessionHandle } : {}) }
+    });
   }
 
   async recordEvent(eventType: string, payload: Record<string, unknown>, sessionId?: string): Promise<void> {

@@ -160,7 +160,7 @@ export class V1Gemini {
     }
   }
 
-  async createLiveToken(voice: string, language: string): Promise<{
+  async createLiveToken(voice: string, language: string, sessionHandle?: string): Promise<{
     token: string;
     model: string;
     voice: string;
@@ -176,6 +176,7 @@ export class V1Gemini {
         model: this.config.GEMINI_LIVE_MODEL,
         voice,
         language,
+        sessionHandle,
         expiresAt,
         newSessionExpiresAt
       })
@@ -324,7 +325,7 @@ export function buildEmbeddingRequest(input: {
   };
 }
 
-export function buildVoiceLiveConfig(voice: string, language: string): LiveConnectConfig {
+export function buildVoiceLiveConfig(voice: string, language: string, sessionHandle?: string): LiveConnectConfig {
   return {
     responseModalities: [Modality.AUDIO],
     speechConfig: {
@@ -335,6 +336,7 @@ export function buildVoiceLiveConfig(voice: string, language: string): LiveConne
     systemInstruction: { role: "system", parts: [{ text: voiceSystemInstruction(voice) }] },
     inputAudioTranscription: {},
     outputAudioTranscription: {},
+    sessionResumption: sessionHandle ? { handle: sessionHandle } : {},
     contextWindowCompression: { slidingWindow: {} },
     tools: [{
       functionDeclarations: [
@@ -365,6 +367,7 @@ export function buildLiveTokenConfig(input: {
   model: string;
   voice: string;
   language: string;
+  sessionHandle?: string;
   expiresAt: string;
   newSessionExpiresAt: string;
 }): CreateAuthTokenConfig {
@@ -375,11 +378,8 @@ export function buildLiveTokenConfig(input: {
     httpOptions: { apiVersion: "v1alpha" },
     liveConnectConstraints: {
       model: input.model,
-      config: buildVoiceLiveConfig(input.voice, input.language)
-    },
-    // Lock every supplied protocol field while allowing the client to add
-    // the session-resumption handle issued after the initial connection.
-    lockAdditionalFields: []
+      config: buildVoiceLiveConfig(input.voice, input.language, input.sessionHandle)
+    }
   };
 }
 

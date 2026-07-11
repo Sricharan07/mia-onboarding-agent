@@ -132,7 +132,11 @@ export class GeminiLiveClient {
   }
 
   private async openSocket(lifecycle: number): Promise<void> {
-    const token = await withTimeout(this.backend.createLiveToken(this.handlers?.voice), CONNECT_TIMEOUT_MS, "Gemini Live token request timed out.");
+    const token = await withTimeout(
+      this.backend.createLiveToken(this.handlers?.voice, this.sessionHandle),
+      CONNECT_TIMEOUT_MS,
+      "Gemini Live token request timed out."
+    );
     this.assertLifecycle(lifecycle);
     const socket = new WebSocket(`${token.websocketUrl}?access_token=${encodeURIComponent(token.token)}`);
     socket.binaryType = "arraybuffer";

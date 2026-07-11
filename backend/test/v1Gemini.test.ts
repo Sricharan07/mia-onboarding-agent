@@ -36,18 +36,19 @@ test("legacy embedding models retain provider taskType", () => {
   assert.equal(firstText(request), "query");
 });
 
-test("ephemeral Live tokens lock the authoritative voice and agent tools", () => {
+test("ephemeral Live tokens lock the authoritative voice, tools, and resumption handle", () => {
   const config = buildLiveTokenConfig({
     model: "gemini-3.1-flash-live-preview",
     voice: "Aoede",
     language: "en-US",
+    sessionHandle: "provider-session-handle",
     expiresAt: "2026-07-11T12:30:00.000Z",
     newSessionExpiresAt: "2026-07-11T12:01:00.000Z"
   });
   const live = config.liveConnectConstraints?.config;
   const tools = Array.isArray(live?.tools) ? live.tools : [];
 
-  assert.deepEqual(config.lockAdditionalFields, []);
+  assert.equal("lockAdditionalFields" in config, false);
   assert.equal(config.liveConnectConstraints?.model, "gemini-3.1-flash-live-preview");
   assert.equal(live?.speechConfig?.voiceConfig?.prebuiltVoiceConfig?.voiceName, "Aoede");
   assert.equal(live?.speechConfig?.languageCode, "en-US");
@@ -58,7 +59,7 @@ test("ephemeral Live tokens lock the authoritative voice and agent tools", () =>
     "respond_to_mia_confirmation"
   ]);
   assert.match(JSON.stringify(live?.systemInstruction), /never claim you cannot see, point, click, or act/i);
-  assert.equal("sessionResumption" in (live ?? {}), false);
+  assert.equal(live?.sessionResumption?.handle, "provider-session-handle");
 });
 
 function firstText(request: ReturnType<typeof buildEmbeddingRequest>): string {

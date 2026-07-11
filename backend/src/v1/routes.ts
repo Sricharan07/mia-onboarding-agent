@@ -61,7 +61,8 @@ const routeIdSchema = z.object({ sessionId: z.string().min(1).max(200) });
 const confirmationParamsSchema = routeIdSchema.extend({ confirmationId: z.string().min(1).max(200) });
 const cancelSchema = z.object({ revision: z.number().int().nonnegative().optional() });
 const voiceTokenSchema = z.object({
-  voice: z.string().trim().min(1).max(100).optional()
+  voice: z.string().trim().min(1).max(100).optional(),
+  sessionHandle: z.string().min(1).max(16_384).optional()
 });
 const eventSchema = z.object({
   sessionId: z.string().max(200).optional(),
@@ -436,7 +437,11 @@ export async function registerV1Routes(app: FastifyInstance, dependencies: V1App
       throw new AppError("VOICE_DISABLED", "Voice is disabled for this product.", 403);
     }
     const requested = parseWithSchema(voiceTokenSchema, request.body ?? {});
-    return dependencies.gemini.createLiveToken(requested.voice ?? product.voiceConfig.voice, product.voiceConfig.language);
+    return dependencies.gemini.createLiveToken(
+      requested.voice ?? product.voiceConfig.voice,
+      product.voiceConfig.language,
+      requested.sessionHandle
+    );
   });
   app.post("/api/v1/runtime/events", async (request) => {
     const runtime = await requireRuntime(request, dependencies, "events:write");

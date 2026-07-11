@@ -47,6 +47,32 @@ test("backend client parses agent SSE events and caches runtime tokens", async (
   }
 });
 
+test("backend client binds a provider session handle into refreshed Live tokens", async () => {
+  const originalFetch = globalThis.fetch;
+  let requestBody: unknown;
+  globalThis.fetch = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body));
+    return Response.json({
+      token: "ephemeral-token",
+      model: "gemini-3.1-flash-live-preview",
+      voice: "Aoede",
+      language: "en-US",
+      expiresAt: new Date(Date.now() + 600_000).toISOString(),
+      websocketUrl: "wss://generativelanguage.googleapis.com/live"
+    });
+  };
+  try {
+    const client = new BackendClient({
+      backendUrl: "http://localhost:4000",
+      tokenProvider: () => "runtime-token"
+    });
+    await client.createLiveToken("Aoede", "provider-session-handle");
+    assert.deepEqual(requestBody, { voice: "Aoede", sessionHandle: "provider-session-handle" });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 function observation() {
   return {
     id: "observation_1",

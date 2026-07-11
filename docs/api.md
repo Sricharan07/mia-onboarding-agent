@@ -222,7 +222,7 @@ unable
 error
 ```
 
-`POST /api/v1/runtime/voice/token` accepts an optional `{ "voice": "Aoede" }` body and returns a short-lived Gemini Live credential, locked model, effective voice/language, expiry, and WebSocket endpoint. The token locks Mia's transport instruction, authoritative tools, audio modality, transcription, voice, language, thinking level, and context compression while permitting only the provider-issued session-resumption handle to vary. The browser never receives the configured Gemini API key.
+`POST /api/v1/runtime/voice/token` accepts an optional `{ "voice": "Aoede", "sessionHandle": "..." }` body and returns a short-lived Gemini Live credential, locked model, effective voice/language, expiry, and WebSocket endpoint. The token locks Mia's transport instruction, authoritative tools, audio modality, transcription, voice, language, thinking level, context compression, and the supplied provider-issued resumption handle. The SDK requests a fresh locked token when reconnecting, and the browser never receives the configured Gemini API key.
 
 ## Removed v1 Interfaces
 
