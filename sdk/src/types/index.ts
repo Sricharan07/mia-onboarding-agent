@@ -224,7 +224,14 @@ export type MiaOptions = {
   onEvent?: (event: MiaEvent) => void;
 };
 
-export type GeminiLiveToken = { token: string; model: string; expiresAt: string; websocketUrl: string };
+export type GeminiLiveToken = {
+  token: string;
+  model: string;
+  voice: string;
+  language: string;
+  expiresAt: string;
+  websocketUrl: string;
+};
 export type VoiceEvent =
   | { type: "ready" }
   | { type: "listening" }

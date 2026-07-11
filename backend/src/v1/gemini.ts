@@ -1,5 +1,5 @@
-import { createPartFromUri, FileState, GoogleGenAI, Modality, ThinkingLevel } from "@google/genai";
-import type { Part } from "@google/genai";
+import { createPartFromUri, FileState, GoogleGenAI, Modality, ThinkingLevel, Type } from "@google/genai";
+import type { CreateAuthTokenConfig, EmbedContentParameters, LiveConnectConfig, Part } from "@google/genai";
 import { z } from "zod";
 import type { V1Config } from "./config.js";
 import { plannerDecisionSchema, type PlannerDecision, type VisualContext } from "./domain.js";
@@ -34,6 +34,10 @@ export type ModelUsage = {
   inputTokens?: number;
   outputTokens?: number;
 };
+
+type EmbeddingTask = "RETRIEVAL_DOCUMENT" | "RETRIEVAL_QUERY";
+
+const VOICE_RESULT_PREFIX = "[MIA_AGENT_RESULT]";
 
 export class V1Gemini {
   private client?: GoogleGenAI;
@@ -89,22 +93,20 @@ export class V1Gemini {
     return generated.data;
   }
 
-  async embed(texts: string[], signal?: AbortSignal, taskType: "RETRIEVAL_DOCUMENT" | "RETRIEVAL_QUERY" = "RETRIEVAL_DOCUMENT"): Promise<number[][]> {
+  async embed(texts: string[], signal?: AbortSignal, taskType: EmbeddingTask = "RETRIEVAL_DOCUMENT"): Promise<number[][]> {
     if (texts.length === 0) return [];
     const client = await this.getClient();
     const embeddings: number[][] = [];
     for (let offset = 0; offset < texts.length; offset += 100) {
       const batch = texts.slice(offset, offset + 100);
-      const response = await client.models.embedContent({
+      const response = await client.models.embedContent(buildEmbeddingRequest({
         model: this.config.GEMINI_EMBEDDING_MODEL,
-        contents: batch.map((text) => ({ role: "user", parts: [{ text }] })),
-        config: {
-          taskType,
-          outputDimensionality: this.config.GEMINI_EMBEDDING_DIMENSIONS,
-          httpOptions: { timeout: this.config.PROVIDER_REQUEST_TIMEOUT_MS },
-          abortSignal: signal
-        }
-      });
+        texts: batch,
+        taskType,
+        dimensions: this.config.GEMINI_EMBEDDING_DIMENSIONS,
+        timeoutMs: this.config.PROVIDER_REQUEST_TIMEOUT_MS,
+        signal
+      }));
       if (response.embeddings?.length !== batch.length) throw new AppError("GEMINI_EMBEDDING_INVALID", "Gemini returned an incomplete embedding batch.", 502);
       for (const embedding of response.embeddings) {
         const values = embedding.values;
@@ -158,26 +160,32 @@ export class V1Gemini {
     }
   }
 
-  async createLiveToken(): Promise<{ token: string; model: string; expiresAt: string; websocketUrl: string }> {
+  async createLiveToken(voice: string, language: string): Promise<{
+    token: string;
+    model: string;
+    voice: string;
+    language: string;
+    expiresAt: string;
+    websocketUrl: string;
+  }> {
     const client = await this.getClient();
     const expiresAt = new Date(Date.now() + this.config.GEMINI_TOKEN_TTL_SECONDS * 1_000).toISOString();
     const newSessionExpiresAt = new Date(Date.now() + this.config.GEMINI_NEW_SESSION_TTL_SECONDS * 1_000).toISOString();
     const token = await client.authTokens.create({
-      config: {
-        uses: 1,
-        expireTime: expiresAt,
-        newSessionExpireTime: newSessionExpiresAt,
-        httpOptions: { apiVersion: "v1alpha" },
-        liveConnectConstraints: {
-          model: this.config.GEMINI_LIVE_MODEL,
-          config: { responseModalities: [Modality.AUDIO] }
-        }
-      }
+      config: buildLiveTokenConfig({
+        model: this.config.GEMINI_LIVE_MODEL,
+        voice,
+        language,
+        expiresAt,
+        newSessionExpiresAt
+      })
     });
     if (!token.name) throw new AppError("GEMINI_LIVE_TOKEN_INVALID", "Gemini did not return an ephemeral token.", 502);
     return {
       token: token.name,
       model: this.config.GEMINI_LIVE_MODEL,
+      voice,
+      language,
       expiresAt,
       websocketUrl: `${this.config.GEMINI_BASE_URL.replace(/^http/, "ws").replace(/\/+$/, "")}/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained`
     };
@@ -290,6 +298,108 @@ export class V1Gemini {
       // Diagnostics must never replace the provider result.
     }
   }
+}
+
+export function buildEmbeddingRequest(input: {
+  model: string;
+  texts: string[];
+  taskType: EmbeddingTask;
+  dimensions: number;
+  timeoutMs: number;
+  signal?: AbortSignal;
+}): EmbedContentParameters {
+  const embedding2 = /(?:^|\/)gemini-embedding-2(?:$|[-:])/i.test(input.model);
+  return {
+    model: input.model,
+    contents: input.texts.map((text) => ({
+      role: "user",
+      parts: [{ text: embedding2 ? embedding2Input(text, input.taskType) : text }]
+    })),
+    config: {
+      ...(embedding2 ? {} : { taskType: input.taskType }),
+      outputDimensionality: input.dimensions,
+      httpOptions: { timeout: input.timeoutMs },
+      abortSignal: input.signal
+    }
+  };
+}
+
+export function buildVoiceLiveConfig(voice: string, language: string): LiveConnectConfig {
+  return {
+    responseModalities: [Modality.AUDIO],
+    speechConfig: {
+      voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } },
+      languageCode: language
+    },
+    thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL },
+    systemInstruction: { role: "system", parts: [{ text: voiceSystemInstruction(voice) }] },
+    inputAudioTranscription: {},
+    outputAudioTranscription: {},
+    contextWindowCompression: { slidingWindow: {} },
+    tools: [{
+      functionDeclarations: [
+        {
+          name: "submit_mia_turn",
+          description: "Submit every complete user request or answer to Mia's authoritative product agent. Never answer independently.",
+          parameters: {
+            type: Type.OBJECT,
+            properties: { utterance: { type: Type.STRING } },
+            required: ["utterance"]
+          }
+        },
+        {
+          name: "respond_to_mia_confirmation",
+          description: "Use only when Mia has asked for confirmation and the user clearly approves or declines.",
+          parameters: {
+            type: Type.OBJECT,
+            properties: { approved: { type: Type.BOOLEAN } },
+            required: ["approved"]
+          }
+        }
+      ]
+    }]
+  };
+}
+
+export function buildLiveTokenConfig(input: {
+  model: string;
+  voice: string;
+  language: string;
+  expiresAt: string;
+  newSessionExpiresAt: string;
+}): CreateAuthTokenConfig {
+  return {
+    uses: 1,
+    expireTime: input.expiresAt,
+    newSessionExpireTime: input.newSessionExpiresAt,
+    httpOptions: { apiVersion: "v1alpha" },
+    liveConnectConstraints: {
+      model: input.model,
+      config: buildVoiceLiveConfig(input.voice, input.language)
+    },
+    // Lock every supplied protocol field while allowing the client to add
+    // the session-resumption handle issued after the initial connection.
+    lockAdditionalFields: []
+  };
+}
+
+function embedding2Input(text: string, taskType: EmbeddingTask): string {
+  return taskType === "RETRIEVAL_QUERY"
+    ? `task: search result | query: ${text}`
+    : `title: none | text: ${text}`;
+}
+
+function voiceSystemInstruction(voice: string): string {
+  return [
+    `You are the voice transport for Mia, an embedded product agent using the configured ${voice} voice.`,
+    "You do not reason about the product and you never answer a user request yourself.",
+    "For every complete user request or answer, immediately call submit_mia_turn with the user's exact words and do not speak first.",
+    "When the tool returns spokenMessage, speak that exact text and nothing else.",
+    "When the tool state is confirmation, ask only the returned spokenMessage. After the user clearly approves or declines, call respond_to_mia_confirmation.",
+    "Never claim you cannot see, point, click, or act. The authoritative Mia agent and SDK perform those operations.",
+    `Messages beginning ${VOICE_RESULT_PREFIX} contain an authoritative Mia response. Speak only its spokenMessage value.`,
+    "Keep the microphone interaction in English."
+  ].join(" ");
 }
 
 function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {

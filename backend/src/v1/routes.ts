@@ -60,6 +60,9 @@ const hostActionReviewSchema = z.object({ status: z.enum(["published", "blocked"
 const routeIdSchema = z.object({ sessionId: z.string().min(1).max(200) });
 const confirmationParamsSchema = routeIdSchema.extend({ confirmationId: z.string().min(1).max(200) });
 const cancelSchema = z.object({ revision: z.number().int().nonnegative().optional() });
+const voiceTokenSchema = z.object({
+  voice: z.string().trim().min(1).max(100).optional()
+});
 const eventSchema = z.object({
   sessionId: z.string().max(200).optional(),
   eventType: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
@@ -424,7 +427,12 @@ export async function registerV1Routes(app: FastifyInstance, dependencies: V1App
   });
   app.post("/api/v1/runtime/voice/token", async (request) => {
     await requireRuntime(request, dependencies, "voice:live");
-    return dependencies.gemini.createLiveToken();
+    const product = await dependencies.repositories.product.get();
+    if (!product.voiceConfig.enabled) {
+      throw new AppError("VOICE_DISABLED", "Voice is disabled for this product.", 403);
+    }
+    const requested = parseWithSchema(voiceTokenSchema, request.body ?? {});
+    return dependencies.gemini.createLiveToken(requested.voice ?? product.voiceConfig.voice, product.voiceConfig.language);
   });
   app.post("/api/v1/runtime/events", async (request) => {
     const runtime = await requireRuntime(request, dependencies, "events:write");

@@ -132,7 +132,7 @@ export class GeminiLiveClient {
   }
 
   private async openSocket(lifecycle: number): Promise<void> {
-    const token = await withTimeout(this.backend.createLiveToken(), CONNECT_TIMEOUT_MS, "Gemini Live token request timed out.");
+    const token = await withTimeout(this.backend.createLiveToken(this.handlers?.voice), CONNECT_TIMEOUT_MS, "Gemini Live token request timed out.");
     this.assertLifecycle(lifecycle);
     const socket = new WebSocket(`${token.websocketUrl}?access_token=${encodeURIComponent(token.token)}`);
     socket.binaryType = "arraybuffer";
@@ -144,22 +144,25 @@ export class GeminiLiveClient {
     this.assertLifecycle(lifecycle);
     this.connected = true;
     const setup = new Promise<void>((resolve, reject) => { this.setupResolve = resolve; this.setupReject = reject; });
-    this.sendSetup(token.model);
+    this.sendSetup(token.model, token.voice, token.language);
     await withTimeout(setup, CONNECT_TIMEOUT_MS, "Gemini Live setup timed out.");
     this.setupResolve = undefined;
     this.setupReject = undefined;
   }
 
-  private sendSetup(model: string): void {
+  private sendSetup(model: string, voice: string, language: string): void {
     this.send({
       setup: {
         model: model.startsWith("models/") ? model : `models/${model}`,
         generationConfig: {
           responseModalities: ["AUDIO"],
-          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: this.handlers?.voice || "Aoede" } } },
+          speechConfig: {
+            voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } },
+            languageCode: language
+          },
           thinkingConfig: { thinkingLevel: "MINIMAL" }
         },
-        systemInstruction: { role: "system", parts: [{ text: voiceSystemInstruction() }] },
+        systemInstruction: { role: "system", parts: [{ text: voiceSystemInstruction(voice) }] },
         inputAudioTranscription: {},
         outputAudioTranscription: {},
         sessionResumption: this.sessionHandle ? { handle: this.sessionHandle } : {},
@@ -510,9 +513,9 @@ export class GeminiLiveClient {
   }
 }
 
-function voiceSystemInstruction(): string {
+function voiceSystemInstruction(voice: string): string {
   return [
-    "You are the voice transport for Mia, an embedded product agent with a feminine Aoede voice.",
+    `You are the voice transport for Mia, an embedded product agent using the configured ${voice} voice.`,
     "You do not reason about the product and you never answer a user request yourself.",
     "For every complete user request or answer, immediately call submit_mia_turn with the user's exact words and do not speak first.",
     "When the tool returns spokenMessage, speak that exact text and nothing else.",
