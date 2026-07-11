@@ -290,6 +290,15 @@ const migrations: Migration[] = [{
     CREATE INDEX IF NOT EXISTS ai_requests_session_idx ON ai_requests (session_id, created_at);
     CREATE INDEX IF NOT EXISTS confirmations_session_idx ON confirmations (session_id, created_at);
   `
+}, {
+  id: 4,
+  name: "stable_goal_run_identity",
+  sql: `
+    ALTER TABLE agent_sessions ADD COLUMN goal_run_id TEXT NOT NULL DEFAULT '';
+    ALTER TABLE agent_steps ADD COLUMN goal_run_id TEXT NOT NULL DEFAULT '';
+    ALTER TABLE agent_steps DROP CONSTRAINT agent_steps_session_id_step_index_key;
+    ALTER TABLE agent_steps ADD CONSTRAINT agent_steps_goal_run_step_key UNIQUE (session_id, goal_run_id, step_index);
+  `
 }];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {

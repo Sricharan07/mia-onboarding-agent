@@ -79,6 +79,7 @@ export type AgentSessionRecord = {
   status: "active" | "waiting_user" | "waiting_confirmation" | "completed" | "failed" | "cancelled";
   revision: number;
   goal: string;
+  goalRunId: string;
   currentRoute: string | null;
   stepCount: number;
   consecutiveFailures: number;
@@ -102,6 +103,7 @@ export type AgentTurnRecord = {
 export type AgentStepRecord = {
   id: string;
   sessionId: string;
+  goalRunId: string;
   stepIndex: number;
   observationRevision: number;
   assessment: string;
@@ -300,6 +302,13 @@ export class ProductRepository {
         await client.query("UPDATE integration_keys SET allowed_origin = $1 WHERE revoked_at IS NULL", [nextOrigin]);
         await client.query("UPDATE runtime_tokens SET revoked_at = NOW() WHERE revoked_at IS NULL", []);
       }
+      if (input.transcriptMode === "disabled" && current.transcriptMode !== "disabled") {
+        await client.query("DELETE FROM agent_turns");
+        await client.query(`
+          UPDATE agent_sessions SET goal = 'Transcript logging disabled'
+          WHERE status IN ('completed', 'failed', 'cancelled')
+        `);
+      }
       return productWithClient(client);
     });
   }
@@ -465,16 +474,16 @@ export class AgentRepository {
     return result.rows[0];
   }
 
-  async beginGoal(input: { id: string; expectedRevision: number; goal: string; route: string }): Promise<AgentSessionRecord> {
+  async beginGoal(input: { id: string; expectedRevision: number; goal: string; goalRunId: string; route: string }): Promise<AgentSessionRecord> {
     return this.database.transaction(async (client) => {
       const result = await client.query<AgentSessionRecord>(`
-        UPDATE agent_sessions SET status = 'active', goal = $3, current_route = $4,
+        UPDATE agent_sessions SET status = 'active', goal = $3, goal_run_id = $4, current_route = $5,
           revision = revision + 1, step_count = 0, consecutive_failures = 0,
           loop_signature = NULL, loop_count = 0, pending_confirmation = NULL,
           completed_at = NULL, error = NULL, updated_at = NOW()
         WHERE id = $1 AND revision = $2
         RETURNING ${agentSessionColumns()}
-      `, [input.id, input.expectedRevision, input.goal, input.route]);
+      `, [input.id, input.expectedRevision, input.goal, input.goalRunId, input.route]);
       const session = requireSessionUpdate(result.rows[0], input.expectedRevision);
       await client.query(`
         UPDATE agent_steps SET status = 'cancelled', error = 'Superseded by a new user goal.'
@@ -542,13 +551,15 @@ export class AgentRepository {
     return requireSessionUpdate(result.rows[0], input.expectedRevision);
   }
 
-  async addTurn(input: { id: string; sessionId: string; role: AgentTurnRecord["role"]; source: AgentTurnRecord["source"]; content: string }): Promise<AgentTurnRecord> {
+  async addTurn(input: { id: string; sessionId: string; role: AgentTurnRecord["role"]; source: AgentTurnRecord["source"]; content: string }): Promise<AgentTurnRecord | undefined> {
     const result = await this.database.query<AgentTurnRecord>(`
       INSERT INTO agent_turns (id, session_id, role, source, content)
-      VALUES ($1, $2, $3, $4, $5)
+      SELECT $1, $2, $3, $4, $5 FROM product
+      WHERE transcript_mode <> 'disabled'
+      FOR SHARE
       RETURNING id, role, source, content, created_at::text AS "createdAt"
     `, [input.id, input.sessionId, input.role, input.source, input.content]);
-    return result.rows[0]!;
+    return result.rows[0];
   }
 
   async listTurns(sessionId: string, limit = 40): Promise<AgentTurnRecord[]> {
@@ -564,6 +575,7 @@ export class AgentRepository {
   async insertStep(input: {
     id: string;
     sessionId: string;
+    goalRunId: string;
     stepIndex: number;
     observationRevision: number;
     decision: PlannerDecision;
@@ -576,12 +588,12 @@ export class AgentRepository {
   }): Promise<AgentStepRecord> {
     const result = await this.database.query<AgentStepRecord>(`
       INSERT INTO agent_steps (
-        id, session_id, step_index, observation_revision, assessment, progress,
+        id, session_id, goal_run_id, step_index, observation_revision, assessment, progress,
         directive, retrieved_sources, model, latency_ms, input_tokens, output_tokens, status
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11, $12, 'issued')
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10, $11, $12, $13, 'issued')
       RETURNING ${agentStepColumns()}
     `, [
-      input.id, input.sessionId, input.stepIndex, input.observationRevision,
+      input.id, input.sessionId, input.goalRunId, input.stepIndex, input.observationRevision,
       input.decision.assessment, input.decision.progress, JSON.stringify(input.directive),
       JSON.stringify(input.retrievedSources), input.model, input.latencyMs ?? null,
       input.inputTokens ?? null, input.outputTokens ?? null
@@ -592,7 +604,7 @@ export class AgentRepository {
   async listRecentSteps(sessionId: string, limit = 24): Promise<AgentStepRecord[]> {
     const result = await this.database.query<AgentStepRecord>(`
       SELECT ${agentStepColumns()} FROM agent_steps
-      WHERE session_id = $1 ORDER BY step_index DESC LIMIT $2
+      WHERE session_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2
     `, [sessionId, limit]);
     return result.rows.reverse();
   }
@@ -600,7 +612,7 @@ export class AgentRepository {
   async latestIssuedStep(sessionId: string): Promise<AgentStepRecord | undefined> {
     const result = await this.database.query<AgentStepRecord>(`
       SELECT ${agentStepColumns()} FROM agent_steps
-      WHERE session_id = $1 AND status = 'issued' ORDER BY step_index DESC LIMIT 1
+      WHERE session_id = $1 AND status = 'issued' ORDER BY created_at DESC, id DESC LIMIT 1
     `, [sessionId]);
     return result.rows[0];
   }
@@ -628,7 +640,7 @@ export class AgentRepository {
       FROM action_receipts WHERE idempotency_key = $1
     `, [input.idempotencyKey]);
     const receipt = existing.rows[0];
-    if (!receipt || receipt.sessionId !== input.sessionId || receipt.actionId !== input.actionId || receipt.type !== input.type) {
+    if (!receipt || receipt.sessionId !== input.sessionId || receipt.type !== input.type || (receipt.targetRef ?? null) !== (input.targetRef ?? null)) {
       throw new AppError("IDEMPOTENCY_CONFLICT", "The idempotency key belongs to a different action.", 409);
     }
     return { ...receipt, route: input.route };
@@ -1176,7 +1188,7 @@ export class DiagnosticsRepository {
       SELECT id, role, source, content, created_at::text AS "createdAt"
       FROM agent_turns WHERE session_id = $1 ORDER BY created_at
     `, [id]);
-    const steps = await this.database.query(`SELECT ${agentStepColumns()} FROM agent_steps WHERE session_id = $1 ORDER BY step_index`, [id]);
+    const steps = await this.database.query(`SELECT ${agentStepColumns()} FROM agent_steps WHERE session_id = $1 ORDER BY created_at, id`, [id]);
     const receipts = await this.database.query(`
       SELECT action_id AS "actionId", idempotency_key AS "idempotencyKey", action_type AS type,
              target_ref AS "targetRef", status, message, evidence, created_at::text AS "createdAt"
@@ -1385,13 +1397,13 @@ function runtimeTokenColumns(): string {
 
 function agentSessionColumns(): string {
   return `id, resume_token_hash AS "resumeTokenHash", user_id AS "userId", status, revision, goal,
-    current_route AS "currentRoute", step_count AS "stepCount", consecutive_failures AS "consecutiveFailures",
+    goal_run_id AS "goalRunId", current_route AS "currentRoute", step_count AS "stepCount", consecutive_failures AS "consecutiveFailures",
     loop_signature AS "loopSignature", loop_count AS "loopCount", pending_confirmation AS "pendingConfirmation",
     created_at::text AS "createdAt", updated_at::text AS "updatedAt", completed_at::text AS "completedAt", error`;
 }
 
 function agentStepColumns(): string {
-  return `id, session_id AS "sessionId", step_index AS "stepIndex", observation_revision AS "observationRevision",
+  return `id, session_id AS "sessionId", goal_run_id AS "goalRunId", step_index AS "stepIndex", observation_revision AS "observationRevision",
     assessment, progress, directive, retrieved_sources AS "retrievedSources", model, latency_ms AS "latencyMs",
     input_tokens AS "inputTokens", output_tokens AS "outputTokens", status, error, created_at::text AS "createdAt"`;
 }

@@ -203,7 +203,7 @@ export class V1UiScanner {
 
 export function actionPolicyForElement(element: Pick<BrowserElement, "role" | "name" | "description" | "tagName" | "type">): UiActionPolicy {
   const semantic = [element.role, element.name, element.description, element.tagName, element.type].filter(Boolean).join(" ");
-  if (/\b(delete|remove permanently|send|publish|approve|pay|purchase|checkout|transfer|wire|post publicly|submit|external(?:ly)? communicat(?:e|ion)|external message|refund|cancel subscription)\b/i.test(semantic)) return "blocked";
+  if (/\b(delete|remove permanently|send|publish|approve|pay|purchase|checkout|transfer|wire|post publicly|submit|external(?:ly)? communicat(?:e|ion)|external message|email\s+(?:the|a|an|this|that|customer|user|contact|client|recipient)|refund|cancel subscription)\b/i.test(semantic)) return "blocked";
   if (["password", "file"].includes(element.type ?? "") || /\b(password|passcode|verification code|payment|card number|cvv|cvc|captcha|web.?authn)\b/i.test(semantic)) return "manual";
   if (element.role === "link" || element.tagName === "a") return "navigate";
   if (["button", "textbox", "checkbox", "radio", "switch", "combobox", "listbox", "option", "slider", "spinbutton"].includes(element.role ?? "")

@@ -179,6 +179,9 @@ test("v1 HTTP API supports secure setup, runtime tokens, agent turns, and SSE", 
       headers: { authorization: `Bearer ${adminToken}` },
       payload: { transcriptMode: "disabled" }
     });
+    const privacyDatabase = new V1Database({ DATABASE_URL: databaseUrl, DATABASE_POOL_MAX: 1 });
+    const purgedTurns = await privacyDatabase.query<{ count: number }>("SELECT COUNT(*)::int AS count FROM agent_turns");
+    assert.equal(purgedTurns.rows[0]?.count, 0);
     const hiddenRun = await app.inject({
       method: "GET",
       url: `/api/v1/runs/${session.sessionId}`,
@@ -207,6 +210,42 @@ test("v1 HTTP API supports secure setup, runtime tokens, agent turns, and SSE", 
     assert.match(stream.headers["content-type"] ?? "", /text\/event-stream/);
     assert.match(stream.body, /event: thinking/);
     assert.match(stream.body, /event: answer/);
+    const disabledTurns = await privacyDatabase.query<{ count: number }>("SELECT COUNT(*)::int AS count FROM agent_turns");
+    assert.equal(disabledTurns.rows[0]?.count, 0);
+    await privacyDatabase.close();
+
+    const interruptedSessionResponse = await app.inject({
+      method: "POST",
+      url: "/api/v1/runtime/sessions",
+      headers: runtimeHeaders(runtimeToken),
+      payload: runtimePayload(3)
+    });
+    const interruptedSession = interruptedSessionResponse.json<{ sessionId: string; revision: number }>();
+    const blockedDecision = model.blockNextDecision();
+    await app.listen({ host: "127.0.0.1", port: 0 });
+    const address = app.server.address();
+    assert.ok(address && typeof address === "object");
+    const abort = new AbortController();
+    const interruptedRequest = fetch(`http://127.0.0.1:${address.port}/api/v1/runtime/sessions/${interruptedSession.sessionId}/turns/stream`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${runtimeToken}`,
+        origin: "http://localhost:3001",
+        "content-type": "application/json",
+        accept: "text/event-stream"
+      },
+      body: JSON.stringify({
+        ...runtimePayload(3),
+        revision: interruptedSession.revision,
+        utterance: "Keep thinking until I stop",
+        source: "text"
+      }),
+      signal: abort.signal
+    }).then((response) => response.text());
+    await blockedDecision.started;
+    abort.abort();
+    await assert.rejects(interruptedRequest, /abort/i);
+    await withDeadline(blockedDecision.aborted, 2_000, "The disconnected SSE request did not abort its model call.");
 
     const removedCompatibility = await app.inject({
       method: "GET",
@@ -227,12 +266,35 @@ test("v1 HTTP API supports secure setup, runtime tokens, agent turns, and SSE", 
 
 class FakeModel {
   private readonly decisions: PlannerDecision[] = [];
+  private blocked?: { started: () => void; aborted: () => void };
 
   push(value: PlannerDecision): void {
     this.decisions.push(value);
   }
 
-  async decide() {
+  blockNextDecision(): { started: Promise<void>; aborted: Promise<void> } {
+    let start!: () => void;
+    let abort!: () => void;
+    const started = new Promise<void>((resolve) => { start = resolve; });
+    const aborted = new Promise<void>((resolve) => { abort = resolve; });
+    this.blocked = { started: start, aborted: abort };
+    return { started, aborted };
+  }
+
+  async decide(input?: { signal?: AbortSignal }) {
+    const blocked = this.blocked;
+    if (blocked) {
+      this.blocked = undefined;
+      blocked.started();
+      await new Promise<never>((_resolve, reject) => {
+        const fail = () => {
+          blocked.aborted();
+          reject(input?.signal?.reason ?? new DOMException("Aborted", "AbortError"));
+        };
+        if (input?.signal?.aborted) fail();
+        else input?.signal?.addEventListener("abort", fail, { once: true });
+      });
+    }
     const decision = this.decisions.shift();
     assert.ok(decision);
     return { decision, latencyMs: 1, usage: {} };
@@ -244,6 +306,18 @@ class FakeModel {
 
   async embed(texts: string[]) {
     return texts.map(() => Array(768).fill(0));
+  }
+}
+
+async function withDeadline<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error(message)), timeoutMs); })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 

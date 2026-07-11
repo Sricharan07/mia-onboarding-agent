@@ -31,6 +31,7 @@ import { createId } from "../utils/id.js";
 const MAX_STEPS = 24;
 const MAX_CONSECUTIVE_FAILURES = 3;
 const MAX_LOOP_REPEATS = 3;
+const MAX_COMPLETION_JUDGMENTS = 3;
 const CONFIRMATION_TTL_MS = 5 * 60_000;
 const ajv = new Ajv2020({ allErrors: true, strict: false });
 
@@ -158,7 +159,7 @@ export class V1AgentService {
     await this.syncActions(input.runtime.actions);
 
     const goal = redactSensitiveText(input.utterance, 4_000);
-    await this.repositories.agent.addTurn({
+    const storedTurn = await this.repositories.agent.addTurn({
       id: createId("turn"),
       sessionId: session.id,
       role: "user",
@@ -175,6 +176,7 @@ export class V1AgentService {
           id: session.id,
           expectedRevision: input.revision,
           goal,
+          goalRunId: createId("goal_run"),
           route: input.runtime.observation.route
         });
     await this.repositories.agent.addEvent({
@@ -184,7 +186,7 @@ export class V1AgentService {
       eventType: "turn_started",
       payload: { source: input.source, route: input.runtime.observation.route }
     });
-    return this.plan(started, input.runtime, input.signal);
+    return this.plan(started, input.runtime, input.signal, storedTurn ? [] : [{ role: "user", content: goal }]);
   }
 
   async continue(input: {
@@ -326,7 +328,12 @@ export class V1AgentService {
     return { revision: updated.revision, status: "cancelled" };
   }
 
-  private async plan(session: AgentSessionRecord, runtime: RuntimeContext, signal?: AbortSignal): Promise<AgentResponse> {
+  private async plan(
+    session: AgentSessionRecord,
+    runtime: RuntimeContext,
+    signal?: AbortSignal,
+    transientTurns: Array<{ role: string; content: string }> = []
+  ): Promise<AgentResponse> {
     if (session.stepCount >= MAX_STEPS) {
       return this.finishWithoutModel(session, runtime.observation, {
         type: "unable",
@@ -336,7 +343,7 @@ export class V1AgentService {
       });
     }
 
-    const context = await this.buildPlannerContext(session, runtime, signal);
+    let context = await this.buildPlannerContext(session, runtime, signal, transientTurns);
     let generated = await this.model.decide({
       sessionId: session.id,
       system: AGENT_SYSTEM,
@@ -346,7 +353,7 @@ export class V1AgentService {
     });
     generated.decision.actions = generated.decision.actions.map((action) => ({ ...action, actionId: createId("action") }));
 
-    if (generated.decision.type === "complete") {
+    for (let attempt = 1; generated.decision.type === "complete"; attempt += 1) {
       const judge = await this.model.judge({
         sessionId: session.id,
         goal: session.goal,
@@ -354,31 +361,48 @@ export class V1AgentService {
         evidence: completionEvidence(runtime.observation, context.steps, context.receipts),
         signal
       });
-      if (!judge.satisfied) {
-        await this.repositories.agent.addTurn({
-          id: createId("turn"),
-          sessionId: session.id,
-          role: "system",
-          source: "runtime",
-          content: `Completion verification failed: ${judge.summary}. Missing evidence: ${judge.missingEvidence.join("; ") || "unspecified"}.`
-        });
-        const refreshed = await this.buildPlannerContext(session, runtime, signal);
-        generated = await this.model.decide({
-          sessionId: session.id,
-          system: AGENT_SYSTEM,
-          prompt: buildPlannerPrompt(session, runtime, refreshed),
-          visualContext: runtime.visualContext,
-          signal
-        });
-        generated.decision.actions = generated.decision.actions.map((action) => ({ ...action, actionId: createId("action") }));
+      if (judge.satisfied) break;
+      const rejection = `Completion verification failed: ${judge.summary}. Missing evidence: ${judge.missingEvidence.join("; ") || "unspecified"}.`;
+      const storedRejection = await this.repositories.agent.addTurn({
+        id: createId("turn"),
+        sessionId: session.id,
+        role: "system",
+        source: "runtime",
+        content: rejection
+      });
+      if (attempt >= MAX_COMPLETION_JUDGMENTS) {
+        generated.decision = {
+          assessment: "The proposed completion could not be verified from the current product state.",
+          progress: "Stopped without claiming completion",
+          type: "unable",
+          message: "I could not verify that the task completed, so I stopped without claiming success.",
+          actions: [],
+          successEvidence: []
+        };
+        break;
       }
+      if (!storedRejection) transientTurns = [...transientTurns, { role: "system", content: rejection }];
+      context = await this.buildPlannerContext(session, runtime, signal, transientTurns);
+      generated = await this.model.decide({
+        sessionId: session.id,
+        system: AGENT_SYSTEM,
+        prompt: buildPlannerPrompt(session, runtime, context),
+        visualContext: runtime.visualContext,
+        signal
+      });
+      generated.decision.actions = generated.decision.actions.map((action) => ({ ...action, actionId: createId("action") }));
     }
 
     return this.issueDecision(session, runtime.observation, generated.decision, context, generated.latencyMs, generated.usage);
   }
 
-  private async buildPlannerContext(session: AgentSessionRecord, runtime: RuntimeContext, signal?: AbortSignal): Promise<{
-    turns: Awaited<ReturnType<V1Repositories["agent"]["listTurns"]>>;
+  private async buildPlannerContext(
+    session: AgentSessionRecord,
+    runtime: RuntimeContext,
+    signal?: AbortSignal,
+    transientTurns: Array<{ role: string; content: string }> = []
+  ): Promise<{
+    turns: Array<{ role: string; content: string }>;
     steps: AgentStepRecord[];
     receipts: ActionReceipt[];
     knowledge: KnowledgeMatch[];
@@ -401,7 +425,8 @@ export class V1AgentService {
     } catch {
       knowledge = await this.repositories.knowledge.search({ query: session.goal, limit: 12 }).catch(() => []);
     }
-    return { turns, steps, receipts, knowledge, skills, map, hostActions };
+    const combinedTurns = [...turns, ...transientTurns].slice(-30);
+    return { turns: combinedTurns, steps, receipts, knowledge, skills, map, hostActions };
   }
 
   private async issueDecision(
@@ -451,6 +476,7 @@ export class V1AgentService {
       await this.repositories.agent.insertStep({
         id: createId("step"),
         sessionId: session.id,
+        goalRunId: session.goalRunId,
         stepIndex: updated.stepCount,
         observationRevision: observation.revision,
         decision,
@@ -497,6 +523,7 @@ export class V1AgentService {
     await this.repositories.agent.insertStep({
       id: createId("step"),
       sessionId: session.id,
+      goalRunId: session.goalRunId,
       stepIndex: updated.stepCount,
       observationRevision: observation.revision,
       decision,
@@ -552,7 +579,16 @@ export class V1AgentService {
       }
       if (host) validateHostArguments(host, action.arguments ?? {});
       const risk = riskForAction(action, target?.node, target?.map, host);
-      const idempotencyKey = hash(`${session.id}:${session.revision}:${action.actionId}:${action.type}:${target?.target.ref ?? ""}:${stableJson(action.arguments ?? action.value ?? "")}`);
+      const idempotencyKey = hash(stableJson({
+        sessionId: session.id,
+        goalRunId: session.goalRunId,
+        type: action.type,
+        target: target?.target.ref ?? "",
+        route: action.route ?? "",
+        key: action.key ?? "",
+        hostAction: action.hostAction ?? "",
+        payload: action.arguments ?? action.value ?? ""
+      }));
       const directive: ActionDirective = {
         actionId: action.actionId,
         idempotencyKey,
@@ -830,7 +866,7 @@ function riskForAction(
   return "reversible_write";
 }
 
-const PROHIBITED_OPERATION = /\b(delete|remove permanently|send|publish|approve|pay|purchase|checkout|transfer|wire|post publicly|submit|external(?:ly)? communicat(?:e|ion)|external message|issue refund|cancel subscription)\b/i;
+const PROHIBITED_OPERATION = /\b(delete|remove permanently|send|publish|approve|pay|purchase|checkout|transfer|wire|post publicly|submit|external(?:ly)? communicat(?:e|ion)|external message|email\s+(?:the|a|an|this|that|customer|user|contact|client|recipient)|issue refund|cancel subscription)\b/i;
 
 function actionNeedsTarget(type: PlannedAction["type"]): boolean {
   return ["point", "highlight", "hover", "scroll_to", "focus", "click", "fill", "clear", "select", "toggle"].includes(type);

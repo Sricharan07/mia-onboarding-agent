@@ -107,7 +107,10 @@ test("v1 agent persists an observe-act-verify run and enforces confirmations and
       runtime: runtime(2)
     }), /did not match the issued action batch/i);
 
-    model.push(decision("complete", { message: "The draft form is open." }));
+    model.pushJudgment(false, "The current page has not yet proven the result.", ["Open form state"]);
+    model.pushJudgment(true, "The second completion proposal is verified.");
+    model.push(decision("complete", { message: "The draft form appears to be open." }));
+    model.push(decision("complete", { message: "The draft form is open and verified." }));
     const completed = await agent.continue({
       sessionId: created.sessionId,
       userId: "user_1",
@@ -117,7 +120,7 @@ test("v1 agent persists an observe-act-verify run and enforces confirmations and
     });
     assert.equal(completed.status, "completed");
     assert.equal(completed.type, "complete");
-    assert.equal(model.judgeCalls, 1);
+    assert.equal(model.judgeCalls, 2);
 
     const run = await repositories.diagnostics.getRun(created.sessionId);
     const steps = run.steps as Array<{ directive: { actions: Array<{ confirmation?: Record<string, unknown> }> } }>;
@@ -307,6 +310,32 @@ test("v1 agent resumes confirmations and navigation without persisting mutation 
     assert.equal(fillResumed.status, "active");
     assert.equal(fillResumed.pending?.recovery, "replan");
     assert.equal(fillResumed.pending?.actions[0]?.value, undefined);
+
+    model.push(decision("actions", {
+      message: "Enter the name after re-observing",
+      actions: [{
+        actionId: "new-model-id", type: "fill", targetRef: "live:create", value: "Avery",
+        message: "Enter Avery", expectedOutcome: "The field contains Avery"
+      }]
+    }));
+    const replanned = await agent.continue({
+      sessionId: fillSession.sessionId,
+      userId: "fill-user",
+      revision: fillResumed.revision,
+      receipts: fillIssued.actions.map((action) => ({
+        actionId: action.actionId,
+        idempotencyKey: action.idempotencyKey,
+        type: action.type,
+        status: "cancelled" as const,
+        message: "Cancelled after reload for a fresh observation.",
+        targetRef: action.target?.ref,
+        route: "/dashboard/crm",
+        evidence: { recoveredAfterReload: true }
+      })),
+      runtime: runtime(3)
+    });
+    assert.equal(replanned.actions[0]?.idempotencyKey, fillIssued.actions[0]?.idempotencyKey);
+    assert.notEqual(replanned.actions[0]?.actionId, fillIssued.actions[0]?.actionId);
   } finally {
     await database.close();
   }
@@ -314,10 +343,15 @@ test("v1 agent resumes confirmations and navigation without persisting mutation 
 
 class FakeAgentModel {
   readonly decisions: PlannerDecision[] = [];
+  readonly judgments: Array<{ satisfied: boolean; summary: string; missingEvidence: string[] }> = [];
   judgeCalls = 0;
 
   push(value: PlannerDecision): void {
     this.decisions.push(value);
+  }
+
+  pushJudgment(satisfied: boolean, summary: string, missingEvidence: string[] = []): void {
+    this.judgments.push({ satisfied, summary, missingEvidence });
   }
 
   async decide(): Promise<{ decision: PlannerDecision; latencyMs: number; usage: Record<string, never> }> {
@@ -328,7 +362,7 @@ class FakeAgentModel {
 
   async judge(): Promise<{ satisfied: boolean; summary: string; missingEvidence: string[] }> {
     this.judgeCalls += 1;
-    return { satisfied: true, summary: "Verified", missingEvidence: [] };
+    return this.judgments.shift() ?? { satisfied: true, summary: "Verified", missingEvidence: [] };
   }
 
   async embed(texts: string[]): Promise<number[][]> {

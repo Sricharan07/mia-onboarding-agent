@@ -40,7 +40,8 @@ test("v1 PostgreSQL foundation migrates and enforces singleton setup plus sessio
     assert.deepEqual(migrations.rows, [
       { id: 1, name: "mia_v1_initial" },
       { id: 2, name: "encrypted_product_settings" },
-      { id: 3, name: "diagnostic_lookup_indexes" }
+      { id: 3, name: "diagnostic_lookup_indexes" },
+      { id: 4, name: "stable_goal_run_identity" }
     ]);
     assert.equal((await database.query<{ count: number }>(`
       SELECT COUNT(*)::int AS count FROM information_schema.tables WHERE table_schema = 'public'
@@ -87,6 +88,7 @@ test("v1 PostgreSQL foundation migrates and enforces singleton setup plus sessio
       id: session.id,
       expectedRevision: 0,
       goal: "Explain the dashboard",
+      goalRunId: "goal_run_test",
       route: "/dashboard"
     });
     assert.equal(started.revision, 1);

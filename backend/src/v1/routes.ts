@@ -399,7 +399,9 @@ export async function registerV1Routes(app: FastifyInstance, dependencies: V1App
     const runtime = await requireRuntime(request, dependencies, "agent:run");
     const { sessionId } = parseWithSchema(routeIdSchema, request.params);
     const body = parseWithSchema(submitTurnSchema, request.body);
-    return sendAgentEvents(reply, () => dependencies.agent.submitTurn({ sessionId, userId: runtime.userId, ...body, runtime: body }));
+    return sendAgentEvents(request, reply, (signal) => dependencies.agent.submitTurn({
+      sessionId, userId: runtime.userId, ...body, runtime: body, signal
+    }));
   });
   app.post("/api/v1/runtime/sessions/:sessionId/continue", async (request) => {
     const runtime = await requireRuntime(request, dependencies, "agent:run");
@@ -411,7 +413,9 @@ export async function registerV1Routes(app: FastifyInstance, dependencies: V1App
     const runtime = await requireRuntime(request, dependencies, "agent:run");
     const { sessionId } = parseWithSchema(routeIdSchema, request.params);
     const body = parseWithSchema(continueSessionSchema, request.body);
-    return sendAgentEvents(reply, () => dependencies.agent.continue({ sessionId, userId: runtime.userId, ...body, runtime: body }));
+    return sendAgentEvents(request, reply, (signal) => dependencies.agent.continue({
+      sessionId, userId: runtime.userId, ...body, runtime: body, signal
+    }));
   });
   app.post("/api/v1/runtime/sessions/:sessionId/confirmations/:confirmationId", async (request) => {
     const runtime = await requireRuntime(request, dependencies, "agent:run");
@@ -461,7 +465,16 @@ async function requireRuntime(request: FastifyRequest, dependencies: V1AppDepend
   return dependencies.auth.authenticateRuntime(token, requestOrigin(request.headers), capability);
 }
 
-function sendAgentEvents(reply: FastifyReply, work: () => Promise<AgentResponse>) {
+function sendAgentEvents(request: FastifyRequest, reply: FastifyReply, work: (signal: AbortSignal) => Promise<AgentResponse>) {
+  const controller = new AbortController();
+  const abort = () => {
+    if (!controller.signal.aborted) controller.abort(new DOMException("Client disconnected", "AbortError"));
+  };
+  const onResponseClose = () => {
+    if (!reply.raw.writableFinished) abort();
+  };
+  request.raw.once("aborted", abort);
+  reply.raw.once("close", onResponseClose);
   reply.headers({
     "content-type": "text/event-stream; charset=utf-8",
     "cache-control": "no-cache, no-transform",
@@ -469,9 +482,9 @@ function sendAgentEvents(reply: FastifyReply, work: () => Promise<AgentResponse>
     "x-accel-buffering": "no"
   });
   const stream = Readable.from((async function* () {
-    yield encodeEvent("thinking", { message: "Understanding your request" });
     try {
-      const response = await work();
+      yield encodeEvent("thinking", { message: "Understanding your request" });
+      const response = await work(controller.signal);
       yield encodeEvent("progress", { assessment: response.assessment, progress: response.progress });
       if (response.status === "waiting_confirmation") yield encodeEvent("confirmation_required", response);
       else if (response.type === "actions") yield encodeEvent("action_requested", response);
@@ -479,6 +492,7 @@ function sendAgentEvents(reply: FastifyReply, work: () => Promise<AgentResponse>
       else if (response.status === "completed") yield encodeEvent("completed", response);
       else yield encodeEvent(response.type, response);
     } catch (error) {
+      if (controller.signal.aborted) return;
       const appError = error instanceof AppError ? error : undefined;
       yield encodeEvent("error", {
         error: {
@@ -486,6 +500,9 @@ function sendAgentEvents(reply: FastifyReply, work: () => Promise<AgentResponse>
           message: appError && appError.statusCode < 500 ? appError.message : "The agent request failed."
         }
       });
+    } finally {
+      request.raw.off("aborted", abort);
+      reply.raw.off("close", onResponseClose);
     }
   })());
   return reply.send(stream);

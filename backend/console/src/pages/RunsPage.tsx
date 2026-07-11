@@ -37,7 +37,7 @@ export function RunsPage({ api, refreshNonce }: { api: BackendApi; refreshNonce:
   return (
     <div className="page-stack">
       {error ? <Alert tone="danger" onClose={() => setError("")}>{error}</Alert> : null}
-      {transcriptMode !== "full" ? <Alert tone="info" title={`Transcript mode: ${transcriptMode}`}>{transcriptMode === "disabled" ? "Conversation text is omitted from run diagnostics." : "Conversation and model summaries are redacted in diagnostics."}</Alert> : null}
+      {transcriptMode !== "full" ? <Alert tone="info" title={`Transcript mode: ${transcriptMode}`}>{transcriptMode === "disabled" ? "Conversation transcript content is not stored." : "Conversation and model summaries are redacted in diagnostics."}</Alert> : null}
       <Section title="Agent runs" description={`${runs.length} persisted sessions`} action={<Button size="sm" variant="secondary" onClick={() => void load()}><RefreshCw /> Refresh</Button>}>
         <div className="table-filters"><label className="list-search"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search goals, users, or routes" aria-label="Search runs" /></label><label className="compact-select"><span>Status</span><select value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">All statuses</option>{["active", "waiting_user", "waiting_confirmation", "completed", "failed", "cancelled"].map((value) => <option key={value} value={value}>{value.replace(/_/g, " ")}</option>)}</select></label></div>
         {filtered.length ? <RunTable runs={filtered} selectedId={selectedId} onSelect={setSelectedId} /> : <EmptyState title="No matching runs" detail="Change the filters or complete a task in the product." />}
