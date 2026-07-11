@@ -105,7 +105,7 @@ test("semantic observer and actor handle controls from a same-origin iframe real
     const cursor = { navigateTo: () => undefined, returnToCursor: () => undefined } as unknown as MiaShadowCursor;
     const actor = new DomAgentActor({ collector, cursor, config: options() });
     const result = await actor.executeBatch([
-      directive({ type: "fill", targetNode: input.nodeId, value: "Avery Labs", risk: "reversible_write" })
+      directive({ type: "fill", targetNode: input.nodeId, value: "Avery Labs", risk: "reversible_write", label: "Company" })
     ], observation, new AbortController().signal);
     assert.equal(result.receipts[0]?.status, "completed");
     assert.equal((frame.contentDocument!.querySelector("input") as HTMLInputElement).value, "Avery Labs");
@@ -171,6 +171,26 @@ test("DOM actor rejects no-op clicks, stale mapped targets, and immutable contro
     assert.equal(noOp.receipts[0]?.status, "unverified");
     assert.equal(noOp.receipts[0]?.evidence.domChanged, false);
 
+    document.querySelector("#noop")!.textContent = "Different operation";
+    const staleLive = await actor.executeBatch([{
+      actionId: "stale_live_point",
+      idempotencyKey: "stale_live_point_key",
+      type: "point",
+      message: "Point to the original control",
+      expectedOutcome: "The original control is highlighted",
+      risk: "read",
+      target: {
+        ref: `live:${node("noop").nodeId}`,
+        nodeId: node("noop").nodeId,
+        tagName: "button",
+        role: "button",
+        label: "No operation",
+        locators: []
+      }
+    }], observation, new AbortController().signal);
+    assert.equal(staleLive.receipts[0]?.status, "failed");
+    assert.match(staleLive.receipts[0]?.message ?? "", /no longer matches/i);
+
     for (const id of ["disabled", "readonly"] as const) {
       const target = node(id);
       const result = await actor.executeBatch([{
@@ -229,7 +249,7 @@ function options(): MiaOptions {
   };
 }
 
-function directive(input: { type: "fill"; targetNode: string; value: string; risk: "manual" | "reversible_write" }): ActionDirective {
+function directive(input: { type: "fill"; targetNode: string; value: string; risk: "manual" | "reversible_write"; label?: string }): ActionDirective {
   return {
     actionId: `action_${input.risk}`,
     idempotencyKey: `key_${input.risk}`,
@@ -237,7 +257,7 @@ function directive(input: { type: "fill"; targetNode: string; value: string; ris
     message: "Enter the lead name",
     expectedOutcome: "The lead name field contains Avery",
     risk: input.risk,
-    target: { ref: `live:${input.targetNode}`, nodeId: input.targetNode, label: "Lead name", locators: [] },
+    target: { ref: `live:${input.targetNode}`, nodeId: input.targetNode, label: input.label ?? "Lead name", locators: [] },
     value: input.value
   };
 }

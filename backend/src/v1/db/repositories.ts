@@ -299,7 +299,7 @@ export class ProductRepository {
         JSON.stringify(input.voiceConfig ?? current.voiceConfig)
       ]);
       if (nextOrigin !== current.origin) {
-        await client.query("UPDATE integration_keys SET allowed_origin = $1 WHERE revoked_at IS NULL", [nextOrigin]);
+        await client.query("UPDATE integration_keys SET revoked_at = NOW() WHERE revoked_at IS NULL");
         await client.query("UPDATE runtime_tokens SET revoked_at = NOW() WHERE revoked_at IS NULL", []);
       }
       if (input.transcriptMode === "disabled" && current.transcriptMode !== "disabled") {
@@ -529,6 +529,11 @@ export class AgentRepository {
         loop_count = COALESCE($9, loop_count),
         pending_confirmation = CASE WHEN $10::boolean THEN $11::jsonb ELSE pending_confirmation END,
         error = $12,
+        goal = CASE
+          WHEN $13 AND (SELECT transcript_mode = 'disabled' FROM product)
+            THEN 'Transcript logging disabled'
+          ELSE goal
+        END,
         completed_at = CASE WHEN $13 THEN NOW() ELSE NULL END,
         updated_at = NOW()
       WHERE id = $1 AND revision = $2

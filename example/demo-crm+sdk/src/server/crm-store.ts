@@ -6,8 +6,8 @@ import {
   type CrmPipelineSeries,
   type CrmSnapshot,
   type CrmTask,
-  type DraftOpportunityInput,
   crmSnapshotSchema,
+  type DraftOpportunityInput,
   type OpportunityHealth,
   type OpportunityPatch,
   type OpportunityStage,
@@ -58,8 +58,13 @@ export async function updateOpportunity(id: string, patch: OpportunityPatch): Pr
   });
 }
 
-export async function createDraftOpportunity(input: DraftOpportunityInput, idempotencyKey?: string): Promise<{ state: CrmSnapshot; draftId: string }> {
-  const draftId = idempotencyKey ? `DRAFT-${stableId(idempotencyKey)}` : `DRAFT-${Date.now().toString(36).toUpperCase()}`;
+export async function createDraftOpportunity(
+  input: DraftOpportunityInput,
+  idempotencyKey?: string,
+): Promise<{ state: CrmSnapshot; draftId: string }> {
+  const draftId = idempotencyKey
+    ? `DRAFT-${stableId(idempotencyKey)}`
+    : `DRAFT-${Date.now().toString(36).toUpperCase()}`;
   const state = await mutateState((current) => {
     if (current.opportunities.some((opportunity) => opportunity.id === draftId)) return;
     const amount = input.amount ?? 0;
@@ -81,12 +86,14 @@ export async function createDraftOpportunity(input: DraftOpportunityInput, idemp
       isDraft: true,
       notes: [],
     });
-    current.activities.unshift(activity({
-      title: `Created draft opportunity for ${input.account}`,
-      actor: "Mia Assistant",
-      type: "mia_action",
-      opportunityId: draftId,
-    }));
+    current.activities.unshift(
+      activity({
+        title: `Created draft opportunity for ${input.account}`,
+        actor: "Mia Assistant",
+        type: "mia_action",
+        opportunityId: draftId,
+      }),
+    );
   });
   return { state, draftId };
 }

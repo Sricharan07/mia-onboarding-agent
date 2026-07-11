@@ -205,9 +205,9 @@ npm run audit:all
 docker compose config
 ```
 
-`verify` runs the PostgreSQL backend suite, SDK browser-unit suite, all production builds, dependency audit, and SDK package-content check. CI also boots Docker from empty PostgreSQL and upload volumes, performs secure first-run setup, and verifies the bundled console.
+`verify` runs the PostgreSQL backend suite, SDK browser-unit suite, demo source check, all production builds, dependency audit, and SDK package-content check. CI also boots Docker from empty PostgreSQL and upload volumes, performs secure first-run setup, and verifies the bundled console.
 
-With a configured live demo, `npm run benchmark:agent` runs the repeated Gemini behavior/safety benchmark and `npm run acceptance:browsers` validates Chrome, Edge, Firefox, and WebKit. See [Release process](docs/releasing.md) for required environment variables and release thresholds.
+With a configured live deployment, `npm run benchmark:agent` runs the repeated Gemini behavior/safety benchmark, `npm run acceptance:browsers` validates Chrome, Edge, Firefox, and WebKit, and `npm run acceptance:voice` proves that Gemini Live calls the authoritative Mia tool and speaks only its trusted result. The `Release Acceptance` GitHub workflow makes all three checks mandatory for release candidates and tags. See [Release process](docs/releasing.md) for required environment variables and release thresholds.
 
 ## Repository
 

@@ -100,7 +100,11 @@ export function CrmDashboard({ initialState }: { initialState: CrmSnapshot }) {
         onCompleteMeeting={handleCompleteMeeting}
         onOpenOpportunity={handleOpenOpportunityById}
       />
-      <OpportunitiesSection opportunities={state.opportunities} onOpenOpportunity={handleOpenOpportunity} onCreateDraft={handleCreateDraft} />
+      <OpportunitiesSection
+        opportunities={state.opportunities}
+        onOpenOpportunity={handleOpenOpportunity}
+        onCreateDraft={handleCreateDraft}
+      />
       <OpportunityDrawer
         opportunity={selectedOpportunity}
         open={Boolean(selectedOpportunity)}

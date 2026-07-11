@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+
 import { draftOpportunityInputSchema } from "@/lib/crm-types";
 import { createDraftOpportunity } from "@/server/crm-store";
 

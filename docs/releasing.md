@@ -96,6 +96,19 @@ npm run acceptance:browsers
 
 The script requires real Chrome, Edge, Firefox, and WebKit. It checks all eight console routes, desktop/mobile containment, reduced motion, keyboard panel opening, SDK readiness, and an optional real point-and-answer turn. Keep credentials in the process environment or a secret runner, not shell history.
 
+Verify the real Gemini Live transport separately. This mints a one-use runtime and ephemeral Live token, requires `submit_mia_turn`, returns a trusted tool result, and fails unless Live produces audio with the exact expected transcription:
+
+```bash
+MIA_VOICE_BACKEND_URL=https://mia.example.com \
+MIA_VOICE_ORIGIN=https://app.example.com \
+MIA_VOICE_INTEGRATION_KEY='...' \
+npm run acceptance:voice
+```
+
+Before tagging, run the `Release Acceptance` GitHub workflow in the protected `release-acceptance` environment. Configure its documented repository variables and secrets for the production-like acceptance deployment. The workflow runs the four-browser suite with the real agent enabled, three repeated benchmark iterations at a 100% threshold, and the Gemini Live trusted-speech check. A missing credential or failed scenario fails the gate; release tags run the same workflow again.
+
+Configure these environment variables: `MIA_ACCEPTANCE_CONSOLE_URL`, `MIA_ACCEPTANCE_DEMO_URL`, `MIA_ACCEPTANCE_BACKEND_URL`, and `MIA_ACCEPTANCE_PRODUCT_ORIGIN`. Configure these environment secrets: `MIA_ACCEPTANCE_CONSOLE_EMAIL`, `MIA_ACCEPTANCE_CONSOLE_PASSWORD`, and a dedicated revocable `MIA_VOICE_INTEGRATION_KEY`.
+
 ## 5. Empty Deployment Gate
 
 Use new volumes and unique secrets:

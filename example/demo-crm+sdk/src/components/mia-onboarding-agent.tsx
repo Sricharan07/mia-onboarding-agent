@@ -1,8 +1,11 @@
 "use client";
 
 import { useEffect } from "react";
+
 import { useRouter } from "next/navigation";
-import { Mia, defineMiaAction, type MiaEvent } from "@mia/onboarding-agent";
+
+import { defineMiaAction, Mia, type MiaEvent } from "@mia/onboarding-agent";
+
 import type { CrmSnapshot, OpportunityPatch } from "@/lib/crm-types";
 
 type CreateDraftInput = { account: string; contactName?: string; amount?: number };
@@ -26,13 +29,19 @@ export function MiaOnboardingAgent() {
     mountCount += 1;
     if (destroyTimer) window.clearTimeout(destroyTimer);
     const backendUrl = process.env.NEXT_PUBLIC_MIA_BACKEND_URL;
-    if (!backendUrl) return () => { mountCount -= 1; };
+    if (!backendUrl)
+      return () => {
+        mountCount -= 1;
+      };
 
-    if (!instancePromise) instancePromise = initializeMia(backendUrl, (route) => router.push(route)).catch((error) => {
-      instancePromise = undefined;
-      window.dispatchEvent(new CustomEvent("mia:runtime-event", { detail: { type: "error", error: toError(error) } }));
-      throw error;
-    });
+    if (!instancePromise)
+      instancePromise = initializeMia(backendUrl, (route) => router.push(route)).catch((error) => {
+        instancePromise = undefined;
+        window.dispatchEvent(
+          new CustomEvent("mia:runtime-event", { detail: { type: "error", error: toError(error) } }),
+        );
+        throw error;
+      });
     void instancePromise.catch(() => undefined);
 
     return () => {
@@ -54,8 +63,9 @@ async function initializeMia(backendUrl: string, navigate: (route: string) => vo
     backendUrl,
     tokenProvider: async () => {
       const response = await fetch("/api/mia/runtime-token", { method: "POST", cache: "no-store" });
-      const result = await response.json() as { token?: string; expiresAt?: string; error?: { message?: string } };
-      if (!response.ok || !result.token) throw new Error(result.error?.message ?? "Unable to create a Mia runtime token.");
+      const result = (await response.json()) as { token?: string; expiresAt?: string; error?: { message?: string } };
+      if (!response.ok || !result.token)
+        throw new Error(result.error?.message ?? "Unable to create a Mia runtime token.");
       return { token: result.token, expiresAt: result.expiresAt };
     },
     navigate,
@@ -66,23 +76,53 @@ async function initializeMia(backendUrl: string, navigate: (route: string) => vo
       pushToTalk: true,
     },
     actions: [createDraftOpportunity, updateOpportunity],
-    contextProviders: [{
-      name: "crm_workspace",
-      description: "Current CRM metrics, opportunities, meetings, and tasks with stable record IDs.",
-      trusted: true,
-      async getContext({ signal }) {
-        const response = await fetch("/api/v1/crm/state", { signal, cache: "no-store" });
-        if (!response.ok) throw new Error("CRM context is unavailable.");
-        const { state } = await response.json() as { state: CrmSnapshot };
-        return JSON.stringify({
-          metrics: state.metrics,
-          opportunities: state.opportunities.map(({ id, account, contactName, owner, stage, health, amount, probability, closeDate, nextStep, outcome, isDraft }) => ({ id, account, contactName, owner, stage, health, amount, probability, closeDate, nextStep, outcome, isDraft })),
-          meetings: state.meetings,
-          tasks: state.tasks,
-          updatedAt: state.updatedAt,
-        });
+    contextProviders: [
+      {
+        name: "crm_workspace",
+        description: "Current CRM metrics, opportunities, meetings, and tasks with stable record IDs.",
+        trusted: true,
+        async getContext({ signal }) {
+          const response = await fetch("/api/v1/crm/state", { signal, cache: "no-store" });
+          if (!response.ok) throw new Error("CRM context is unavailable.");
+          const { state } = (await response.json()) as { state: CrmSnapshot };
+          return JSON.stringify({
+            metrics: state.metrics,
+            opportunities: state.opportunities.map(
+              ({
+                id,
+                account,
+                contactName,
+                owner,
+                stage,
+                health,
+                amount,
+                probability,
+                closeDate,
+                nextStep,
+                outcome,
+                isDraft,
+              }) => ({
+                id,
+                account,
+                contactName,
+                owner,
+                stage,
+                health,
+                amount,
+                probability,
+                closeDate,
+                nextStep,
+                outcome,
+                isDraft,
+              }),
+            ),
+            meetings: state.meetings,
+            tasks: state.tasks,
+            updatedAt: state.updatedAt,
+          });
+        },
       },
-    }],
+    ],
     privacy: {
       redactedSelectors: ["[data-private]", "[data-mia-private]"],
       includePageText: true,
@@ -116,9 +156,13 @@ const createDraftOpportunity = defineMiaAction<CreateDraftInput>({
       body: JSON.stringify(input),
     });
     if (!response.ok) return { status: "failed", message: "The CRM did not create the opportunity draft." };
-    const result = await response.json() as { state: CrmSnapshot; draftId: string };
+    const result = (await response.json()) as { state: CrmSnapshot; draftId: string };
     publishState(result.state);
-    return { status: "completed", message: `Created the ${input.account} opportunity as a draft.`, evidence: { draftId: result.draftId, state: "draft" } };
+    return {
+      status: "completed",
+      message: `Created the ${input.account} opportunity as a draft.`,
+      evidence: { draftId: result.draftId, state: "draft" },
+    };
   },
 });
 
@@ -160,9 +204,13 @@ const updateOpportunity = defineMiaAction<UpdateOpportunityInput>({
       body: JSON.stringify(input.patch),
     });
     if (!response.ok) return { status: "failed", message: "The CRM did not update the opportunity." };
-    const { state } = await response.json() as { state: CrmSnapshot };
+    const { state } = (await response.json()) as { state: CrmSnapshot };
     publishState(state);
-    return { status: "completed", message: "The opportunity was updated.", evidence: { opportunityId: input.id, changedFields: Object.keys(input.patch) } };
+    return {
+      status: "completed",
+      message: "The opportunity was updated.",
+      evidence: { opportunityId: input.id, changedFields: Object.keys(input.patch) },
+    };
   },
 });
 

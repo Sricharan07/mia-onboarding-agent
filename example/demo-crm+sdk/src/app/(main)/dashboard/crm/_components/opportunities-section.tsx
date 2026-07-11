@@ -17,6 +17,7 @@ import { ChevronDownIcon, ListFilter, Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -25,7 +26,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import {
   Pagination,
@@ -283,15 +283,56 @@ export function OpportunitiesSection({
             onSubmit={(event) => {
               event.preventDefault();
               setCreating(true);
-              void onCreateDraft({ account: draft.account, contactName: draft.contactName || undefined, amount: draft.amount ? Number(draft.amount) : undefined })
-                .then(() => { setDraft({ account: "", contactName: "", amount: "" }); setDraftOpen(false); })
+              void onCreateDraft({
+                account: draft.account,
+                contactName: draft.contactName || undefined,
+                amount: draft.amount ? Number(draft.amount) : undefined,
+              })
+                .then(() => {
+                  setDraft({ account: "", contactName: "", amount: "" });
+                  setDraftOpen(false);
+                })
                 .finally(() => setCreating(false));
             }}
           >
-            <div className="space-y-1.5"><Label htmlFor="draft-account">Account</Label><Input id="draft-account" data-mia-key="crm.draft.account_input" required value={draft.account} onChange={(event) => setDraft((current) => ({ ...current, account: event.target.value }))} /></div>
-            <div className="space-y-1.5"><Label htmlFor="draft-contact">Contact</Label><Input id="draft-contact" data-mia-key="crm.draft.contact_input" value={draft.contactName} onChange={(event) => setDraft((current) => ({ ...current, contactName: event.target.value }))} /></div>
-            <div className="space-y-1.5"><Label htmlFor="draft-amount">Value</Label><Input id="draft-amount" data-mia-key="crm.draft.amount_input" type="number" min={0} value={draft.amount} onChange={(event) => setDraft((current) => ({ ...current, amount: event.target.value }))} /></div>
-            <div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => setDraftOpen(false)}>Cancel</Button><Button data-mia-key="crm.draft.save_button" type="submit" disabled={creating}>{creating ? "Creating" : "Create draft"}</Button></div>
+            <div className="space-y-1.5">
+              <Label htmlFor="draft-account">Account</Label>
+              <Input
+                id="draft-account"
+                data-mia-key="crm.draft.account_input"
+                required
+                value={draft.account}
+                onChange={(event) => setDraft((current) => ({ ...current, account: event.target.value }))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="draft-contact">Contact</Label>
+              <Input
+                id="draft-contact"
+                data-mia-key="crm.draft.contact_input"
+                value={draft.contactName}
+                onChange={(event) => setDraft((current) => ({ ...current, contactName: event.target.value }))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="draft-amount">Value</Label>
+              <Input
+                id="draft-amount"
+                data-mia-key="crm.draft.amount_input"
+                type="number"
+                min={0}
+                value={draft.amount}
+                onChange={(event) => setDraft((current) => ({ ...current, amount: event.target.value }))}
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="outline" onClick={() => setDraftOpen(false)}>
+                Cancel
+              </Button>
+              <Button data-mia-key="crm.draft.save_button" type="submit" disabled={creating}>
+                {creating ? "Creating" : "Create draft"}
+              </Button>
+            </div>
           </form>
         </DialogContent>
       </Dialog>

@@ -11,11 +11,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: { message: "Mia server integration is not configured." } }, { status: 503 });
   }
   let allowedOrigin: string;
-  try { allowedOrigin = new URL(configuredOrigin).origin; } catch {
+  try {
+    allowedOrigin = new URL(configuredOrigin).origin;
+  } catch {
     return NextResponse.json({ error: { message: "MIA_DEMO_ORIGIN is invalid." } }, { status: 503 });
   }
   if (!origin || origin !== allowedOrigin) {
-    return NextResponse.json({ error: { message: "Runtime tokens can only be requested from this application origin." } }, { status: 403 });
+    return NextResponse.json(
+      { error: { message: "Runtime tokens can only be requested from this application origin." } },
+      { status: 403 },
+    );
   }
 
   const response = await fetch(`${backendUrl.replace(/\/+$/, "")}/api/v1/runtime/tokens`, {

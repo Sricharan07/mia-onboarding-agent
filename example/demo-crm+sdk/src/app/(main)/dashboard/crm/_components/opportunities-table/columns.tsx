@@ -62,7 +62,12 @@ export function getOpportunitiesColumns(input: {
     {
       accessorKey: "account",
       header: "Account",
-      cell: ({ row }) => <div className="flex items-center gap-2 font-medium text-sm">{row.original.account}{row.original.isDraft ? <Badge variant="secondary">Draft</Badge> : null}</div>,
+      cell: ({ row }) => (
+        <div className="flex items-center gap-2 font-medium text-sm">
+          {row.original.account}
+          {row.original.isDraft ? <Badge variant="secondary">Draft</Badge> : null}
+        </div>
+      ),
     },
     {
       accessorKey: "stage",

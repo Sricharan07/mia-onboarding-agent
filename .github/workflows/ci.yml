@@ -63,6 +63,9 @@ jobs:
       - name: Install SDK demo dependencies
         run: npm ci --prefix example/demo-crm+sdk
 
+      - name: Check SDK demo source
+        run: npm run check:demo
+
       - name: Build SDK demo
         run: npm run build:demo
 

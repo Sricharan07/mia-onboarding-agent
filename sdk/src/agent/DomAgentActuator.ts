@@ -221,7 +221,7 @@ async function resolveTarget(directive: ActionDirective, collector: AgentObserva
   if (!target) return { error: "The action did not include a target." };
   if (target.nodeId) {
     const live = collector.resolveNode(target.nodeId);
-    if (live) return { element: live };
+    if (live && await matchesTarget(live, target)) return { element: live };
   }
   for (const locator of target.locators) {
     const matches = resolveLocator(locator);

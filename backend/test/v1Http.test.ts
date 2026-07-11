@@ -212,6 +212,8 @@ test("v1 HTTP API supports secure setup, runtime tokens, agent turns, and SSE", 
     assert.match(stream.body, /event: answer/);
     const disabledTurns = await privacyDatabase.query<{ count: number }>("SELECT COUNT(*)::int AS count FROM agent_turns");
     assert.equal(disabledTurns.rows[0]?.count, 0);
+    const terminalGoal = await privacyDatabase.query<{ goal: string }>("SELECT goal FROM agent_sessions WHERE id = $1", [second.sessionId]);
+    assert.equal(terminalGoal.rows[0]?.goal, "Transcript logging disabled");
     await privacyDatabase.close();
 
     const interruptedSessionResponse = await app.inject({
@@ -246,6 +248,29 @@ test("v1 HTTP API supports secure setup, runtime tokens, agent turns, and SSE", 
     abort.abort();
     await assert.rejects(interruptedRequest, /abort/i);
     await withDeadline(blockedDecision.aborted, 2_000, "The disconnected SSE request did not abort its model call.");
+
+    const originChange = await app.inject({
+      method: "PATCH",
+      url: "/api/v1/product",
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { origin: "http://localhost:3002" }
+    });
+    assert.equal(originChange.statusCode, 200, originChange.body);
+    const rotatedKeys = await app.inject({
+      method: "GET",
+      url: "/api/v1/integration-keys",
+      headers: { authorization: `Bearer ${adminToken}` }
+    });
+    const rotatedKey = rotatedKeys.json<{ items: Array<{ allowedOrigin: string; revokedAt: string | null }> }>().items[0];
+    assert.equal(rotatedKey?.allowedOrigin, "http://localhost:3001");
+    assert.ok(rotatedKey?.revokedAt);
+    const revokedKeyUse = await app.inject({
+      method: "POST",
+      url: "/api/v1/runtime/tokens",
+      headers: { "x-mia-key": integrationKey },
+      payload: { userId: "demo-user", origin: "http://localhost:3002" }
+    });
+    assert.equal(revokedKeyUse.statusCode, 401);
 
     const removedCompatibility = await app.inject({
       method: "GET",

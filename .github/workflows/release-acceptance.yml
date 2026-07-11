@@ -1,0 +1,51 @@
+name: Release Acceptance
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  live-acceptance:
+    name: Browsers, Agent, and Voice
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: release-acceptance
+    env:
+      MIA_ACCEPTANCE_CONSOLE_URL: ${{ vars.MIA_ACCEPTANCE_CONSOLE_URL }}
+      MIA_ACCEPTANCE_CONSOLE_EMAIL: ${{ secrets.MIA_ACCEPTANCE_CONSOLE_EMAIL }}
+      MIA_ACCEPTANCE_CONSOLE_PASSWORD: ${{ secrets.MIA_ACCEPTANCE_CONSOLE_PASSWORD }}
+      MIA_ACCEPTANCE_DEMO_URL: ${{ vars.MIA_ACCEPTANCE_DEMO_URL }}
+      MIA_ACCEPTANCE_AGENT: "true"
+      MIA_EDGE_EXECUTABLE: /usr/bin/microsoft-edge
+      MIA_BENCHMARK_DEMO_URL: ${{ vars.MIA_ACCEPTANCE_DEMO_URL }}
+      MIA_BENCHMARK_ITERATIONS: "3"
+      MIA_BENCHMARK_THRESHOLD: "1"
+      MIA_VOICE_BACKEND_URL: ${{ vars.MIA_ACCEPTANCE_BACKEND_URL }}
+      MIA_VOICE_ORIGIN: ${{ vars.MIA_ACCEPTANCE_PRODUCT_ORIGIN }}
+      MIA_VOICE_INTEGRATION_KEY: ${{ secrets.MIA_VOICE_INTEGRATION_KEY }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install release browsers
+        run: npx playwright install --with-deps chromium firefox webkit msedge
+
+      - name: Verify Chrome, Edge, Firefox, and WebKit
+        run: npm run acceptance:browsers
+
+      - name: Run repeated intelligent-agent benchmark
+        run: npm run benchmark:agent
+
+      - name: Verify Gemini Live voice protocol and trusted speech
+        run: npm run acceptance:voice

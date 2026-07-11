@@ -135,6 +135,7 @@ For push-to-talk, hold `Control+Space`. Releasing either key, switching tabs, or
 - Check WebSocket proxies, idle timeouts, and provider reachability.
 - Do not cache a voice token across sessions. The SDK requests a new ephemeral token when connecting.
 - Emergency stop intentionally ends speech and active transport.
+- Run `npm run acceptance:voice` against the deployment to distinguish microphone/UI problems from ephemeral-token, tool-routing, or trusted-speech failures.
 
 ## Knowledge URL Fails
 
