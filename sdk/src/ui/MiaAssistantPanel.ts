@@ -8,6 +8,7 @@ type PanelOptions = {
   onAsk: (text: string) => Promise<void>;
   onToggleVoice: () => Promise<void>;
   onStop: () => Promise<void>;
+  styleNonce?: string;
 };
 type PendingConfirmation = { resolve: (approved: boolean) => void; settled: boolean };
 type PendingInput = { resolve: (value: string) => void; reject: (error: Error) => void; settled: boolean };
@@ -160,11 +161,11 @@ export class MiaAssistantPanel {
     this.shadow.querySelector<HTMLElement>("[data-shell]")?.setAttribute("data-open", "false");
     this.shadow.querySelector<HTMLElement>("[data-panel]")?.setAttribute("hidden", "");
     this.shadow.querySelector<HTMLButtonElement>("[data-launcher]")?.setAttribute("aria-expanded", "false");
+    queueMicrotask(() => this.shadow.querySelector<HTMLButtonElement>("[data-launcher]")?.focus({ preventScroll: true }));
   }
 
   private render(): void {
     this.shadow.innerHTML = `
-      <style>${styles}</style>
       <div class="mia-shell" data-shell data-open="false">
         <section class="mia-panel" data-panel role="dialog" aria-label="Mia" hidden>
           <header class="mia-header">
@@ -189,6 +190,10 @@ export class MiaAssistantPanel {
         </button>
       </div>
     `;
+    const style = document.createElement("style");
+    if (this.options.styleNonce) style.nonce = this.options.styleNonce;
+    style.textContent = styles;
+    this.shadow.prepend(style);
     icon(this.shadow.querySelector("[data-close]"), X);
     icon(this.shadow.querySelector("[data-send]"), SendHorizontal);
     icon(this.shadow.querySelector("[data-stop]"), Square);
@@ -196,6 +201,12 @@ export class MiaAssistantPanel {
     icon(this.shadow.querySelector("[data-chevron]"), ChevronDown);
     this.shadow.querySelector("[data-launcher]")?.addEventListener("click", () => this.open ? this.closePanel() : this.openPanel());
     this.shadow.querySelector("[data-close]")?.addEventListener("click", () => this.closePanel());
+    this.shadow.addEventListener("keydown", (event) => {
+      if (event instanceof KeyboardEvent && event.key === "Escape" && this.open) {
+        event.preventDefault();
+        this.closePanel();
+      }
+    });
     this.shadow.querySelector("[data-form]")?.addEventListener("submit", (event) => {
       event.preventDefault();
       const composer = this.shadow.querySelector<HTMLTextAreaElement>("[data-composer]");

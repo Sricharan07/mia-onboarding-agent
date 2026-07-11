@@ -80,8 +80,14 @@ export function validateV1Config(config: V1Config): void {
   if (!config.MIA_SECRET_ENCRYPTION_KEY || config.MIA_SECRET_ENCRYPTION_KEY.length < 32) {
     throw new ConfigError("MIA_SECRET_ENCRYPTION_KEY must contain at least 32 characters in production.");
   }
-  if (!config.SETUP_TOKEN || config.SETUP_TOKEN.length < 32) {
-    throw new ConfigError("SETUP_TOKEN must contain at least 32 characters until first-run setup is complete.");
+  if (config.SETUP_TOKEN && config.SETUP_TOKEN.length < 32) {
+    throw new ConfigError("SETUP_TOKEN must contain at least 32 characters when configured in production.");
+  }
+}
+
+export function validateSetupTokenForState(config: V1Config, setupComplete: boolean): void {
+  if (config.NODE_ENV === "production" && !setupComplete && !config.SETUP_TOKEN) {
+    throw new ConfigError("SETUP_TOKEN must be configured before production first-run setup.");
   }
 }
 

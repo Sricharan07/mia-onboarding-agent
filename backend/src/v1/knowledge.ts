@@ -422,6 +422,10 @@ function digest(value: string): string {
 }
 
 function safeJobError(error: unknown): string {
-  const value = error instanceof AppError && error.statusCode < 500 ? error.message : error instanceof Error ? error.message : "Processing failed.";
+  const value = error instanceof AppError && error.statusCode < 500
+    ? error.message
+    : error instanceof AppError && error.code.startsWith("GEMINI_")
+      ? "Gemini could not process this source. Check provider configuration and retry."
+      : "Processing failed. Review the protected server logs and retry.";
   return value.replace(/(?:AIza|mia_(?:key|rt|admin|resume))_[A-Za-z0-9_-]+/g, "[redacted]").slice(0, 2_000);
 }

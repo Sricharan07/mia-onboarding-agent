@@ -15,7 +15,8 @@ test("assistant panel preserves its controls across status and voice updates", (
       voiceEnabled: true,
       onAsk: async () => undefined,
       onToggleVoice: async () => undefined,
-      onStop: async () => undefined
+      onStop: async () => undefined,
+      styleNonce: "test-csp-nonce"
     });
     panel.mount();
     panel.setStatus("thinking");
@@ -26,6 +27,7 @@ test("assistant panel preserves its controls across status and voice updates", (
     const root = host.shadowRoot!;
     const launcher = root.querySelector<HTMLButtonElement>("[data-launcher]")!;
     assert.ok(launcher);
+    assert.equal(root.querySelector("style")?.nonce, "test-csp-nonce");
     assert.equal(root.querySelector("[data-status-label]")?.textContent, "Ready");
     assert.equal(root.querySelector("[data-launcher-status]")?.textContent, "Ready");
     assert.equal(root.querySelector("[data-shell]")?.getAttribute("data-status"), "idle");
@@ -33,6 +35,8 @@ test("assistant panel preserves its controls across status and voice updates", (
 
     launcher.click();
     assert.equal(root.querySelector("[data-panel]")?.hasAttribute("hidden"), false);
+    root.querySelector("[data-composer]")?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    assert.equal(root.querySelector("[data-panel]")?.hasAttribute("hidden"), true);
     panel.destroy();
   } finally {
     cleanup();

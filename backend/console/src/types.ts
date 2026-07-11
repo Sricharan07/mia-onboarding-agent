@@ -77,7 +77,6 @@ export type KnowledgeSource = {
   kind: "documentation_url" | "document_file" | "ui_map" | "recording" | "skill";
   name: string;
   sourceUrl: string | null;
-  filePath: string | null;
   status: "pending" | "processing" | "ready" | "failed" | "archived";
   metadata: Record<string, unknown>;
   error: string | null;
@@ -128,7 +127,6 @@ export type Recording = {
   id: string;
   name: string;
   description: string | null;
-  filePath: string;
   status: "uploaded" | "processing" | "needs_review" | "ready" | "failed";
   analysis: Record<string, unknown> | null;
   error: string | null;

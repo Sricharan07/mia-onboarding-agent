@@ -3,243 +3,221 @@
 [![CI](https://github.com/Sricharan07/mia-onboarding-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/Sricharan07/mia-onboarding-agent/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-1f6f50.svg)](LICENSE)
 
-Self-hosted AI onboarding and in-product support that turns recorded tasks into reviewed workflows. Mia answers questions, points to live DOM elements, and performs approved browser actions through an embeddable SDK.
+Mia is a self-hosted, embedded product agent. Users can ask questions by text or voice, see Mia point at the live interface, navigate with her, and approve reversible work that she performs for them.
 
-> Record the task, review the generated workflow, then guide users inside the product where the work happens.
+Version `1.0.0` is intentionally one product, one production origin, one administrator, and one Gemini-powered agent. It has no classifier router, fixed workflow executor, multi-tenant compatibility layer, or arbitrary browser control.
 
-Mia is pre-1.0. The backend, console, SDK source, and demo are available now; `@mia/onboarding-agent` has not yet been published to npm.
+## What Mia Does
 
-## How It Works
+- Answers from the current product UI, approved documentation, live host context, UI maps, and published skills.
+- Observes accessibility semantics and the live DOM, including open shadow roots and same-origin frames.
+- Points, highlights, hovers, scrolls, navigates, focuses, clicks, fills, clears, selects, toggles, and presses supported keys.
+- Invokes reviewed host actions for reliable product mutations and verifies every result through UI state or structured receipts.
+- Uses one persisted observe-reason-act-verify session for text and Gemini Live voice.
+- Supports open microphone, interruption, reconnection, and hold `Control+Space` push-to-talk with the feminine `Aoede` voice by default.
+- Stops safely on cancellation, repeated failures, loops, stale targets, invalid model output, or unverified outcomes.
 
-```mermaid
-flowchart LR
-    Operator[Product team] --> Console[Mia Console]
-    Console --> Recording[Workflow recording]
-    Console --> Mapper[UI mapper]
-    Recording --> Review[Human review]
-    Mapper --> Review
-    Review --> Published[Published workflow]
-    User[Product user] --> SDK[Browser SDK]
-    Published --> Runtime[Mia runtime]
-    SDK <--> Runtime
-    SDK <--> Product[Live product DOM]
-```
+Mia never moves the user's physical pointer. The SDK renders a separate visible cursor that scrolls to and follows validated product targets.
 
-1. Record a task while completing it in the product.
-2. Upload the recording and map the product's real routes and controls.
-3. Review selectors, action safety, instructions, and confirmation rules.
-4. Publish only after every workflow blocker is resolved.
-5. Install the SDK and verify it from the real host application.
-6. Let users ask by text or voice, follow Mia's cursor, and confirm actions.
+## Safety Boundary
 
-## Product Experience
+Gemini decides what would help; deterministic code decides what is allowed and whether it worked.
 
-### For product teams
+| Operation | v1 behavior |
+| --- | --- |
+| Answer, explain, point, highlight, hover, scroll, focus | Allowed when grounded in supplied product context |
+| Approved same-origin navigation | Allowed and re-observed after navigation |
+| Click, fill, clear, select, toggle, reversible host action | Requires an exact confirmation naming the change and target |
+| Passwords, payment details, CAPTCHA, WebAuthn, file pickers | Manual only |
+| Delete, send, publish, approve, pay, purchase, transfer, externally communicate, irreversible submit | Blocked before execution |
 
-The Mia Console provides one operational path from setup to production:
-
-- Configure an app, providers, scan authentication, privacy, and retention.
-- Discover routes or select routes explicitly, then run scan preflight.
-- Map normal pages and interactive states such as menus, drawers, and modals.
-- Upload recordings and review every generated workflow step.
-- Resolve stale selectors and safety blockers before approval and publication.
-- Create an app-bound server integration key and copy the SDK integration code.
-- Preview resolution in Test Mia, then prove the SDK is live in the host app.
-- Inspect runtime targets, action verification, usage, sessions, and redacted telemetry.
-
-### For product users
-
-Mia appears inside the host product rather than sending users to a separate help center. Users can:
-
-- Ask what a screen means or how to complete a task.
-- Use text, open-mic voice, or hold `Control+Space` for push-to-talk.
-- See Mia point to and highlight the correct visible control.
-- Confirm direct clicks or focus actions before they run.
-- Follow a reviewed workflow through forms, navigation, and manual-only steps.
-- Stop Mia, pause voice, or close the panel at any time.
-
-Mia is DOM-first. Screen sharing is optional and user-initiated for surfaces the DOM cannot describe well, including canvas, images, video, PDFs, and custom-rendered interfaces.
-
-## Safety Model
-
-Mia does not give a model unrestricted control of the browser.
-
-- Only reviewed and published workflow DSL can execute as a workflow.
-- Unmatched recording actions become non-executable review blockers.
-- Approval is bound to the current UI map and target fingerprints.
-- A new completed UI map moves stale approved or published workflows back to review.
-- Q&A-only apps cannot return workflows or element actions.
-- Direct ad hoc actions always require user confirmation.
-- Runtime targets must resolve to one visible, enabled, unobstructed live DOM element.
-- Bounding boxes position the cursor but never select an action target.
-- Completion requires a verified URL, value, control-state, or relevant DOM change.
-- Secret, credential, payment, and similar fields remain manual-only.
-
-Browser code receives only short-lived `mia_rt_...` runtime tokens. Reusable admin and integration credentials stay on trusted servers.
+The model cannot invent selectors, run arbitrary JavaScript, call unregistered actions, or bypass confirmation. Runtime targets must be present in the current semantic observation or reviewed UI map. Host action inputs are checked against JSON Schema and every mutation receives an idempotency key.
 
 ## Architecture
 
 ```mermaid
-flowchart TB
-    subgraph Host[Customer product]
-        HostBackend[Trusted host backend]
-        Browser[Browser SDK]
-        DOM[Live DOM]
-        HostBackend -->|short-lived runtime token| Browser
-        Browser <--> DOM
+flowchart LR
+    subgraph Product["Customer product"]
+        User["Product user"]
+        SDK["Mia browser SDK"]
+        UI["Live DOM and accessibility tree"]
+        Host["Trusted host backend"]
+        Actions["Reviewed host actions"]
+        User <--> SDK
+        SDK <--> UI
+        SDK --> Actions
+        Host -->|"short-lived runtime token"| SDK
     end
 
-    subgraph Mia[Mia self-hosted deployment]
-        Console[Admin console]
-        API[Fastify API]
-        Scanner[Playwright UI mapper]
-        Worker[Workflow processor]
-        DB[(SQLite)]
-        Files[(Uploads and generated audio)]
-        Index[(LanceDB)]
+    subgraph Deployment["Self-hosted Mia deployment"]
+        Console["Mia Console"]
+        API["Fastify agent API"]
+        Agent["Observe-reason-act-verify loop"]
+        Scanner["Playwright UI scanner"]
+        DB[("PostgreSQL + pgvector")]
+        Files[("Persistent uploads")]
         Console <--> API
+        API <--> Agent
         API <--> Scanner
-        API <--> Worker
         API <--> DB
         API <--> Files
-        API <--> Index
     end
 
-    HostBackend -->|server integration key| API
-    Browser <--> API
-    Scanner -->|owned app routes| DOM
-    Worker --> Gemini[Gemini]
-    API --> Gemini
-    API --> OpenAI[OpenAI embeddings]
-    API -. optional .-> Voice[Qwen TTS or LiveKit]
+    Host -->|"server integration key"| API
+    SDK <--> API
+    Agent <--> Gemini["Gemini planning, embeddings, and Live voice"]
+    Scanner --> Product
 ```
 
-The supported production shape is one backend process serving the console at `/` and APIs under `/api/v1`, with persistent local data. SQLite and the in-process controls are intentionally single-replica; use an external database and distributed rate limiting before designing a multi-replica deployment.
-
-## Repository
-
-```text
-mia-onboarding-agent/
-|-- backend/              # API, jobs, UI mapper, providers, persistence
-|-- backend/console/      # Self-hosted admin console
-|-- sdk/                  # Embeddable browser SDK
-|-- example/demo-crm+sdk/ # CRM demo with the SDK installed
-`-- docs/                 # Operations, integration, security, and release guides
-```
+PostgreSQL stores product configuration, sessions, revisions, confirmations, receipts, diagnostics, knowledge metadata, full-text indexes, and `pgvector` embeddings. Uploaded documents and recordings live on a configured persistent volume.
 
 ## Requirements
 
-- Node.js 22 or newer
-- npm 10 or newer
-- Docker and Docker Compose for the containerized deployment
-- Gemini credentials for workflow analysis and live voice
-- OpenAI credentials for embeddings and semantic retrieval
+- Node.js 22 or newer and npm 10 or newer for source development.
+- Docker with Compose for the supported self-hosted deployment.
+- PostgreSQL 17 with the `vector` extension when running outside Compose.
+- A Gemini API key configured in the console or backend environment.
+- An HTTPS product origin in production. Localhost HTTP is accepted for development.
 
-## Run Locally
+## Quick Start With Docker
+
+Create configuration and generate three independent secrets:
 
 ```bash
-npm install
-npm ci --prefix backend/console
-npm ci --prefix example/demo-crm+sdk
 cp .env.example .env
-npm run build
-npm run dev:backend
-```
-
-In separate terminals:
-
-```bash
-npm run dev:console
-npm --prefix example/demo-crm+sdk run dev
-```
-
-The backend defaults to `http://localhost:4000`, the Vite console to `http://localhost:5173`, and the demo CRM to `http://localhost:3000/dashboard/default`.
-
-Production validates the bootstrap and encryption secrets as at least 32 characters. Generate independent values rather than using the examples literally:
-
-```bash
+openssl rand -hex 32
+openssl rand -hex 32
 openssl rand -hex 32
 ```
 
-Set the result separately for `BOOTSTRAP_ADMIN_TOKEN` and `MIA_SECRET_ENCRYPTION_KEY`. The bootstrap token is needed only for first-admin creation. The encryption key must remain stable for the database lifetime so saved scan credentials remain decryptable.
-
-## First App Setup
-
-1. Create the first console admin with `BOOTSTRAP_ADMIN_TOKEN`.
-2. Create an app with its name, slug, base URL, and intended runtime mode.
-3. Configure scan authentication and privacy selectors under Settings -> Scan profile.
-4. Select or discover routes in UI Map, then pass full preflight.
-5. Run an automated scan and capture authenticated or hidden states interactively when needed.
-6. Upload a workflow recording from Workflows.
-7. Review targets, instructions, action types, confirmation rules, and safety blockers.
-8. Approve and publish only against the latest completed UI map.
-9. Create an app-bound server integration key with `runtime:tokens:create`.
-10. Add an authenticated host-backend token endpoint and initialize the SDK with `tokenProvider`.
-11. Use Test Mia for a resolver preview, then open the real host app and confirm the live SDK proof and runtime logs.
-
-The server integration key is bound to one app and the browser origins for which it may mint tokens. Only short-lived runtime tokens belong in browser memory.
-
-## SDK Integration
-
-Until the first npm publication, build and install a local tarball:
+Put the values in `.env` as `POSTGRES_PASSWORD`, `MIA_SECRET_ENCRYPTION_KEY`, and `SETUP_TOKEN`. Set `CORS_ORIGIN` to the Mia console origin and the exact host-product origin, then start an empty deployment:
 
 ```bash
-npm pack -w sdk
-npm install /absolute/path/to/mia-onboarding-agent-0.1.0.tgz
+docker compose up --build -d
+curl http://localhost:4000/api/v1/ready
 ```
 
-Initialize Mia from the host application:
+Open [http://localhost:4000](http://localhost:4000). First-run setup asks for the setup token, product name and origin, administrator identity, and a password of at least 12 characters. No default account or password exists.
+
+Compose creates:
+
+- `mia-postgres` for PostgreSQL and pgvector data.
+- `mia-uploads` for uploaded documents and recordings.
+- A non-root Mia backend that also serves the compiled console.
+
+Read [Production deployment](docs/production.md) and [Database operations](docs/database.md) before exposing Mia publicly.
+
+## Configure The Product
+
+The console has eight workflows, in deployment order:
+
+1. **Setup**: finish product, Gemini, runtime key, knowledge, UI map, SDK, safety review, and live validation checks.
+2. **Overview**: monitor readiness, agent activity, usage, and the next operational task.
+3. **Knowledge**: crawl approved HTTPS documentation, upload Markdown/text/PDF files, and scan product routes.
+4. **Skills**: turn recordings into editable, reviewed agent guidance and publish only approved skills.
+5. **Actions & Safety**: review SDK-detected host actions, JSON schemas, risks, and effective policy.
+6. **Test Mia**: prove Q&A, pointing, navigation, confirmed mutation, and voice against the live SDK.
+7. **Runs**: inspect transcripts, model assessments, retrieved sources, directives, approvals, receipts, retries, timing, tokens, and errors.
+8. **Settings**: manage the product origin, redaction, Gemini credential, scan access, transcript policy, runtime keys, voice, and administrator password.
+
+Changing the product origin revokes existing runtime keys and tokens so credentials cannot silently remain valid for another site.
+
+## Install The SDK
+
+The repository prepares `@mia/onboarding-agent@1.0.0` as an ESM package. Until it is published to npm, create and install the exact release tarball:
+
+```bash
+npm ci
+npm pack --workspace sdk
+npm install /absolute/path/to/mia-onboarding-agent-1.0.0.tgz
+```
+
+Create a runtime integration key in **Settings**, keep it on the trusted host backend, and exchange it for short-lived browser tokens through `POST /api/v1/runtime/tokens`.
 
 ```ts
-import { AIOnboardingAgent } from "@mia/onboarding-agent";
+import { Mia, defineMiaAction } from "@mia/onboarding-agent";
 
-AIOnboardingAgent.init({
-  appId: "app_example",
+const createDraftLead = defineMiaAction({
+  name: "create_draft_lead",
+  description: "Create a reversible lead draft without sending it.",
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: { name: { type: "string", minLength: 1 } },
+    required: ["name"]
+  },
+  risk: "reversible_write",
+  async execute(input, { signal, idempotencyKey }) {
+    const response = await fetch("/api/leads/drafts", {
+      method: "POST",
+      signal,
+      headers: { "content-type": "application/json", "idempotency-key": idempotencyKey },
+      body: JSON.stringify(input)
+    });
+    if (!response.ok) return { status: "failed", message: "The draft was not created." };
+    const draft = await response.json();
+    return { status: "completed", message: "Draft created.", evidence: { draftId: draft.id } };
+  }
+});
+
+const mia = await Mia.init({
   backendUrl: "https://mia.example.com",
   tokenProvider: async () => {
     const response = await fetch("/api/mia/runtime-token", { method: "POST" });
     if (!response.ok) throw new Error("Unable to start Mia");
     return response.json();
   },
-  enableVoice: true,
-  privacy: {
-    redactText: true,
-    redactedSelectors: ["[data-private]", ".billing-card"],
-    telemetry: { mode: "events_only" }
-  },
-  ui: {
-    assistantPanel: true,
-    theme: "auto"
-  }
+  navigate: (route) => router.push(route),
+  voice: { enabled: true, voice: "Aoede", openMic: true, pushToTalk: true },
+  actions: [createDraftLead],
+  privacy: { redactedSelectors: ["[data-private]", ".payment-details"] }
 });
 ```
 
-The host backend must authenticate its user before exchanging the server integration key for a runtime token. See the [SDK integration guide](docs/sdk.md) and the retained [demo implementation](example/demo-crm+sdk/README.md).
+See the [SDK guide](docs/sdk.md), [SDK API README](sdk/README.md), and [working CRM integration](example/demo-crm+sdk/README.md).
 
-## Privacy
+## Develop From Source
 
-Visible DOM text is redacted by default before context leaves the browser. URL query strings, page titles, user metadata, and telemetry payloads are omitted by default. Workflow values stay in browser memory and are cleared when a run ends.
-
-Use scan-profile redaction for mapped content and SDK privacy options for live runtime context. Full telemetry requires an app policy that permits it and explicit user consent. Retention, export, purge, and per-user deletion controls are available under Settings -> Privacy.
-
-## Docker
+Start a PostgreSQL instance with pgvector, create an empty database whose name contains `test` for integration tests, and configure the local URLs:
 
 ```bash
+npm ci
+npm ci --prefix backend/console
+npm ci --prefix example/demo-crm+sdk
 cp .env.example .env
-docker compose up --build
 ```
 
-The image runs as a non-root user and stores SQLite, uploads, generated audio, and the semantic index in the `mia-data` volume. Read [Production deployment](docs/production.md) before exposing it publicly.
+For local development, set `DATABASE_URL`, use `NODE_ENV=development`, and start each surface in its own terminal:
+
+```bash
+npm run dev:backend
+npm run dev:console
+npm --prefix example/demo-crm+sdk run dev
+```
+
+The default ports are backend/console `4000`, Vite console `5173`, and demo `3000`.
 
 ## Verification
 
 ```bash
-npm run verify
+MIA_TEST_DATABASE_URL=postgres://mia:password@127.0.0.1:5432/mia_test npm run verify
 npm run audit:all
-docker build -t mia-onboarding-agent:local .
+docker compose config
 ```
 
-`verify` runs backend and SDK tests, builds the backend, SDK, console, and demo, audits production dependencies, and validates the SDK package contents.
+`verify` runs the PostgreSQL backend suite, SDK browser-unit suite, all production builds, dependency audit, and SDK package-content check. CI also boots Docker from empty PostgreSQL and upload volumes, performs secure first-run setup, and verifies the bundled console.
+
+With a configured live demo, `npm run benchmark:agent` runs the repeated Gemini behavior/safety benchmark and `npm run acceptance:browsers` validates Chrome, Edge, Firefox, and WebKit. See [Release process](docs/releasing.md) for required environment variables and release thresholds.
+
+## Repository
+
+```text
+backend/               Fastify API, agent loop, PostgreSQL repositories, scanner
+backend/console/       Single-product administrator console
+sdk/                   Framework-neutral ESM browser SDK
+example/demo-crm+sdk/  Next.js CRM with real host actions and Mia installed
+docs/                  API, operations, integration, security, and release guides
+```
 
 ## Documentation
 
@@ -256,4 +234,4 @@ docker build -t mia-onboarding-agent:local .
 
 ## License
 
-Mia is available under the [MIT License](LICENSE). Bundled and adapted third-party work is documented in [Third-party notices](THIRD_PARTY_NOTICES.md).
+Mia is available under the [MIT License](LICENSE). Bundled and adapted third-party work is listed in [Third-party notices](THIRD_PARTY_NOTICES.md).

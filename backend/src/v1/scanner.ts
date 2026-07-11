@@ -384,5 +384,7 @@ function hash(value: string): string {
 }
 
 function safeScanError(error: unknown): string {
-  return (error instanceof AppError && error.statusCode < 500 ? error.message : error instanceof Error ? error.message : "UI scan failed.").slice(0, 2_000);
+  return (error instanceof AppError && error.statusCode < 500
+    ? error.message
+    : "UI scan failed. Review the protected server logs and retry.").slice(0, 2_000);
 }

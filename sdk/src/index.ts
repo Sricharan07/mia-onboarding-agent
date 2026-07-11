@@ -61,7 +61,7 @@ export class Mia {
     this.backend = new BackendClient(options);
     this.collector = new AgentObservationCollector(options);
     this.cursor = new MiaShadowCursor();
-    this.cursor.mount();
+    this.cursor.mount(options.ui?.styleNonce);
     this.cursor.setTheme(options.ui?.theme ?? "auto");
     this.cursor.setCursorIcon(options.ui?.cursorIcon);
     this.cursor.setOffset(options.ui?.cursorOffset);
@@ -72,7 +72,8 @@ export class Mia {
         voiceEnabled: options.voice?.enabled === true,
         onAsk: (text) => this.ask(text),
         onToggleVoice: () => this.voiceActive ? this.stopVoice() : this.startVoice(),
-        onStop: () => this.stop()
+        onStop: () => this.stop(),
+        styleNonce: options.ui?.styleNonce
       });
       this.panel.mount();
     }

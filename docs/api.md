@@ -1,132 +1,229 @@
 # HTTP API
 
-All API routes live under `/api/v1`. The console and trusted integrations use API credentials; the browser SDK uses short-lived runtime tokens.
+Mia serves the console at `/` and versioned JSON/SSE APIs under `/api/v1`. The browser SDK should normally use its bundled client instead of calling runtime routes directly.
 
 ## Authentication
 
-Pass either:
+### Administrator session
+
+`POST /api/v1/setup` and `POST /api/v1/auth/login` return a `mia_admin_...` bearer token. Send it to administrative routes:
 
 ```http
-Authorization: Bearer mia_...
+Authorization: Bearer mia_admin_...
 ```
 
-or:
+Administrator tokens are stored hashed, expire according to `CONSOLE_SESSION_TTL_SECONDS`, and can be revoked by logout.
+
+### Integration key
+
+An administrator creates a `mia_key_...` integration key. It is returned once and belongs only on the trusted host backend:
 
 ```http
-x-api-key: mia_...
+x-mia-key: mia_key_...
 ```
 
-Console admin sessions are also accepted for admin routes through the console login flow.
+The key is bound to the configured product origin. Changing that origin revokes existing integration keys and runtime tokens.
 
-SDK routes use `Authorization: Bearer mia_rt_...`. A trusted host backend mints this token with `POST /api/v1/runtime/tokens`; reusable API keys must never enter browser code.
+### Runtime token
 
-## Scopes
+The trusted host backend exchanges its integration key for a short-lived `mia_rt_...` token. Browser runtime calls use:
 
-- `admin`: full administrative access.
-- `apps:read`: list/read accessible apps.
-- `ui-map:read`: read UI map versions, pages, and elements.
-- `workflows:read`: read workflow jobs and workflows.
-- `runtime:tokens:create`: mint and revoke runtime tokens from a trusted app backend.
-- `logs:read`: read execution logs and usage metrics.
+```http
+Authorization: Bearer mia_rt_...
+Origin: https://app.example.com
+```
 
-Non-admin keys must be bound to one app and at least one allowed browser origin.
+The backend validates token hash, expiry, use count, exact origin, and required capability. Capabilities are `agent:run`, `events:write`, and `voice:live`.
 
-Runtime token capabilities are `runtime:resolve`, `runtime:workflow`, `logs:write`, `voice:live`, `voice:tts`, and `voice:livekit`.
+## Errors And Concurrency
 
-## System
+Errors use this envelope:
 
-- `GET /api/v1/health`: lightweight process health.
-- `GET /api/v1/system/readiness`: admin-only database, provider-configuration, and encrypted secret-storage readiness. Provider credentials are not exercised by this check.
+```json
+{
+  "error": {
+    "code": "SESSION_REVISION_CONFLICT",
+    "message": "The agent session changed while the request was running."
+  }
+}
+```
 
-## Console Auth
+Validation errors return `400`; missing or invalid credentials return `401`; policy/origin failures return `403`; revision and state conflicts return `409`; rate limits return `429` with `Retry-After`; provider failures return a sanitized `502` response.
 
-- `GET /api/v1/console/auth/status`
-- `POST /api/v1/console/auth/setup`
-- `POST /api/v1/console/auth/login`
-- `POST /api/v1/console/auth/logout`
-- `GET /api/v1/console/users`
-- `POST /api/v1/console/users`
-- `PATCH /api/v1/console/users/:userId/password`
-- `POST /api/v1/console/users/:userId/disable`
-- `GET /api/v1/console/sessions`
-- `POST /api/v1/console/sessions/:sessionId/revoke`
+Every mutable runtime request carries the last observed session `revision`. Clients must serialize work per session and replace their revision with the value returned by the backend.
 
-`setup` requires `x-bootstrap-admin-token` and creates the first console admin only.
+## Health And Setup
 
-## Apps And API Keys
+| Method | Route | Authentication | Purpose |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/health` | None | Process liveness |
+| `GET` | `/api/v1/ready` | None | Database readiness plus setup/Gemini state |
+| `GET` | `/api/v1/setup/status` | Optional admin bearer | First-run or current authentication state |
+| `POST` | `/api/v1/setup` | Setup token in body | Create the singleton product and administrator |
+| `GET` | `/api/v1/setup/checklist` | Admin | Aggregate production-readiness evidence |
 
-- `GET /api/v1/apps`
-- `POST /api/v1/apps`
-- `POST /api/v1/apps/:appId/archive`
-- `GET /api/v1/api-keys`
-- `POST /api/v1/api-keys`
-- `DELETE /api/v1/api-keys/:keyId`
-- `POST /api/v1/runtime/tokens`
-- `DELETE /api/v1/runtime/tokens/:tokenId`
-- `GET /api/v1/apps/:appId/data-export`
-- `DELETE /api/v1/apps/:appId/user-data/:userId`
-- `POST /api/v1/apps/:appId/data-retention/purge`
+First-run setup body:
 
-App records include base URL and optional UI scan profile settings. API key creation returns the raw key once; store it immediately.
+```json
+{
+  "setupToken": "high-entropy-deployment-token",
+  "productName": "Acme",
+  "origin": "https://app.example.com",
+  "adminEmail": "owner@example.com",
+  "adminName": "Product Owner",
+  "password": "at-least-12-characters"
+}
+```
 
-## UI Map
+Setup is transactional and can succeed only once.
 
-- `POST /api/v1/apps/:appId/ui-map/preflight`
-- `POST /api/v1/apps/:appId/ui-map/discover-routes`
-- `POST /api/v1/apps/:appId/ui-map/scan`
-- `GET /api/v1/apps/:appId/ui-map/versions`
-- `GET /api/v1/ui-map/:uiMapVersionId/pages`
-- `GET /api/v1/ui-map/:uiMapVersionId/elements?limit=1000&offset=0`
-- `GET /api/v1/pages/:pageId/elements`
-- `PATCH /api/v1/apps/:appId/ui-map/elements/:elementRowId`
-- `GET /api/v1/ui-map/interactive-sessions`
-- `POST /api/v1/apps/:appId/ui-map/interactive-sessions`
-- `GET /api/v1/ui-map/interactive-sessions/:sessionId`
-- `POST /api/v1/ui-map/interactive-sessions/:sessionId/goto`
-- `POST /api/v1/ui-map/interactive-sessions/:sessionId/capture-state`
-- `POST /api/v1/ui-map/interactive-sessions/:sessionId/finish`
-- `POST /api/v1/ui-map/interactive-sessions/:sessionId/cancel`
+## Administrator API
 
-Automated scans accept explicit routes and optional auth mode. Preflight checks every selected route, login selectors, privacy selectors, and target reachability before scan start.
+### Authentication and product
 
-`discover-routes` opens the selected seed routes in the scanner browser, follows safe same-origin links, filters obvious destructive/logout/binary routes, and returns the merged route list plus per-seed crawl results. Manual auth is intentionally handled by interactive mapping instead.
+- `POST /api/v1/auth/login`
+- `POST /api/v1/auth/logout`
+- `PUT /api/v1/auth/password`
+- `GET /api/v1/product`
+- `PATCH /api/v1/product`
+- `GET /api/v1/product/gemini`
+- `PUT /api/v1/product/gemini`
+- `DELETE /api/v1/product/gemini`
 
-UI map version records include scan progress fields for console polling and external operators: `routes`, `routeCount`, `pageCount`, `failedPageCount`, `elementCount`, `strongSelectorCount`, `mediumSelectorCount`, and `weakSelectorCount`.
+Product updates may change name, exact origin, approved documentation origins, redaction selectors, transcript mode (`full`, `redacted`, `disabled`), retention from 1 to 365 days, and English voice configuration.
 
-Completing a new UI map invalidates approvals for workflows bound to an older map. UI elements expose ordered structured locators for standard CSS, role/name, label, and exact text; Playwright-only pseudo-selectors are never sent to the browser SDK. The workflow review report blocks missing routes, unresolved actions, low target-match confidence, stale fingerprints, locator changes, selector warnings, non-unique selectors, type/route changes, and dangerous automatic actions.
+### Runtime integration keys
 
-## Workflows
+- `GET /api/v1/integration-keys`
+- `POST /api/v1/integration-keys` with `{ "name": "Production host" }`
+- `DELETE /api/v1/integration-keys/:id`
 
-- `POST /api/v1/apps/:appId/workflow-videos`
-- `GET /api/v1/apps/:appId/workflow-jobs`
-- `GET /api/v1/workflow-jobs/:jobId`
-- `POST /api/v1/workflow-jobs/:jobId/process`
-- `GET /api/v1/apps/:appId/workflows`
-- `GET /api/v1/workflows/:workflowId`
-- `GET /api/v1/workflows/:workflowId/review-report`
-- `PATCH /api/v1/workflows/:workflowId`
-- `POST /api/v1/workflows/:workflowId/approve`
-- `POST /api/v1/workflows/:workflowId/publish`
-- `POST /api/v1/workflows/:workflowId/archive`
-- `POST /api/v1/workflows/:workflowId/steps`
-- `PATCH /api/v1/workflows/:workflowId/steps/:stepId`
-- `DELETE /api/v1/workflows/:workflowId/steps/:stepId`
-- `POST /api/v1/workflows/:workflowId/steps/reorder`
+The raw key appears only in the create response. Store it immediately in the host backend's secret manager.
 
-Workflow video uploads must be MP4, MOV, WebM, MKV, or MPEG and must match the claimed container type.
+### Knowledge
 
-## Runtime, Voice, Logs, And Metrics
+- `GET /api/v1/knowledge`
+- `POST /api/v1/knowledge/urls`
+- `POST /api/v1/knowledge/files`
+- `POST /api/v1/knowledge/:id/retry`
+- `DELETE /api/v1/knowledge/:id`
 
-- `POST /api/v1/runtime/resolve`
-- `POST /api/v1/runtime/workflow-sessions`
-- `PATCH /api/v1/runtime/workflow-sessions/:runtimeSessionId`
-- `POST /api/v1/gemini/live-token`
-- `POST /api/v1/tts`
-- `POST /api/v1/livekit/token`
-- `POST /api/v1/logs/execution`
-- `GET /api/v1/logs`
-- `GET /api/v1/metrics/usage`
-- `GET /api/v1/metrics/usage/timeseries`
-- `POST /api/v1/apps/:appId/semantic-index/rebuild`
+URL ingestion accepts `{ "name", "url", "maxPages" }`. Documentation must use HTTPS, remain within approved origins, and pass SSRF checks. File ingestion is multipart with one Markdown, text, or PDF document and optional `name` field. Delete archives the source and removes it from retrieval.
 
-Runtime, voice, and log-write routes require short-lived runtime tokens with the matching capability. Metrics and log reads are intended for console operators or trusted server-side integrations.
+### Recordings and skills
+
+- `GET /api/v1/recordings`
+- `POST /api/v1/recordings`
+- `POST /api/v1/recordings/:id/retry`
+- `GET /api/v1/skills`
+- `PATCH /api/v1/skills/:id`
+- `POST /api/v1/skills/:id/publish`
+- `POST /api/v1/skills/:id/archive`
+
+Recording upload is multipart and produces a reviewed skill, not an executable script. Skill fields are name, description, goal, business context, steps, constraints, and expected outcomes. Only published skills enter retrieval.
+
+### UI scanning and policy
+
+- `GET /api/v1/scans`
+- `POST /api/v1/scans`
+- `GET /api/v1/scans/:id`
+- `GET /api/v1/scans/elements?route=&search=&limit=&offset=`
+- `PATCH /api/v1/scans/elements/:elementKey/policy`
+- `GET /api/v1/product/scan-auth`
+- `PUT /api/v1/product/scan-auth`
+
+Start a scan with optional relative routes and `discover`:
+
+```json
+{ "routes": ["/dashboard", "/settings"], "discover": true }
+```
+
+Mapped-element policy is `guide_only`, `navigate`, `reversible_write`, `manual`, or `blocked`. The live SDK observation remains runtime truth; map records provide semantic memory and reviewed policy.
+
+### Host actions, runs, and usage
+
+- `GET /api/v1/actions`
+- `PATCH /api/v1/actions/:name`
+- `GET /api/v1/runs`
+- `GET /api/v1/runs/:id`
+- `GET /api/v1/usage`
+
+An SDK action first appears as detected/needs review. Review sets `{ "status": "published" | "blocked", "risk": "read" | "navigate" | "reversible_write" | "manual" | "blocked" }`. Blocked actions cannot be published. Manifest changes return published actions to review.
+
+Run responses honor transcript mode and redact secrets regardless of mode.
+
+## Runtime Token Exchange
+
+Trusted host backend request:
+
+```http
+POST /api/v1/runtime/tokens
+x-mia-key: mia_key_...
+Content-Type: application/json
+
+{
+  "userId": "host-user-123",
+  "origin": "https://app.example.com",
+  "capabilities": ["agent:run", "events:write", "voice:live"]
+}
+```
+
+Response:
+
+```json
+{
+  "token": "mia_rt_...",
+  "expiresAt": "2026-07-10T18:00:00.000Z",
+  "allowedOrigin": "https://app.example.com",
+  "capabilities": ["agent:run", "events:write", "voice:live"]
+}
+```
+
+Derive `userId` and authorization from the host product's authenticated server session. Do not trust a browser-supplied user ID or origin.
+
+## Agent Runtime
+
+- `POST /api/v1/runtime/sessions`
+- `POST /api/v1/runtime/sessions/resume`
+- `POST /api/v1/runtime/sessions/:sessionId/turns`
+- `POST /api/v1/runtime/sessions/:sessionId/turns/stream`
+- `POST /api/v1/runtime/sessions/:sessionId/continue`
+- `POST /api/v1/runtime/sessions/:sessionId/continue/stream`
+- `POST /api/v1/runtime/sessions/:sessionId/confirmations/:confirmationId`
+- `POST /api/v1/runtime/sessions/:sessionId/cancel`
+- `POST /api/v1/runtime/voice/token`
+- `POST /api/v1/runtime/events`
+
+Session creation supplies the current semantic observation, registered action manifests, trusted/untrusted context entries, and optional visual context. It returns `sessionId`, one opaque `resumeToken`, status, and revision. The resume token is not an action credential and is valid only with a runtime token for the same host user.
+
+Turn bodies add `utterance` and source (`text` or `voice`). The response is one of:
+
+- `actions`: up to four guarded directives;
+- `ask_user`: one missing-input request;
+- `answer`: grounded conversational response;
+- `complete`: verified completion;
+- `unable`: honest safe stop.
+
+After executing a directive batch, submit the new observation and one receipt per action to `continue`. Receipt status is `completed`, `unverified`, `failed`, `cancelled`, or `manual`. The backend verifies action identity, idempotency key, batch completeness, confirmation state, and session revision before replanning.
+
+Confirmation resolution includes the issued binding, current observation, approval boolean, and source (`text`, `voice`, or `ui`). A stale, expired, altered, or already-resolved binding is rejected.
+
+Streaming endpoints return server-sent events:
+
+```text
+thinking
+progress
+action_requested
+confirmation_required
+answer
+completed
+ask_user
+unable
+error
+```
+
+`POST /api/v1/runtime/voice/token` returns a short-lived Gemini Live credential and model endpoint. The browser never receives the configured Gemini API key.
+
+## Removed v1 Interfaces
+
+There is no `appId`, classifier resolver, `/runtime/resolve`, workflow-session executor, arbitrary selector endpoint, API-key scope matrix, TTS adapter, LiveKit endpoint, or compatibility response union in v1.

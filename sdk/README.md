@@ -66,12 +66,13 @@ const mia = await Mia.init({
   privacy: {
     redactedSelectors: ["[data-private]", ".payment-details"]
   },
+  ui: { styleNonce: window.__CSP_NONCE__ },
   onEvent: (event) => console.debug("Mia", event)
 });
 
 await mia.ask("Create a draft lead for Avery");
 await mia.startVoice();
-await mia.stop();
+await mia.stopVoice();
 mia.destroy();
 ```
 
@@ -92,6 +93,8 @@ The observer reads accessibility semantics and visible product text, not arbitra
 Canvas, chart, map, and image inspection is opt-in through `visualContextProvider`. The provider is invoked only after the agent explicitly determines semantic context is insufficient. Use `privacy.transformVisualContext` to apply any final image or description redaction before upload.
 
 Only the backend session ID and opaque resume token are stored in `sessionStorage`. Conversation state, plans, confirmations, and receipts remain authoritative on the backend.
+
+For nonce-based Content Security Policy, pass the response nonce as `ui.styleNonce`. Allow the Mia backend and returned Gemini Live WebSocket endpoint in `connect-src`; the SDK does not require `unsafe-eval`.
 
 ## Voice
 

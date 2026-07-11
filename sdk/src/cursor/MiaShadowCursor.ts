@@ -81,13 +81,17 @@ export class MiaShadowCursor {
   private renderRaf: number | null = null;
   private lastFrameTs = 0;
 
-  mount(): void {
+  mount(styleNonce?: string): void {
     if (this.host) return;
     this.host = document.createElement("div");
     this.host.dataset.miaShadowCursor = "true";
     this.host.className = "mia-shadow-cursor-host";
     this.shadow = this.host.attachShadow({ mode: "open" });
     this.shadow.innerHTML = this.template();
+    const style = document.createElement("style");
+    if (styleNonce) style.nonce = styleNonce;
+    style.textContent = MIA_SHADOW_CURSOR_STYLES;
+    this.shadow.prepend(style);
     document.body.append(this.host);
 
     this.root = this.shadow.querySelector(".mia-root") as HTMLDivElement;
@@ -549,7 +553,6 @@ export class MiaShadowCursor {
 
   private template(): string {
     return `
-      <style>${MIA_SHADOW_CURSOR_STYLES}</style>
       <div class="mia-root" data-state="idle" data-nav-mode="followingCursor">
         <div class="mia-cursor">
           <div class="mia-cursor-inner"></div>

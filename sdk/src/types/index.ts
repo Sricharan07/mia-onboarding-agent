@@ -219,6 +219,7 @@ export type MiaOptions = {
     cursorOffset?: { x: number; y: number };
     bubbleMaxWidth?: number;
     bubbleLingerMs?: number;
+    styleNonce?: string;
   };
   onEvent?: (event: MiaEvent) => void;
 };

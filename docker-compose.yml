@@ -1,71 +1,74 @@
+name: mia
+
 services:
+  postgres:
+    image: pgvector/pgvector:pg17@sha256:d2ef61f42ef767baa5a1475393303cc235bcd92febd9d7014eddb48b41f3bad0
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mia}
+      POSTGRES_DB: ${POSTGRES_DB:-mia}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD to a unique high-entropy value}
+    volumes:
+      - mia-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
   mia-backend:
     build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
       NODE_ENV: production
       BACKEND_HOST: 0.0.0.0
       BACKEND_PORT: 4000
       TRUST_PROXY: ${TRUST_PROXY:-false}
-      CORS_ORIGIN: "${CORS_ORIGIN:?Set CORS_ORIGIN to the console and host app origins}"
-      DATABASE_URL: file:/app/data/sqlite/local.db
+      CORS_ORIGIN: ${CORS_ORIGIN:?Set CORS_ORIGIN to the console and host product origins}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-mia}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mia}
+      DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-20}
       LOCAL_UPLOAD_DIR: /app/data/uploads
-      LOCAL_TTS_DIR: /app/data/tts
       CONSOLE_DIST_DIR: /app/backend/console/dist
-      MIA_SECRET_ENCRYPTION_KEY: ${MIA_SECRET_ENCRYPTION_KEY:-}
-      BOOTSTRAP_ADMIN_TOKEN: ${BOOTSTRAP_ADMIN_TOKEN:-}
+      MIA_SECRET_ENCRYPTION_KEY: ${MIA_SECRET_ENCRYPTION_KEY:?Set MIA_SECRET_ENCRYPTION_KEY to at least 32 characters}
+      SETUP_TOKEN: ${SETUP_TOKEN:?Set SETUP_TOKEN to at least 32 characters for first-run setup}
       CONSOLE_SESSION_TTL_SECONDS: ${CONSOLE_SESSION_TTL_SECONDS:-28800}
-      CONSOLE_AUTH_RATE_LIMIT_MAX: ${CONSOLE_AUTH_RATE_LIMIT_MAX:-8}
       RATE_LIMIT_WINDOW_MS: ${RATE_LIMIT_WINDOW_MS:-60000}
       RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-300}
+      RUNTIME_RATE_LIMIT_MAX: ${RUNTIME_RATE_LIMIT_MAX:-180}
       RUNTIME_TOKEN_TTL_SECONDS: ${RUNTIME_TOKEN_TTL_SECONDS:-900}
       RUNTIME_TOKEN_MAX_USES: ${RUNTIME_TOKEN_MAX_USES:-2000}
-      RUNTIME_RATE_LIMIT_MAX: ${RUNTIME_RATE_LIMIT_MAX:-180}
-      APP_RATE_LIMIT_MAX: ${APP_RATE_LIMIT_MAX:-1200}
-      APP_VOICE_RATE_LIMIT_MAX: ${APP_VOICE_RATE_LIMIT_MAX:-120}
+      TRANSCRIPT_RETENTION_DAYS: ${TRANSCRIPT_RETENTION_DAYS:-30}
       DATA_RETENTION_SWEEP_INTERVAL_MS: ${DATA_RETENTION_SWEEP_INTERVAL_MS:-3600000}
-      WORKFLOW_VIDEO_MAX_BYTES: ${WORKFLOW_VIDEO_MAX_BYTES:-52428800}
-      PROVIDER_REQUEST_TIMEOUT_MS: ${PROVIDER_REQUEST_TIMEOUT_MS:-60000}
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-52428800}
+      PROVIDER_REQUEST_TIMEOUT_MS: ${PROVIDER_REQUEST_TIMEOUT_MS:-90000}
       PROVIDER_RETRY_ATTEMPTS: ${PROVIDER_RETRY_ATTEMPTS:-3}
-      PROVIDER_RESPONSE_MAX_BYTES: ${PROVIDER_RESPONSE_MAX_BYTES:-10485760}
       SHUTDOWN_GRACE_PERIOD_MS: ${SHUTDOWN_GRACE_PERIOD_MS:-30000}
-      GEMINI_LIVE_TOKEN_RATE_LIMIT_MAX: ${GEMINI_LIVE_TOKEN_RATE_LIMIT_MAX:-30}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_BASE_URL: ${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com}
-      GEMINI_TEXT_MODEL: ${GEMINI_TEXT_MODEL:-gemini-2.5-flash}
-      GEMINI_VISION_MODEL: ${GEMINI_VISION_MODEL:-gemini-2.5-flash}
+      GEMINI_PLANNER_MODEL: ${GEMINI_PLANNER_MODEL:-gemini-3.5-flash}
+      GEMINI_VISION_MODEL: ${GEMINI_VISION_MODEL:-gemini-3.5-flash}
+      GEMINI_EMBEDDING_MODEL: ${GEMINI_EMBEDDING_MODEL:-gemini-embedding-2}
+      GEMINI_EMBEDDING_DIMENSIONS: 768
       GEMINI_LIVE_MODEL: ${GEMINI_LIVE_MODEL:-gemini-3.1-flash-live-preview}
       GEMINI_TOKEN_TTL_SECONDS: ${GEMINI_TOKEN_TTL_SECONDS:-1800}
       GEMINI_NEW_SESSION_TTL_SECONDS: ${GEMINI_NEW_SESSION_TTL_SECONDS:-60}
-      QWEN_API_KEY: ${QWEN_API_KEY:-}
-      QWEN_TTS_BASE_URL: ${QWEN_TTS_BASE_URL:-}
-      QWEN_TTS_ENDPOINT: ${QWEN_TTS_ENDPOINT:-/services/aigc/multimodal-generation/generation}
-      QWEN_VOICE_MODEL: ${QWEN_VOICE_MODEL:-}
-      QWEN_TTS_AUDIO_ORIGINS: ${QWEN_TTS_AUDIO_ORIGINS:-}
-      LIVEKIT_URL: ${LIVEKIT_URL:-}
-      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-}
-      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
-      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
-      OPENAI_EMBEDDING_DIMENSIONS: ${OPENAI_EMBEDDING_DIMENSIONS:-1536}
-      SEMANTIC_INDEX_DIR: /app/data/lancedb
-      UI_SCAN_AUTH_MODE: ${UI_SCAN_AUTH_MODE:-none}
-      UI_SCAN_LOGIN_URL: ${UI_SCAN_LOGIN_URL:-}
-      UI_SCAN_USERNAME: ${UI_SCAN_USERNAME:-}
-      UI_SCAN_PASSWORD: ${UI_SCAN_PASSWORD:-}
-      UI_SCAN_USERNAME_SELECTOR: ${UI_SCAN_USERNAME_SELECTOR:-}
-      UI_SCAN_PASSWORD_SELECTOR: ${UI_SCAN_PASSWORD_SELECTOR:-}
-      UI_SCAN_SUBMIT_SELECTOR: ${UI_SCAN_SUBMIT_SELECTOR:-}
-      UI_SCAN_SUCCESS_URL_PATTERN: ${UI_SCAN_SUCCESS_URL_PATTERN:-}
-      UI_SCAN_POST_LOGIN_WAIT_MS: ${UI_SCAN_POST_LOGIN_WAIT_MS:-1000}
       UI_SCAN_HEADLESS: "true"
       UI_SCAN_ALLOW_PRIVATE_NETWORKS: ${UI_SCAN_ALLOW_PRIVATE_NETWORKS:-false}
-      UI_SCAN_ALLOWED_RESOURCE_ORIGINS: ${UI_SCAN_ALLOWED_RESOURCE_ORIGINS:-}
     ports:
-      - "4000:4000"
+      - "${MIA_PORT:-4000}:4000"
     volumes:
-      - mia-data:/app/data
+      - mia-uploads:/app/data/uploads
+    tmpfs:
+      - /tmp:size=1g
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
 
 volumes:
-  mia-data:
+  mia-postgres:
+  mia-uploads:

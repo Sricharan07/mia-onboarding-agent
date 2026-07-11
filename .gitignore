@@ -9,10 +9,7 @@ build/
 .next/
 .vite/
 coverage/
-data/sqlite/
-data/uploads/
-data/tts/
-data/lancedb/
+data/
 backend/data/
 *.tsbuildinfo
 

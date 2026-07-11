@@ -1,100 +1,203 @@
 # Troubleshooting
 
-## Backend Fails To Start
+## Backend Does Not Start
 
-- In production, `CORS_ORIGIN` must be an explicit comma-separated origin list.
-- Check required provider keys for the features you are using.
-- Ensure the SQLite directory is writable.
-- Ensure `MIA_SECRET_ENCRYPTION_KEY` is set before saving per-app scan passwords.
-
-Run:
+Check structured container logs first:
 
 ```bash
-npm run dev:backend
-curl http://localhost:4000/api/v1/health
-curl -H "authorization: Bearer $ADMIN_API_KEY" http://localhost:4000/api/v1/system/readiness
+docker compose logs --tail=200 mia-backend postgres
+docker compose config
 ```
 
-## Console Cannot Reach Backend
+Common causes:
 
-- For Docker, open the console at the backend origin, for example `http://localhost:4000/`.
-- For Vite development, set `VITE_MIA_BACKEND_URL=http://localhost:4000` in `backend/console/.env`.
-- Confirm the backend URL saved in Settings is correct.
-- Confirm the backend CORS origin list includes the console origin.
+- `DATABASE_URL` is not PostgreSQL or the password does not match the database container.
+- PostgreSQL is unavailable or the role cannot create/use the `vector` extension.
+- Production `CORS_ORIGIN` is `*`, malformed, contains a path, or uses non-local HTTP.
+- `MIA_SECRET_ENCRYPTION_KEY` is missing or shorter than 32 characters.
+- An empty production database has no valid `SETUP_TOKEN`.
+- `LOCAL_UPLOAD_DIR` is not writable.
 
-## First Admin Setup Fails
+Check liveness and readiness separately:
 
-- Set `BOOTSTRAP_ADMIN_TOKEN`.
-- Send the same value as `x-bootstrap-admin-token`.
-- In production, use at least 32 characters for both `BOOTSTRAP_ADMIN_TOKEN` and `MIA_SECRET_ENCRYPTION_KEY`.
-- Use a password with at least 12 characters.
-- If an admin already exists, use the login screen instead of setup.
+```bash
+curl -i http://localhost:4000/api/v1/health
+curl -i http://localhost:4000/api/v1/ready
+```
 
-## SDK Requests Return 401 Or 403
+`health` can be healthy while `ready` returns `503` for a database outage.
 
-- `401 RUNTIME_TOKEN_REQUIRED`: `tokenProvider` did not supply a runtime token.
-- `401 INVALID_RUNTIME_TOKEN`: the token is malformed or unknown.
-- `401 RUNTIME_TOKEN_REVOKED`, `RUNTIME_TOKEN_EXPIRED`, or `RUNTIME_TOKEN_EXHAUSTED`: request a fresh token from the trusted host backend.
-- `403 RUNTIME_CAPABILITY_FORBIDDEN`: mint the token with the capability required by the operation.
-- `403 RUNTIME_TOKEN_APP_FORBIDDEN`: the token and SDK `appId` do not match.
-- `403 RUNTIME_TOKEN_ORIGIN_FORBIDDEN`: mint the token for the exact host-app origin and include that origin on the server integration key.
+## PostgreSQL Migration Fails
+
+- Confirm the database is dedicated to Mia and the role can create tables, indexes, and `CREATE EXTENSION vector`.
+- Confirm the installed pgvector supports HNSW indexes and `VECTOR(768)`.
+- Do not edit or delete rows from `schema_migrations` to force startup.
+- Restore the pre-upgrade backup before retrying a failed production migration.
+
+Integration tests intentionally refuse to reset a database whose name does not contain `test`.
+
+## First-Run Setup Fails
+
+- `SETUP_TOKEN_NOT_CONFIGURED`: configure a high-entropy token and restart an empty production deployment.
+- `SETUP_TOKEN_INVALID`: enter the exact deployment token; surrounding whitespace is significant.
+- `SETUP_COMPLETE`: the singleton administrator already exists; use sign in.
+- `PASSWORD_TOO_SHORT`: use at least 12 characters.
+- `ORIGIN_INVALID`: use one exact HTTPS origin without a path/query/fragment, or localhost HTTP for development.
+
+No default administrator credentials exist.
+
+## Console Cannot Reach The Backend
+
+The production console is served by the backend at `/`. For Vite development, set:
+
+```bash
+VITE_MIA_BACKEND_URL=http://localhost:4000
+```
+
+Then verify the console origin is listed in `CORS_ORIGIN`. Inspect the browser Network panel for the JSON error envelope. A stale `mia:v1:admin-session` value in `sessionStorage` is cleared automatically after a `401`; sign in again.
+
+## Gemini Is Not Ready
+
+- Configure the key under Setup/Settings or set `GEMINI_API_KEY` in the backend environment.
+- An environment key takes precedence; remove it from the deployment before trying to clear the console-stored key.
+- Confirm outbound HTTPS/WebSocket access to the configured Gemini endpoint.
+- Keep the locked planner, embedding dimension `768`, and Live model settings aligned.
+- `GEMINI_RESPONSE_INVALID` means structured output remained invalid after bounded correction retries. Inspect the Run's sanitized provider attempts and retry the user turn.
+- `GEMINI_EMBEDDING_INVALID` commonly means an incompatible embedding model/dimension or incomplete provider response.
+
+Provider keys are never sent to the browser.
+
+## Runtime Token Returns 401 Or 403
+
+- `INTEGRATION_KEY_REQUIRED`: the trusted host endpoint omitted `x-mia-key`.
+- `INTEGRATION_KEY_INVALID`: replace a malformed, revoked, or origin-invalid key from Settings.
+- `RUNTIME_TOKEN_REQUIRED` / `RUNTIME_TOKEN_INVALID`: `tokenProvider` returned no valid `mia_rt_...` token.
+- `RUNTIME_TOKEN_EXPIRED` / `RUNTIME_TOKEN_EXHAUSTED`: request a fresh token.
+- `RUNTIME_CAPABILITY_FORBIDDEN`: mint `agent:run`, `events:write`, or `voice:live` as required.
+- `RUNTIME_ORIGIN_FORBIDDEN`: the browser origin, product origin, integration-key origin, and token request origin must match exactly, including scheme and port.
+
+Do not solve token errors by exposing the integration key in the browser.
+
+## Mia Answers But Does Not Point
+
+1. Open Runs and confirm the turn produced a `point`, `highlight`, or `scroll_to` directive rather than an answer-only decision.
+2. Confirm the target reference names a current observation node or mapped element.
+3. Ensure the control has an accessible name and is visible, enabled, and not covered by another element.
+4. Add a stable `data-mia-key` to important controls, then rescan.
+5. Confirm private-region selectors are not redacting the target unintentionally.
+6. Rebuild/reload the host app so it uses the current SDK package and CSS.
+
+The UI map helps retrieval and policy, but Mia will not point at a stale target absent from the live page.
+
+## Mia Says It Cannot Click Or Act
+
+- Check **Actions & Safety**. A host action must be detected, reviewed, and published after its latest manifest hash.
+- Check the UI map policy. `guide_only`, `manual`, or `blocked` controls cannot be mutated automatically.
+- A click/fill/select/toggle is a reversible write and waits for exact approval. Approve or decline the visible pending confirmation before starting another turn.
+- Protected targets such as passwords, payment fields, file inputs, CAPTCHA, and WebAuthn remain manual.
+- Delete, send, publish, approve, pay, transfer, external communication, and irreversible submit requests are intentionally blocked.
+- Inspect the action receipt. `unverified` means the SDK could not prove the expected focus/value/state/route/DOM change; fix product semantics or the host receipt rather than bypassing verification.
+
+The cursor is Mia's separate visual cursor. The browser does not allow an SDK to move the user's physical pointer or create trusted native events.
+
+## Mia Repeats An Action
+
+The agent stops after three matching loop signatures or three consecutive failed/unverified attempts. A repeated target usually means the product did not expose the expected result.
+
+- Return specific host-action evidence such as record ID and resulting state.
+- Make the new DOM state observable through accessible value, checked/selected/expanded state, route, or meaningful text.
+- Avoid actions whose success response arrives before the product state updates; resolve the executor only after the state is durable.
+- Inspect completion-judge evidence in Runs.
+
+## Confirmation Is Stuck Or Rejected
+
+- Confirm the session has not been reloaded with a value-bearing action; unsafe pending values are cancelled on reload.
+- Confirm the approval arrived before the five-minute expiry.
+- Use the current opaque binding only once and with the current session revision.
+- Do not start a second turn while confirmation is pending.
+- Voice approval must clearly approve or decline the exact prompt; otherwise use the visible controls.
+
+## Voice Does Not Start
+
+- Voice must be enabled in the SDK and product settings.
+- Use HTTPS or localhost and grant microphone permission.
+- The runtime token needs `voice:live`.
+- Allow the returned Gemini WebSocket endpoint in CSP `connect-src` and network egress.
+- Check browser `Permissions-Policy`; a parent frame may deny microphone access.
+- `Aoede` is the default feminine voice. If another voice is heard, inspect the SDK configuration and deployed bundle rather than relying on a stale development process.
+
+For push-to-talk, hold `Control+Space`. Releasing either key, switching tabs, or losing window focus pauses the microphone. Open-mic mode remains active until **Stop voice**.
+
+## Voice Ends Or Reconnects Repeatedly
+
+- Inspect Runs/runtime events for `voice_started`, provider errors, and token expiry.
+- Confirm system time is correct; ephemeral token validity is time-sensitive.
+- Check WebSocket proxies, idle timeouts, and provider reachability.
+- Do not cache a voice token across sessions. The SDK requests a new ephemeral token when connecting.
+- Emergency stop intentionally ends speech and active transport.
+
+## Knowledge URL Fails
+
+- Documentation must use HTTPS and an administrator-approved origin.
+- Redirects must remain approved and pass DNS/SSRF checks.
+- Private, loopback, link-local, reserved, and metadata endpoints are blocked.
+- The server must return supported text/HTML content within size and page limits.
+- Review `DOCUMENT_*` error details in Knowledge and retry after fixing the source.
+
+## Document Or Recording Upload Fails
+
+- Documents support Markdown, text, and PDF with matching content/extension.
+- Recordings must use a supported media type accepted by the Gemini file path.
+- Files must be nonempty and at or below `MAX_UPLOAD_BYTES`.
+- Confirm the upload volume is writable and has free space.
+- A recording produces a skill requiring review; it does not immediately become executable.
 
 ## UI Scan Fails
 
-- Run preflight from the UI Map page and fix every failing check first.
-- Use Discover routes in the UI Map route workbench when a product has many pages or side-navigation links.
-- Watch the scan progress panel; a running scan reports captured routes, indexed elements, and selector quality as it advances.
-- Confirm the app base URL is reachable from the backend host or container.
-- Confirm routes stay on the configured app origin.
-- For authenticated scans, verify login selectors and use a dedicated test account.
-- In production, private and reserved target networks are blocked before navigation and on Playwright page requests unless `UI_SCAN_ALLOW_PRIVATE_NETWORKS=true`.
+- Confirm the product origin is reachable from the backend/container.
+- Routes must be same-origin and non-destructive.
+- For login-form scanning, provide login URL, username, password, username/password/submit selectors, and optional success pattern.
+- Use a dedicated least-privilege scanner account.
+- Private/reserved product networks require an intentional `UI_SCAN_ALLOW_PRIVATE_NETWORKS=true` deployment.
+- Cross-origin assets must be listed in scan access settings.
+- Duplicate visible labels are allowed, but add stable product keys when a control needs reliable policy/targeting.
 
-## Interactive Scan Browser Does Not Appear
+The scanner runs headless in Docker. Set `UI_SCAN_HEADLESS=false` only for local debugging.
 
-For local interactive mapping, set:
+## SDK Panel Or Cursor Has No Styles
 
-```bash
-UI_SCAN_HEADLESS=false
+A strict CSP may block injected Shadow DOM styles. Generate a style nonce in the host response, allow it in `style-src`, and pass:
+
+```ts
+ui: { styleNonce: cspNonce }
 ```
 
-Docker compose sets `UI_SCAN_HEADLESS=true`, which is better for server deployments. Run local development mode when you need a visible browser for manual login or state capture.
+Also allow the Mia backend and Gemini Live WebSocket in `connect-src`. The SDK does not require `unsafe-eval`.
 
-## Workflow Video Upload Fails
+## Reload Does Not Resume
 
-Supported uploads are MP4, MOV, WebM, MKV, and MPEG. The backend validates MIME type, filename extension, container signature, and `WORKFLOW_VIDEO_MAX_BYTES`. Re-export or compress the recording if the file is too large or if the content does not match the claimed video type.
+The SDK stores only a session ID and resume token in `sessionStorage`, scoped by backend URL. Resume will fail after user identity changes, backend URL changes, token loss, session cancellation, or invalid resume binding. The SDK clears invalid state and creates a new session.
 
-## Workflow Processing Fails
-
-- Confirm `GEMINI_API_KEY` is set.
-- Check `/api/v1/system/readiness` with a console admin session token or admin API key.
-- Confirm the uploaded file exists in persistent storage.
-- Review the workflow job error in the console.
-
-## Semantic Search Or Runtime Resolution Is Weak
-
-- Confirm `OPENAI_API_KEY` is set.
-- Rebuild the app semantic index after new scans or workflow imports.
-- Review UI element descriptions and tags in the UI Map detail page.
-- Publish only workflows that pass review without safety blockers.
-
-## Mia Talks But Does Not Point Or Act
-
-- Open Console -> Test Mia and run a prompt such as `Where is the stage filter?` or `Click the stage filter`.
-- If Test Mia cannot find a target, rescan or review the UI map until the element has a medium or strong selector.
-- If Test Mia finds a target but the host app does not move the cursor, ask from the SDK assistant panel and inspect Console -> Logs for `runtime_resolution`, `voice_resolution`, and `element_action_completed`, `element_action_unverified`, or `element_action_failed`.
-- Keep `privacy.redactText: true` for production by default, but provide stable labels/selectors for controls Mia should understand.
-- Enable screen sharing only when the DOM cannot describe the surface, such as canvas charts, images, videos, PDFs, or custom-rendered UI.
+Do not copy session storage across users or persist it in local storage.
 
 ## Docker Data Disappeared
 
-The compose setup stores runtime state in the `mia-data` volume. If data disappears, confirm the same Docker volume is attached and that no cleanup command removed it.
-
-## Verification Fails Locally
-
-Run the failing command directly:
+Confirm the same `mia-postgres` and `mia-uploads` volumes are attached:
 
 ```bash
-npm run test
+docker volume ls | grep mia
+docker compose ps
+```
+
+`docker compose down --volumes` intentionally deletes both stores. Restore PostgreSQL and uploads from the same backup set using [Database operations](database.md).
+
+## Verification Fails
+
+Run the first failing gate directly:
+
+```bash
+MIA_TEST_DATABASE_URL=postgres://mia:password@127.0.0.1:5432/mia_test npm --workspace backend test
+npm --workspace sdk test
 npm run build
 npm run build:console
 npm run build:demo
@@ -102,4 +205,4 @@ npm run audit:prod
 npm run pack:sdk
 ```
 
-Fix the first failing command before rerunning `npm run verify`.
+Do not ignore a failing test, audit, package check, Docker readiness check, or live acceptance scenario.

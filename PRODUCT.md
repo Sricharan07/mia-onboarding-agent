@@ -1,33 +1,60 @@
 # Product
 
-## Register
+## Purpose
 
-product
+Mia gives an existing web product an intelligent in-app helper that can answer questions, guide users through unfamiliar UI, and complete approved reversible work. The product team self-hosts the backend and console; end users interact with Mia inside the product through the browser SDK.
+
+## v1 Deployment Shape
+
+- One product and one exact production origin.
+- One administrator.
+- One Gemini provider architecture.
+- One persisted agent shared by text and voice.
+- One session's memory only; no cross-session personal memory.
+- Embedded SDK only; no extension, arbitrary websites, tabs, operating-system control, or physical pointer control.
+
+This narrow shape is deliberate. It removes tenancy and compatibility complexity from the safety-sensitive path.
 
 ## Users
 
-Mia is for product and engineering teams that want to add an AI onboarding and in-app assistance cursor to an existing web application. The primary operator is a self-hosted admin who configures one or more customer apps, scans their UI, reviews generated workflows, creates app-bound server integration keys, and verifies the live SDK inside the customer app.
+### Product administrator
 
-## Product Purpose
+The administrator configures Gemini, product origin, redaction, documentation, scan access, runtime keys, host-action policy, skills, transcripts, and retention. They validate the real SDK through Q&A, pointing, navigation, confirmed mutation, and voice scenarios, then diagnose runs from evidence rather than opaque logs.
 
-Mia provides a browser SDK and self-hosted backend/console that lets a host product guide users through onboarding flows, answer questions about the current screen, and run approved workflow steps safely. Success means a customer can install the SDK, map their own web app, publish reviewed workflows, and observe runtime behavior without relying on hosted Mia infrastructure.
+### Product user
 
-## Brand Personality
+The product user asks naturally by text or voice. Mia answers when an answer is enough, points when orientation is enough, navigates when the destination is clear, asks for missing input when needed, and requests an exact confirmation before a reversible change. The user can interrupt, decline, stop, or close Mia at any time.
 
-Practical, trustworthy, and precise. The interface should feel like an operational control plane for a safety-sensitive SDK, not a marketing demo or CRM dashboard.
+### Host-product engineer
 
-## Anti-references
+The engineer installs the framework-neutral ESM SDK, creates a trusted server token exchange, registers reviewed host actions and context providers, defines privacy boundaries, and supplies optional semantic or visual context for custom-rendered surfaces.
 
-Avoid CRM-specific defaults, mock dashboards, decorative AI assistant pages, mystery setup tokens, raw JSON-first review, and flows that require reading repository docs before the console becomes usable.
+## Product Principles
 
-## Design Principles
+- **Reason first, constrain always.** Gemini chooses the useful response; deterministic code enforces identity, policy, targets, schemas, confirmation, limits, idempotency, and verification.
+- **Live UI is truth.** UI maps and skills help reasoning, but the current semantic observation determines what exists now.
+- **Do the least risky useful thing.** Answer or point when action is unnecessary. Ask before reversible change. Block irreversible operations.
+- **One conversation across modalities.** Voice and text share goal, context, policies, receipts, and completion judgment.
+- **Evidence over confidence.** Mia claims completion only after verified UI state or a structured host receipt.
+- **Privacy before context.** Secrets and private regions are removed before provider or diagnostic boundaries.
+- **Operational clarity.** The console always shows the next setup task, effective safety policy, and enough run evidence to explain behavior.
 
-- Guide activation from inside the console: first-run users should always see the next setup step.
-- Treat scans and workflows as safety-sensitive operations: show preflight, privacy, selector quality, and review blockers before execution or publishing.
-- Keep self-hosted operations explicit: surface env names, secret storage status, provider readiness, and admin/session controls.
-- Make SDK handoff concrete: generated keys should immediately produce installable initialization code.
-- Prefer dense, predictable product UI over decorative surfaces.
+## Success Criteria
 
-## Accessibility & Inclusion
+Mia is successful when a new operator can start an empty deployment, configure one product without external assistance, install the package without repository coupling, and repeatedly pass these live scenarios:
 
-Target WCAG 2.1 AA for the console. All status changes must be textual, keyboard-accessible, and announced when they affect task progress. Motion must be state-driven and disabled or simplified for reduced-motion users.
+- grounded product Q&A;
+- visible pointing to the correct control;
+- approved same-origin navigation;
+- confirmed draft creation or reversible edit;
+- equivalent text and voice behavior;
+- reload recovery and emergency stop;
+- safe refusal of protected operations.
+
+## Non-Goals For v1
+
+- Multi-product or multi-tenant administration.
+- Cross-session personalization or autonomous background work.
+- Arbitrary JavaScript, arbitrary selectors, cross-origin browsing, or OS automation.
+- Automatic file, credential, payment, CAPTCHA, WebAuthn, delete, send, publish, approve, pay, external communication, or irreversible submit operations.
+- Deterministic intent classifiers or fixed workflow script execution.

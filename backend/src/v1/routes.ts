@@ -227,20 +227,20 @@ export async function registerV1Routes(app: FastifyInstance, dependencies: V1App
 
   app.get("/api/v1/knowledge", async (request) => {
     await requireAdmin(request, dependencies);
-    return { items: await dependencies.repositories.knowledge.listSources() };
+    return { items: (await dependencies.repositories.knowledge.listSources()).map(withoutFilePath) };
   });
   app.post("/api/v1/knowledge/urls", async (request) => {
     await requireAdmin(request, dependencies);
-    return dependencies.knowledge.createDocumentationSource(parseWithSchema(documentationSourceSchema, request.body));
+    return withoutFilePath(await dependencies.knowledge.createDocumentationSource(parseWithSchema(documentationSourceSchema, request.body)));
   });
   app.post("/api/v1/knowledge/files", async (request) => {
     await requireAdmin(request, dependencies);
     const upload = await storeMultipartUpload(request, dependencies.config.LOCAL_UPLOAD_DIR, "document", dependencies.config.MAX_UPLOAD_BYTES);
     try {
-      return await dependencies.knowledge.createDocumentFileSource({
+      return withoutFilePath(await dependencies.knowledge.createDocumentFileSource({
         ...upload,
         name: upload.fields.name?.trim() || upload.originalName
-      });
+      }));
     } catch (error) {
       await removeStoredUpload(upload.filePath);
       throw error;
@@ -249,12 +249,12 @@ export async function registerV1Routes(app: FastifyInstance, dependencies: V1App
   app.post("/api/v1/knowledge/:id/retry", async (request) => {
     await requireAdmin(request, dependencies);
     const { id } = parseWithSchema(z.object({ id: z.string().min(1).max(200) }), request.params);
-    return dependencies.knowledge.retrySource(id);
+    return withoutFilePath(await dependencies.knowledge.retrySource(id));
   });
   app.delete("/api/v1/knowledge/:id", async (request) => {
     await requireAdmin(request, dependencies);
     const { id } = parseWithSchema(z.object({ id: z.string().min(1).max(200) }), request.params);
-    return dependencies.repositories.knowledge.archiveSource(id);
+    return withoutFilePath(await dependencies.repositories.knowledge.archiveSource(id));
   });
 
   app.get("/api/v1/skills", async (request) => {
@@ -279,17 +279,17 @@ export async function registerV1Routes(app: FastifyInstance, dependencies: V1App
 
   app.get("/api/v1/recordings", async (request) => {
     await requireAdmin(request, dependencies);
-    return { items: await dependencies.repositories.knowledge.listRecordings() };
+    return { items: (await dependencies.repositories.knowledge.listRecordings()).map(withoutFilePath) };
   });
   app.post("/api/v1/recordings", async (request) => {
     await requireAdmin(request, dependencies);
     const upload = await storeMultipartUpload(request, dependencies.config.LOCAL_UPLOAD_DIR, "recording", dependencies.config.MAX_UPLOAD_BYTES);
     try {
-      return await dependencies.knowledge.createRecording({
+      return withoutFilePath(await dependencies.knowledge.createRecording({
         ...upload,
         name: upload.fields.name?.trim() || upload.originalName,
         description: upload.fields.description?.trim() || undefined
-      });
+      }));
     } catch (error) {
       await removeStoredUpload(upload.filePath);
       throw error;
@@ -299,7 +299,7 @@ export async function registerV1Routes(app: FastifyInstance, dependencies: V1App
     await requireAdmin(request, dependencies);
     const { id } = parseWithSchema(z.object({ id: z.string().min(1).max(200) }), request.params);
     void dependencies.knowledge.processRecording(id).catch(() => undefined);
-    return dependencies.repositories.knowledge.getRecording(id);
+    return withoutFilePath(await dependencies.repositories.knowledge.getRecording(id));
   });
 
   app.get("/api/v1/scans", async (request) => {
@@ -498,4 +498,9 @@ function originSchema() {
     }
     return url.origin;
   });
+}
+
+function withoutFilePath<T extends { filePath: unknown }>(record: T): Omit<T, "filePath"> {
+  const { filePath: _filePath, ...safe } = record;
+  return safe;
 }

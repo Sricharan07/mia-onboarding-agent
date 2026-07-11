@@ -10,6 +10,22 @@ jobs:
   verify:
     name: Verify
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17@sha256:d2ef61f42ef767baa5a1475393303cc235bcd92febd9d7014eddb48b41f3bad0
+        env:
+          POSTGRES_USER: mia
+          POSTGRES_PASSWORD: mia-ci-database-password
+          POSTGRES_DB: mia_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mia -d mia_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      MIA_TEST_DATABASE_URL: postgres://mia:mia-ci-database-password@127.0.0.1:5432/mia_test
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -50,44 +66,51 @@ jobs:
       - name: Build SDK demo
         run: npm run build:demo
 
+      - name: Verify packaged SDK in an isolated demo
+        run: npm run verify:package-install
+
       - name: Audit SDK demo production dependencies
         run: npm --prefix example/demo-crm+sdk audit --omit=dev
 
   docker:
     name: Docker Smoke Test
     runs-on: ubuntu-latest
+    env:
+      COMPOSE_PROJECT_NAME: mia-ci
+      POSTGRES_PASSWORD: mia-ci-database-password
+      CORS_ORIGIN: http://localhost:4000,http://localhost:3000
+      MIA_SECRET_ENCRYPTION_KEY: mia-ci-encryption-key-with-32-characters
+      SETUP_TOKEN: mia-ci-setup-token-with-32-characters
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Build image
-        run: docker build -t mia-onboarding-agent:ci .
+      - name: Start an empty deployment
+        run: docker compose up --build --detach
 
-      - name: Start container
+      - name: Check readiness and first-run setup
         run: |
-          docker run --rm -d \
-            --name mia-onboarding-agent-ci \
-            -p 4000:4000 \
-            -e PORT=4000 \
-            -e CORS_ORIGIN=http://localhost:3000 \
-            -e BOOTSTRAP_ADMIN_TOKEN=ci-bootstrap-token-0000000000000001 \
-            -e MIA_SECRET_ENCRYPTION_KEY=ci-secret-encryption-key-0000000001 \
-            mia-onboarding-agent:ci
-
-      - name: Check health endpoint
-        run: |
-          for i in $(seq 1 30); do
-            if curl -fsS http://localhost:4000/api/v1/health; then
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:4000/api/v1/ready; then
               exit 0
             fi
-            sleep 1
+            sleep 2
           done
-          docker logs mia-onboarding-agent-ci
+          docker compose logs
           exit 1
+
+      - name: Complete secure first-run setup
+        run: |
+          curl -fsS http://localhost:4000/api/v1/setup/status | grep -q '"setupRequired":true'
+          curl -fsS -X POST http://localhost:4000/api/v1/setup \
+            -H 'content-type: application/json' \
+            --data '{"setupToken":"mia-ci-setup-token-with-32-characters","productName":"Mia CI Product","origin":"http://localhost:3000","adminEmail":"admin@example.com","adminName":"CI Admin","password":"mia-ci-admin-password"}' \
+            | grep -q '"token":"mia_admin_'
+          curl -fsS http://localhost:4000/api/v1/setup/status | grep -q '"setupRequired":false'
 
       - name: Check bundled console
         run: curl -fsS http://localhost:4000/ | grep -q '<div id="root">'
 
-      - name: Stop container
+      - name: Stop deployment
         if: always()
-        run: docker stop mia-onboarding-agent-ci || true
+        run: docker compose down --volumes --remove-orphans

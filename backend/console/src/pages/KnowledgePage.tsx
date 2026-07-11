@@ -93,7 +93,7 @@ export function KnowledgePage({ api, refreshNonce, notify }: { api: BackendApi; 
               </form>
             ) : null}
             {activeSources.length ? (
-              <div className="table-scroll"><table className="data-table"><thead><tr><th>Source</th><th>Type</th><th>Status</th><th>Indexed</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>{activeSources.map((source) => <tr key={source.id}><td><div className="table-primary"><strong>{source.name}</strong><span>{source.sourceUrl ?? source.filePath?.split("/").at(-1)}</span>{source.error ? <small className="text-danger">{source.error}</small> : null}</div></td><td>{source.kind === "documentation_url" ? <><Globe2 className="inline-icon" /> Website</> : <><FileText className="inline-icon" /> File</>}</td><td><StatusBadge value={source.status} /></td><td>{formatRelative(source.completedAt ?? source.updatedAt)}</td><td><div className="row-actions">{source.status === "failed" ? <Button size="sm" variant="quiet" disabled={busy} onClick={() => void perform(() => api.retryKnowledge(source.id), "Indexing restarted.")}><RefreshCw /> Retry</Button> : null}<Button size="sm" variant="quiet" onClick={() => setArchiveTarget(source)}><Archive /> Archive</Button></div></td></tr>)}</tbody></table></div>
+              <div className="table-scroll"><table className="data-table"><thead><tr><th>Source</th><th>Type</th><th>Status</th><th>Indexed</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>{activeSources.map((source) => <tr key={source.id}><td><div className="table-primary"><strong>{source.name}</strong><span>{source.sourceUrl ?? originalFileName(source)}</span>{source.error ? <small className="text-danger">{source.error}</small> : null}</div></td><td>{source.kind === "documentation_url" ? <><Globe2 className="inline-icon" /> Website</> : <><FileText className="inline-icon" /> File</>}</td><td><StatusBadge value={source.status} /></td><td>{formatRelative(source.completedAt ?? source.updatedAt)}</td><td><div className="row-actions">{source.status === "failed" ? <Button size="sm" variant="quiet" disabled={busy} onClick={() => void perform(() => api.retryKnowledge(source.id), "Indexing restarted.")}><RefreshCw /> Retry</Button> : null}<Button size="sm" variant="quiet" onClick={() => setArchiveTarget(source)}><Archive /> Archive</Button></div></td></tr>)}</tbody></table></div>
             ) : <EmptyState title="No product knowledge" detail="Add an approved HTTPS documentation site, Markdown file, text file, or PDF." />}
           </Section>
         </>
@@ -114,3 +114,7 @@ export function KnowledgePage({ api, refreshNonce, notify }: { api: BackendApi; 
 }
 
 const POLICIES: UiActionPolicy[] = ["guide_only", "navigate", "reversible_write", "manual", "blocked"];
+
+function originalFileName(source: KnowledgeSource): string {
+  return typeof source.metadata.originalName === "string" ? source.metadata.originalName : "Uploaded document";
+}

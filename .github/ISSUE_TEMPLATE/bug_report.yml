@@ -38,8 +38,10 @@ body:
         - Backend
         - Console
         - Browser SDK
-        - UI mapper
-        - Workflow processing
+        - Agent planning or verification
+        - Knowledge or skills
+        - UI scanner
+        - PostgreSQL or retrieval
         - Voice
         - Docker or deployment
         - Demo application

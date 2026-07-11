@@ -77,6 +77,28 @@ test("v1 HTTP API supports secure setup, runtime tokens, agent turns, and SSE", 
     const integrationKey = keyResponse.json<{ key: string }>().key;
     assert.match(integrationKey, /^mia_key_/);
 
+    const boundary = "mia-http-test-boundary";
+    const documentResponse = await app.inject({
+      method: "POST",
+      url: "/api/v1/knowledge/files",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "content-type": `multipart/form-data; boundary=${boundary}`
+      },
+      payload: multipartFile(boundary, "guide.txt", "text/plain", "Mia test product guide with enough indexable content.")
+    });
+    assert.equal(documentResponse.statusCode, 200, documentResponse.body);
+    assert.equal("filePath" in documentResponse.json<Record<string, unknown>>(), false);
+    assert.equal(documentResponse.body.includes(directory), false);
+    const sourcesResponse = await app.inject({
+      method: "GET",
+      url: "/api/v1/knowledge",
+      headers: { authorization: `Bearer ${adminToken}` }
+    });
+    const sources = sourcesResponse.json<{ items: Array<Record<string, unknown>> }>().items;
+    assert.equal(sources.some((source) => "filePath" in source), false);
+    assert.equal(sourcesResponse.body.includes(directory), false);
+
     const runtimeTokenResponse = await app.inject({
       method: "POST",
       url: "/api/v1/runtime/tokens",
@@ -304,4 +326,16 @@ function answer(message: string): PlannerDecision {
     actions: [],
     successEvidence: []
   };
+}
+
+function multipartFile(boundary: string, filename: string, mimeType: string, content: string): Buffer {
+  return Buffer.from([
+    `--${boundary}`,
+    `Content-Disposition: form-data; name="file"; filename="${filename}"`,
+    `Content-Type: ${mimeType}`,
+    "",
+    content,
+    `--${boundary}--`,
+    ""
+  ].join("\r\n"));
 }

@@ -1,9 +1,27 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { loadV1Config, validateSetupTokenForState } from "../src/v1/config.js";
 import { V1Database } from "../src/v1/db/database.js";
 import { V1Repositories } from "../src/v1/db/repositories.js";
 
 const databaseUrl = process.env.MIA_TEST_DATABASE_URL;
+
+test("production setup requires a strong token only until the singleton product exists", () => {
+  const base = {
+    NODE_ENV: "production",
+    CORS_ORIGIN: "https://mia.example.com,https://app.example.com",
+    DATABASE_URL: "postgres://mia:password@postgres:5432/mia",
+    MIA_SECRET_ENCRYPTION_KEY: "encryption-key-with-at-least-32-characters"
+  };
+  const configured = loadV1Config(base);
+  assert.doesNotThrow(() => validateSetupTokenForState(configured, true));
+  assert.throws(() => validateSetupTokenForState(configured, false), /SETUP_TOKEN/);
+  assert.throws(() => loadV1Config({ ...base, SETUP_TOKEN: "too-short" }), /SETUP_TOKEN/);
+  assert.doesNotThrow(() => validateSetupTokenForState(loadV1Config({
+    ...base,
+    SETUP_TOKEN: "setup-token-with-at-least-32-characters"
+  }), false));
+});
 
 test("v1 PostgreSQL foundation migrates and enforces singleton setup plus session revisions", {
   skip: databaseUrl ? false : "Set MIA_TEST_DATABASE_URL to run PostgreSQL integration tests."

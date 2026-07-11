@@ -1,106 +1,161 @@
 # Production Deployment
 
-This guide covers the supported self-hosted deployment shape: one Node.js 22 backend service that serves the console at `/`, API routes under `/api/v1`, SQLite state, local uploads and generated audio, and a local LanceDB semantic index.
+## Supported Topology
 
-The current persistence and coordination model supports one backend replica. Do not mount one SQLite data directory into concurrent backend replicas. A multi-replica deployment requires an external transactional database, shared runtime-token and rate-limit state, distributed job coordination, and shared object storage; an edge rate limiter alone is not sufficient.
+Mia v1 supports one backend process for one product. The process serves the administrator console, runtime API, knowledge workers, retention sweep, and Playwright scanner. PostgreSQL with pgvector and the upload directory are persistent dependencies.
 
-## Deployment Checklist
+Run one backend replica. Authentication and agent state are PostgreSQL-backed, but rate limiting and background-work coordination are process-local. Multiple replicas require a reviewed distributed limiter, job ownership/leases, shared object storage, and equivalent cancellation semantics.
 
-- Terminate TLS at a reverse proxy or load balancer.
-- Set `NODE_ENV=production`.
-- Set `CORS_ORIGIN` to explicit origins. Do not use `*` in production.
-- Set independent, stable, high-entropy values for `MIA_SECRET_ENCRYPTION_KEY` and `BOOTSTRAP_ADMIN_TOKEN`. Production requires at least 32 characters.
-- Provide `GEMINI_API_KEY` and `OPENAI_API_KEY` when using provider-backed workflow processing, semantic search, or voice.
-- Mount persistent storage for SQLite, uploads, generated audio, and LanceDB.
-- Create the first console admin, then rotate or remove the bootstrap token from the runtime environment.
-- Create app-bound server integration keys with allowed browser origins. Never ship an admin or integration key to a browser; mint short-lived runtime tokens from the trusted host backend.
-- Configure backups before onboarding real users.
-- Tune `CONSOLE_AUTH_RATE_LIMIT_MAX` and `WORKFLOW_VIDEO_MAX_BYTES` for the deployment size and reverse-proxy limits.
+Place the backend behind a TLS-terminating reverse proxy or managed ingress. The product SDK may be served by a different exact origin included in `CORS_ORIGIN`.
+
+## Required Configuration
+
+Production startup validates:
+
+- `NODE_ENV=production`;
+- PostgreSQL `DATABASE_URL` using `postgres:` or `postgresql:`;
+- explicit comma-separated `CORS_ORIGIN` entries, never `*`;
+- `MIA_SECRET_ENCRYPTION_KEY` with at least 32 characters;
+- `SETUP_TOKEN` with at least 32 characters when the database has not completed first-run setup.
+
+Generate independent hexadecimal values to avoid URL-encoding problems:
+
+```bash
+openssl rand -hex 32
+```
+
+Use separate outputs for PostgreSQL, encryption, and setup. Do not reuse provider or host integration credentials.
+
+The encryption key protects Gemini and scan credentials stored in PostgreSQL. Keep it stable, outside the database backup, and available on every restart. After setup, custom deployments may remove `SETUP_TOKEN`; the stock Compose file continues to require it so a newly recreated empty database cannot start with an unprotected setup endpoint. Rotating it is safe because setup is single-use.
 
 ## Docker Compose
 
 ```bash
 cp .env.example .env
-docker compose up --build
+# Fill POSTGRES_PASSWORD, MIA_SECRET_ENCRYPTION_KEY, SETUP_TOKEN, and CORS_ORIGIN.
+docker compose config
+docker compose up --build -d
+docker compose ps
+curl -fsS http://localhost:4000/api/v1/ready
 ```
 
-The compose file requires `CORS_ORIGIN` and stores all mutable runtime data in the `mia-data` volume:
+Compose waits for PostgreSQL, applies migrations, installs the `vector` extension, starts the non-root backend, and exposes the bundled console on `MIA_PORT` (default `4000`). It uses separate `mia-postgres` and `mia-uploads` volumes and a temporary filesystem for browser work.
 
-- SQLite database: `/app/data/sqlite/local.db`
-- Workflow video uploads: `/app/data/uploads`
-- Generated audio: `/app/data/tts`
-- Semantic index: `/app/data/lancedb`
+No administrator or database password is supplied by the repository. Compose fails configuration when required secrets are absent.
 
-The container listens on port `4000`. The console is available at `http://localhost:4000/`, and the health endpoint is `http://localhost:4000/api/v1/health`.
+## First-Run Setup
+
+Open the backend origin and enter:
+
+- deployment `SETUP_TOKEN`;
+- product name;
+- exact production origin that embeds the SDK;
+- administrator email and name;
+- a unique password of at least 12 characters.
+
+Setup creates the singleton product and administrator in one transaction. After success, repeated setup attempts are rejected. Configure Gemini in the Setup workflow or set `GEMINI_API_KEY` in the environment. An environment key takes precedence and cannot be removed through the console.
+
+Complete all eight readiness checks before production use:
+
+1. Product configured.
+2. Gemini connected.
+3. Runtime integration key created.
+4. Product knowledge indexed.
+5. UI map ready.
+6. SDK detected on the exact origin.
+7. Detected host actions reviewed.
+8. Q&A, pointing, navigation, confirmed mutation, and voice validation passed.
 
 ## Reverse Proxy
 
-Run MIA behind HTTPS. Forward the original host and protocol headers from the proxy. Set `TRUST_PROXY=true` only when the service is behind a trusted proxy that supplies correct forwarded headers.
+Forward HTTP and server-sent events without buffering. Preserve `Origin`, `Referer`, `Authorization`, `x-mia-key`, and forwarding headers. Set `TRUST_PROXY=true` only when requests always pass through a trusted proxy that sanitizes forwarding headers.
 
-Example origin settings:
+Representative Nginx location:
+
+```nginx
+location / {
+    proxy_pass http://mia-backend:4000;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header Origin $http_origin;
+    proxy_buffering off;
+    proxy_read_timeout 300s;
+}
+```
+
+Apply request-body limits at least as strict as `MAX_UPLOAD_BYTES`, protect the console with network or identity controls appropriate to the organization, and do not rewrite the SDK product origin.
+
+## CORS And Origins
+
+List the public backend/console origin and each exact host-product origin:
 
 ```bash
 CORS_ORIGIN=https://mia.example.com,https://app.example.com
 ```
 
-Include the console origin and every host application origin that will call the SDK APIs.
+Production non-local origins must use HTTPS and contain no path, credentials, query, or fragment. Runtime tokens are separately bound to the product origin. CORS is not authentication.
 
-## First Admin
+Changing the configured product origin revokes integration keys and runtime tokens. Create a new host key and update the trusted host token endpoint after an intentional origin migration.
 
-Create the first console admin from the console setup screen or with:
+## Gemini Models
 
-```bash
-curl -X POST https://mia.example.com/api/v1/console/auth/setup \
-  -H "content-type: application/json" \
-  -H "x-bootstrap-admin-token: $BOOTSTRAP_ADMIN_TOKEN" \
-  -d '{"name":"Admin","email":"admin@example.com","password":"long-random-password"}'
+Locked v1 defaults are:
+
+```text
+GEMINI_PLANNER_MODEL=gemini-3.5-flash
+GEMINI_VISION_MODEL=gemini-3.5-flash
+GEMINI_EMBEDDING_MODEL=gemini-embedding-2
+GEMINI_EMBEDDING_DIMENSIONS=768
+GEMINI_LIVE_MODEL=gemini-3.1-flash-live-preview
 ```
 
-After the first admin exists, bootstrap setup is closed by the backend. Rotate or remove `BOOTSTRAP_ADMIN_TOKEN` after setup.
+Changing the embedding model or dimensions requires a migration and full re-embedding. Do not point production model settings at incompatible previews without running the complete benchmark and voice acceptance suite.
 
-Generate secrets independently, for example with `openssl rand -hex 32`. Keep `MIA_SECRET_ENCRYPTION_KEY` stable across deploys and restores.
+## Storage And Resources
 
-## Data And Backups
+- Back up PostgreSQL and uploads together using [Database operations](database.md).
+- Size PostgreSQL for document chunks, UI-map elements, transcripts, and vector indexes.
+- Keep at least `MAX_UPLOAD_BYTES` plus extraction overhead free for each concurrent upload.
+- Playwright scanning requires shared memory and temporary disk. The stock container uses headless Chromium and a 1 GiB `/tmp` filesystem.
+- Do not mount the upload volume read-only; ingestion and recording processing need writes.
+- Restrict direct PostgreSQL access to the backend and operator network.
 
-Back up the entire persistent data directory or Docker volume. A complete backup must include:
+## Health And Monitoring
 
-- the SQLite database, including WAL files when present;
-- workflow video uploads;
-- generated audio;
-- the LanceDB semantic index.
+- `/api/v1/health` proves the process can answer HTTP.
+- `/api/v1/ready` returns `200` only when PostgreSQL is reachable and also reports `setupRequired` and `geminiConfigured`.
+- Container health checks use `/api/v1/ready`.
 
-For consistent SQLite backups, stop the container before copying the volume, or use SQLite's backup tooling against the live database. Restore by stopping the service, replacing the data directory or volume contents, and starting the same or newer application version.
+Monitor:
 
-## Upgrades
+- restarts, readiness failures, request latency, `429` and `5xx` rates;
+- PostgreSQL connections, storage, backup age, locks, and query latency;
+- provider errors, latency, and token usage in Runs/Overview;
+- failed knowledge sources, recordings, and UI scans;
+- repeated agent failures, loops, blocked actions, and confirmation denial rates;
+- upload-volume capacity and retention-sweep errors.
 
-Database migrations run automatically on backend startup. Before upgrading:
+Application logs are structured. Error payloads are sanitized before logging, but operators should still route logs to access-controlled storage and avoid enabling infrastructure request-body logging.
 
-- back up the persistent data volume;
-- read `CHANGELOG.md`;
-- deploy the new image;
-- check `/api/v1/health` and the admin-only `/api/v1/system/readiness`;
-- open the console and confirm the activation checklist still passes.
+## Scanner Network Policy
 
-The migration ledger is stored in the `schema_migrations` table. See [Database operations](database.md) for details.
+The scanner accepts only the configured product origin and administrator-approved HTTPS documentation origins. It resolves DNS, checks redirects and resources, and blocks private/reserved networks by default in production.
 
-## UI Scanning In Production
+Set `UI_SCAN_ALLOW_PRIVATE_NETWORKS=true` only when the backend is intentionally inside a trusted network and the target is owned. Use a dedicated least-privilege scan account. Redact secrets and private regions before scanning.
 
-Production scans reject private and reserved target networks by default. Keep `UI_SCAN_ALLOW_PRIVATE_NETWORKS=false` for public deployments. Set it to `true` only when MIA is intentionally deployed inside a trusted private network and is scanning owned private apps.
+## Shutdown And Upgrade
 
-Browser scans also enforce the target URL policy on Playwright requests, including redirects and page subresources. For high-risk public deployments, keep the scanner container on a network segment that cannot reach cloud metadata endpoints or unrelated private services.
+The backend handles `SIGTERM`/`SIGINT`, stops accepting work, closes scanner/knowledge workers, and drains PostgreSQL connections within `SHUTDOWN_GRACE_PERIOD_MS`.
 
-Use per-app scan profiles in the console instead of global `UI_SCAN_*` credentials. Saved per-app scan passwords require `MIA_SECRET_ENCRYPTION_KEY` and are encrypted at rest.
+Upgrade procedure:
 
-Use dedicated test or demo accounts for authenticated scans. Do not scan with broad production admin accounts unless that operational risk is explicitly accepted.
+1. Read `CHANGELOG.md` and migration notes.
+2. Back up PostgreSQL, uploads, and the encryption key.
+3. Build the exact release commit and run its verification suite.
+4. Stop the backend, keep PostgreSQL available, and start the new image.
+5. Wait for migrations and `/api/v1/ready`.
+6. Sign in, inspect Setup and Overview, then run one live Test Mia scenario.
 
-## Operations Checks
-
-Use these checks after deploys and before releases:
-
-```bash
-npm run verify
-curl https://mia.example.com/api/v1/health
-curl -H "authorization: Bearer $ADMIN_API_KEY" https://mia.example.com/api/v1/system/readiness
-```
-
-The readiness route reports database/config/provider status and requires a console admin session token or an admin API key. Provider checks that require credentials fail explicitly when keys are missing.
+Database migrations are forward-only. Rollback means restoring the pre-upgrade database and uploads together, then starting the previous image. Do not run an older binary against a newer schema unless that release explicitly documents compatibility.

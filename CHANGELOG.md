@@ -1,36 +1,48 @@
 # Changelog
 
-All notable changes to this project are documented here.
-
-This project follows the spirit of Keep a Changelog and uses semantic versioning once public releases begin.
+All notable changes to Mia are documented here. The project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and semantic versioning.
 
 ## Unreleased
 
+## 1.0.0 - 2026-07-10
+
 ### Added
 
-- Short-lived app, user, origin, capability, expiry, and use-bound browser runtime tokens.
-- Per-app quotas, privacy policies, retention sweeps, data export, purge, and per-user deletion.
-- Reviewed workflow target bindings, stale-map invalidation, structured locator reconciliation, and action-result verification.
-- Push-to-talk, resilient Gemini Live session refresh, explicit screen sharing, Qwen TTS, and optional LiveKit token support.
-- Live host-SDK readiness evidence, version-level paginated UI-map reads, and production readiness checks.
-- Versioned SQLite migrations, persistent generated audio, graceful shutdown, security headers, and non-root Docker execution.
-- Open-source governance, release, operations, API, SDK, security, database, and troubleshooting documentation.
-- Dependency updates, license attribution, Dependabot configuration, and CI container smoke tests.
+- One persisted Gemini observe-reason-act-verify agent for text and voice.
+- Semantic DOM and accessibility observation with open shadow-root and same-origin frame traversal.
+- A separate visible Mia cursor for pointing, highlighting, scrolling, and guided navigation.
+- Guarded DOM actions and reviewed JSON-schema host actions with idempotency keys and structured receipts.
+- Exact confirmation binding for reversible changes, including voice approval.
+- PostgreSQL and pgvector persistence with hybrid full-text and vector retrieval.
+- SSRF-protected documentation crawling, Markdown/text/PDF ingestion, Playwright UI scanning, and reviewed recording-to-skill generation.
+- Session revisioning, reload continuation, cancellation, verification, loop detection, three-failure recovery, and a 24-step ceiling.
+- Gemini Live voice with `Aoede`, open microphone, interruption, reconnection, and hold `Control+Space` push-to-talk.
+- Single-product administrator console with Setup, Overview, Knowledge, Skills, Actions & Safety, Test Mia, Runs, and Settings.
+- Runtime diagnostics for transcripts, model decisions, evidence, approvals, receipts, timing, token use, and errors.
+- Docker Compose deployment with pgvector PostgreSQL, persistent uploads, health/readiness checks, and secure first-run setup.
+- Framework-neutral ESM SDK package and a Next.js CRM integration with real reversible host actions.
 
 ### Changed
 
-- Reworked the console around app activation, route selection, selector review, workflow safety review, SDK handoff, runtime logs, usage, privacy, and admin operations.
-- Redesigned the end-user assistant panel with theme support, accessible controls, clear privacy state, and reduced-motion behavior.
-- Reduced initial console JavaScript through route-level loading and removed per-page UI-map request fan-out.
-- Minimized persisted runtime data and made execution telemetry event-only by default.
-- Rebranded and consolidated the SDK demo into one attributed sample application.
+- Replaced classifier routing and fixed workflow execution with model reasoning constrained by deterministic policy and validation.
+- Replaced SQLite and LanceDB with PostgreSQL full-text search and pgvector.
+- Unified text and voice on the same backend session, context, policies, receipts, and final judgment.
+- Reworked recordings into reviewed agent skills rather than brittle execution scripts.
+- Reduced the end-user assistant to transcript, input, microphone, stop, progress, and contextual confirmation/input controls.
+- Made live SDK observations the runtime source of truth while retaining UI maps as semantic memory and policy metadata.
+- Set every release component to version `1.0.0`.
 
 ### Security
 
-- Removed reusable API credentials from browser integration paths.
-- Enforced production CORS, secret length, origin binding, scope/capability checks, SSRF-resistant scanner navigation, upload signatures, and request/response limits.
-- Kept sensitive workflow fields manual-only and required explicit consent for full diagnostics or unredacted screen sharing.
+- Added origin-bound, capability-bound, expiring runtime tokens and hashed administrator/integration credentials.
+- Added encrypted Gemini and scanner secrets, required production CORS origins, and secure setup-token handling.
+- Added browser and backend redaction for credentials, payment data, configured private regions, and diagnostic payloads.
+- Added target allowlisting, prompt-injection boundaries, schema validation, confirmation binding, and receipt verification.
+- Blocked delete, send, publish, approve, payment, transfer, external communication, and irreversible submission operations in v1.
 
 ### Removed
 
-- Stale product screenshots and architecture images, duplicated demo sources, unused brand assets, internal critique artifacts, and dead legacy SDK UI/cursor modules.
+- Multi-app, invitation, environment, and multi-tenant concepts.
+- Legacy resolver unions, `appId`, `/runtime/resolve`, workflow execution APIs, and compatibility behavior.
+- OpenAI embeddings, Qwen TTS, LiveKit, SQLite, LanceDB, and their deployment configuration.
+- Default credentials and legacy console pages for API keys, logs, usage, workflow scripts, and per-app UI maps.

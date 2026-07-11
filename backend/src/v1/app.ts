@@ -7,7 +7,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { ZodError } from "zod";
 import type { V1Config } from "./config.js";
-import { corsOrigins, validateV1Config } from "./config.js";
+import { corsOrigins, validateSetupTokenForState, validateV1Config } from "./config.js";
 import { V1Database } from "./db/database.js";
 import { V1Repositories } from "./db/repositories.js";
 import { V1AuthService } from "./auth.js";
@@ -72,6 +72,12 @@ export async function buildApp(config: V1Config, overrides: { model?: AgentModel
   const database = new V1Database(config);
   await database.connect();
   const dependencies = createDependencies(config, database, overrides.model);
+  try {
+    validateSetupTokenForState(config, await dependencies.repositories.product.isSetup());
+  } catch (error) {
+    await database.close();
+    throw error;
+  }
   registerErrorHandler(app);
   await registerV1Routes(app, dependencies);
   await registerConsole(app, config);

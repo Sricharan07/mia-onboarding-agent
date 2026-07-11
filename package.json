@@ -1,6 +1,6 @@
 {
   "name": "mia-onboarding-agent",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "engines": {
     "node": ">=22.0.0",
@@ -21,7 +21,10 @@
     "audit:prod": "npm audit --omit=dev && npm --prefix backend/console audit --omit=dev && npm --prefix example/demo-crm+sdk audit --omit=dev",
     "audit:all": "npm audit && npm --prefix backend/console audit && npm --prefix example/demo-crm+sdk audit",
     "pack:sdk": "npm pack --dry-run -w sdk",
-    "verify": "npm run test && npm run build && npm run build:console && npm run build:demo && npm run audit:prod && npm run pack:sdk"
+    "acceptance:browsers": "node scripts/browser-acceptance.mjs",
+    "benchmark:agent": "node scripts/agent-benchmark.mjs",
+    "verify:package-install": "node scripts/verify-sdk-package.mjs",
+    "verify": "npm run test && npm run build && npm run build:console && npm run build:demo && npm run audit:prod && npm run pack:sdk && npm run verify:package-install"
   },
   "devDependencies": {
     "typescript": "^5.9.3"
