@@ -89,17 +89,20 @@ async function testDemo() {
     return Boolean(panel && !panel.hidden);
   `), 5_000);
   assertPanel(await panelMetrics(), "Safari desktop");
+  assert.deepEqual(await clippedInteractiveControls(), [], "Safari demo clips an interactive control on desktop");
   await assertAccessible("Safari demo desktop with Mia open");
   await screenshot("safari-demo-desktop");
 
   await setViewport(390, 844);
   assert.equal(await horizontalOverflow(), 0, "Safari demo mobile overflow");
   assertPanel(await panelMetrics(), "Safari mobile");
+  assert.deepEqual(await clippedInteractiveControls(), [], "Safari demo clips an interactive control on mobile");
   await assertAccessible("Safari demo mobile with Mia open");
 
   await setViewport(320, 700);
   assert.equal(await horizontalOverflow(), 0, "Safari demo 320px overflow");
   assertPanel(await panelMetrics(), "Safari 320px");
+  assert.deepEqual(await clippedInteractiveControls(), [], "Safari demo clips an interactive control at 320px");
   await screenshot("safari-demo-mobile-320");
   return { ready: true, desktop: true, mobile: true, width320: true, panel: true, wcag22aa: true };
 }
@@ -140,6 +143,32 @@ async function assertAccessible(label) {
 
 function horizontalOverflow() {
   return driver.executeScript("return Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) - document.documentElement.clientWidth");
+}
+
+function clippedInteractiveControls() {
+  return driver.executeScript(`
+    return [...document.querySelectorAll('button,input,select,textarea,a[href]')].flatMap((control) => {
+      const style = getComputedStyle(control);
+      if (style.display === 'none' || style.visibility === 'hidden' || control.getClientRects().length === 0) return [];
+      const rect = control.getBoundingClientRect();
+      for (let ancestor = control.parentElement; ancestor && ancestor !== document.body; ancestor = ancestor.parentElement) {
+        const ancestorStyle = getComputedStyle(ancestor);
+        if (['auto', 'scroll'].includes(ancestorStyle.overflowX)) return [];
+        if (['hidden', 'clip'].includes(ancestorStyle.overflowX)) {
+          const bounds = ancestor.getBoundingClientRect();
+          if (rect.left < bounds.left - 1 || rect.right > bounds.right + 1) {
+            return [{
+              control: control.getAttribute('aria-label') || control.textContent?.trim() || control.getAttribute('placeholder') || control.tagName.toLowerCase(),
+              ancestor: ancestor.getAttribute('data-slot') || ancestor.tagName.toLowerCase(),
+              controlBounds: { left: rect.left, right: rect.right },
+              ancestorBounds: { left: bounds.left, right: bounds.right }
+            }];
+          }
+        }
+      }
+      return [];
+    });
+  `);
 }
 
 function panelMetrics() {

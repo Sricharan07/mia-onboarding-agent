@@ -146,6 +146,7 @@ async function testDemo(browser, browserName, runAgent) {
     await launcher.press("Enter");
     await page.locator("[data-mia-assistant-panel] [data-panel]").waitFor({ state: "visible" });
     assertPanelBounds(await panelMetrics(page), `${browserName} desktop`, false);
+    assert.deepEqual(await clippedInteractiveControls(page), [], `${browserName} demo clips an interactive control on desktop`);
     await assertAccessible(page, `${browserName} demo desktop with Mia open`);
     await page.screenshot({ path: evidencePath(browserName, "demo-desktop"), fullPage: true });
 
@@ -153,12 +154,14 @@ async function testDemo(browser, browserName, runAgent) {
     await page.waitForTimeout(250);
     assert.equal(await horizontalOverflow(page), 0, `${browserName} demo mobile overflow`);
     assertPanelBounds(await panelMetrics(page), `${browserName} mobile`, false);
+    assert.deepEqual(await clippedInteractiveControls(page), [], `${browserName} demo clips an interactive control on mobile`);
     await assertAccessible(page, `${browserName} demo mobile with Mia open`);
 
     await page.setViewportSize({ width: 320, height: 700 });
     await page.waitForTimeout(250);
     assert.equal(await horizontalOverflow(page), 0, `${browserName} demo 320px overflow`);
     assertPanelBounds(await panelMetrics(page), `${browserName} 320px`, false);
+    assert.deepEqual(await clippedInteractiveControls(page), [], `${browserName} demo clips an interactive control at 320px`);
     await page.screenshot({ path: evidencePath(browserName, "demo-mobile-320"), fullPage: true });
 
     let agent = "not required";
@@ -277,6 +280,30 @@ function visibleTextClipping(page) {
     return visible && (element.scrollWidth > element.clientWidth + 1 || element.scrollHeight > element.clientHeight + 1)
       && style.overflow !== "auto" && style.overflow !== "scroll";
   }).length);
+}
+
+function clippedInteractiveControls(page) {
+  return page.evaluate(() => [...document.querySelectorAll("button,input,select,textarea,a[href]")].flatMap((control) => {
+    const style = getComputedStyle(control);
+    if (style.display === "none" || style.visibility === "hidden" || control.getClientRects().length === 0) return [];
+    const rect = control.getBoundingClientRect();
+    for (let ancestor = control.parentElement; ancestor && ancestor !== document.body; ancestor = ancestor.parentElement) {
+      const ancestorStyle = getComputedStyle(ancestor);
+      if (["auto", "scroll"].includes(ancestorStyle.overflowX)) return [];
+      if (["hidden", "clip"].includes(ancestorStyle.overflowX)) {
+        const bounds = ancestor.getBoundingClientRect();
+        if (rect.left < bounds.left - 1 || rect.right > bounds.right + 1) {
+          return [{
+            control: control.getAttribute("aria-label") || control.textContent?.trim() || control.getAttribute("placeholder") || control.tagName.toLowerCase(),
+            ancestor: ancestor.getAttribute("data-slot") || ancestor.tagName.toLowerCase(),
+            controlBounds: { left: rect.left, right: rect.right },
+            ancestorBounds: { left: bounds.left, right: bounds.right }
+          }];
+        }
+      }
+    }
+    return [];
+  }));
 }
 
 function hasVisibleFocus(locator) {

@@ -16,7 +16,7 @@ import {
 import { ChevronDownIcon, ListFilter, Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   DropdownMenu,
@@ -116,72 +116,85 @@ export function OpportunitiesSection({
           <CardDescription>
             Track qualified leads moving through discovery, proposal, and closing stages.
           </CardDescription>
-          <CardAction>
-            <div className="flex items-center gap-2">
-              <Button data-mia-key="crm.opportunities.create_draft_button" size="sm" onClick={() => setDraftOpen(true)}>
-                <Plus data-icon="inline-start" />
-                Create draft
-              </Button>
-              <Input
-                data-mia-key="crm.opportunities.search_input"
-                className="h-7 w-44 md:w-52"
-                placeholder="Search deals..."
-                value={searchQuery}
-                onChange={(event) => {
-                  table.setGlobalFilter(event.target.value || undefined);
-                  table.setPageIndex(0);
-                }}
-              />
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button data-mia-key="crm.opportunities.stage_filter_button" variant="outline" size="sm">
-                    <ListFilter data-icon="inline-start" />
-                    Stage
-                    <ChevronDownIcon data-icon="inline-end" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-40">
-                  <DropdownMenuRadioGroup
-                    value={stageFilter}
-                    onValueChange={(value) => {
-                      table.getColumn("stage")?.setFilterValue(value === "all" ? undefined : value);
-                      table.setPageIndex(0);
-                    }}
-                  >
-                    {stageOptions.map((option) => (
-                      <DropdownMenuRadioItem key={option} value={option} data-mia-policy="read">
-                        {option === "all" ? "All stages" : option}
-                      </DropdownMenuRadioItem>
-                    ))}
-                  </DropdownMenuRadioGroup>
-                </DropdownMenuContent>
-              </DropdownMenu>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button data-mia-key="crm.opportunities.health_filter_button" variant="outline" size="sm">
-                    <ListFilter data-icon="inline-start" />
-                    Health
-                    <ChevronDownIcon data-icon="inline-end" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-40">
-                  <DropdownMenuRadioGroup
-                    value={healthFilter}
-                    onValueChange={(value) => {
-                      table.getColumn("health")?.setFilterValue(value === "all" ? undefined : value);
-                      table.setPageIndex(0);
-                    }}
-                  >
-                    {healthOptions.map((option) => (
-                      <DropdownMenuRadioItem key={option} value={option} data-mia-policy="read">
-                        {option === "all" ? "All health" : option}
-                      </DropdownMenuRadioItem>
-                    ))}
-                  </DropdownMenuRadioGroup>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          </CardAction>
+          <div className="mt-3 grid min-w-0 grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
+            <Button
+              data-mia-key="crm.opportunities.create_draft_button"
+              className="col-span-2 w-full sm:w-auto"
+              size="sm"
+              onClick={() => setDraftOpen(true)}
+            >
+              <Plus data-icon="inline-start" />
+              Create draft
+            </Button>
+            <Input
+              data-mia-key="crm.opportunities.search_input"
+              className="col-span-2 h-8 w-full sm:w-44 md:w-52"
+              placeholder="Search deals..."
+              value={searchQuery}
+              onChange={(event) => {
+                table.setGlobalFilter(event.target.value || undefined);
+                table.setPageIndex(0);
+              }}
+            />
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  className="w-full sm:w-auto"
+                  data-mia-key="crm.opportunities.stage_filter_button"
+                  variant="outline"
+                  size="sm"
+                >
+                  <ListFilter data-icon="inline-start" />
+                  Stage
+                  <ChevronDownIcon data-icon="inline-end" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-40">
+                <DropdownMenuRadioGroup
+                  value={stageFilter}
+                  onValueChange={(value) => {
+                    table.getColumn("stage")?.setFilterValue(value === "all" ? undefined : value);
+                    table.setPageIndex(0);
+                  }}
+                >
+                  {stageOptions.map((option) => (
+                    <DropdownMenuRadioItem key={option} value={option} data-mia-policy="read">
+                      {option === "all" ? "All stages" : option}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  className="w-full sm:w-auto"
+                  data-mia-key="crm.opportunities.health_filter_button"
+                  variant="outline"
+                  size="sm"
+                >
+                  <ListFilter data-icon="inline-start" />
+                  Health
+                  <ChevronDownIcon data-icon="inline-end" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-40">
+                <DropdownMenuRadioGroup
+                  value={healthFilter}
+                  onValueChange={(value) => {
+                    table.getColumn("health")?.setFilterValue(value === "all" ? undefined : value);
+                    table.setPageIndex(0);
+                  }}
+                >
+                  {healthOptions.map((option) => (
+                    <DropdownMenuRadioItem key={option} value={option} data-mia-policy="read">
+                      {option === "all" ? "All health" : option}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </CardHeader>
         <CardContent className="flex flex-col gap-4 px-0">
           <div className="overflow-hidden">
@@ -216,12 +229,12 @@ export function OpportunitiesSection({
               </TableBody>
             </Table>
           </div>
-          <div className="flex items-center justify-between gap-4 px-4 pb-1">
+          <div className="flex flex-col gap-3 px-4 pb-1 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
             <p className="text-muted-foreground text-sm">
               Viewing {visibleOpportunityCount} out of {filteredOpportunityCount.toLocaleString()} opportunities
             </p>
 
-            <Pagination className="mx-0 w-auto justify-end">
+            <Pagination className="mx-0 w-full justify-center sm:w-auto sm:justify-end">
               <PaginationContent className="gap-1.5">
                 <PaginationItem>
                   <PaginationPrevious
