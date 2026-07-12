@@ -58,7 +58,7 @@ jobs:
       MIA_DEMO_USER_ID: release-demo-user
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -175,7 +175,7 @@ jobs:
       MIA_DEMO_USER_ID: safari-demo-user
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -275,7 +275,7 @@ jobs:
       CORS_ORIGIN: http://127.0.0.1:4000,http://127.0.0.1:3001
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Generate one-run deployment secrets
         run: |
