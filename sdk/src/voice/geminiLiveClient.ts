@@ -6,6 +6,7 @@ const CONNECT_TIMEOUT_MS = 15_000;
 const INPUT_RATE = 16_000;
 const OUTPUT_RATE = 24_000;
 const TOOL_GRACE_MS = 400;
+const TRANSCRIPT_WAIT_MS = 1_500;
 const AUDIO_PROCESSOR = "mia-pcm-capture";
 const RESULT_PREFIX = "[MIA_AGENT_RESULT]";
 
@@ -22,6 +23,16 @@ type VoiceHandlers = {
 };
 type FunctionCall = { id?: string; name?: string; args?: Record<string, unknown> };
 type AudioChunk = { data: string; mimeType?: string };
+type FinalizedVoiceInput = {
+  utterance: string;
+  consumedByTool: boolean;
+  result?: Promise<VoiceAgentResult>;
+};
+type TranscriptWaiter = {
+  resolve: (input: FinalizedVoiceInput) => void;
+  reject: (error: Error) => void;
+  timer: number;
+};
 
 export class GeminiLiveClient {
   private socket?: WebSocket;
@@ -55,9 +66,12 @@ export class GeminiLiveClient {
 
   private inputTranscript = "";
   private fallbackTimer?: number;
+  private finalizedInput?: FinalizedVoiceInput;
+  private readonly transcriptWaiters = new Set<TranscriptWaiter>();
   private activeUtterance?: string;
   private activeTurn?: Promise<VoiceAgentResult>;
   private cancelledCalls = new Set<string>();
+  private awaitingConfirmation = false;
 
   constructor(private readonly backend: BackendClient) {}
 
@@ -88,6 +102,9 @@ export class GeminiLiveClient {
     this.lifecycle += 1;
     this.connected = false;
     this.clearFallback();
+    this.rejectTranscriptWaiters(new Error("Mia voice was stopped."));
+    this.finalizedInput = undefined;
+    this.inputTranscript = "";
     this.clearOutput();
     this.stopMicrophone();
     this.stopOutputAudio();
@@ -296,12 +313,15 @@ export class GeminiLiveClient {
     const utterance = this.inputTranscript.trim();
     this.inputTranscript = "";
     if (!utterance || utterance.startsWith(RESULT_PREFIX)) return;
+    const input: FinalizedVoiceInput = { utterance, consumedByTool: false };
+    this.finalizedInput = input;
     this.handlers?.onEvent({ type: "user_transcript", text: utterance });
+    this.resolveTranscriptWaiter(input);
     this.clearFallback();
+    if (this.awaitingConfirmation) return;
     this.fallbackTimer = window.setTimeout(() => {
       this.fallbackTimer = undefined;
-      if (this.activeUtterance && sameUtterance(this.activeUtterance, utterance)) return;
-      void this.runTurn(utterance).then((result) => this.deliverResult(result)).catch((error) => this.report(error));
+      void this.executeFinalizedInput(input).then((result) => this.deliverResult(result)).catch((error) => this.report(error));
     }, TOOL_GRACE_MS);
   }
 
@@ -345,17 +365,20 @@ export class GeminiLiveClient {
       try {
         let result: VoiceAgentResult;
         if (call.name === "submit_mia_turn") {
-          const utterance = string(call.args?.utterance)?.trim();
-          if (!utterance) throw new Error("Voice turn did not include an utterance.");
+          const input = await this.awaitAuthoritativeInput();
           this.clearFallback();
-          result = await this.runTurn(utterance);
+          result = await this.executeFinalizedInput(input);
         } else if (call.name === "respond_to_mia_confirmation") {
           if (typeof call.args?.approved !== "boolean") throw new Error("Voice confirmation did not include approval state.");
+          await this.awaitAuthoritativeInput();
+          this.clearFallback();
+          this.awaitingConfirmation = false;
           result = await this.handlers!.onConfirmation(call.args.approved);
         } else {
           throw new Error(`Unsupported voice tool: ${call.name ?? "unknown"}.`);
         }
         if (call.id && this.cancelledCalls.delete(call.id)) continue;
+        this.awaitingConfirmation = result.state === "confirmation";
         this.expectSpeech(result.spokenMessage);
         responses.push({ id: call.id, name: call.name, response: { state: result.state, spokenMessage: result.spokenMessage } });
       } catch (error) {
@@ -382,7 +405,53 @@ export class GeminiLiveClient {
     return turn;
   }
 
+  private executeFinalizedInput(input: FinalizedVoiceInput): Promise<VoiceAgentResult> {
+    input.result ??= this.runTurn(input.utterance);
+    return input.result;
+  }
+
+  private awaitAuthoritativeInput(): Promise<FinalizedVoiceInput> {
+    const available = this.takeFinalizedInput();
+    if (available) return Promise.resolve(available);
+    return new Promise((resolve, reject) => {
+      const waiter = {
+        resolve,
+        reject,
+        timer: window.setTimeout(() => {
+          this.transcriptWaiters.delete(waiter);
+          reject(new Error("Gemini Live did not provide an authoritative input transcription for this turn."));
+        }, TRANSCRIPT_WAIT_MS)
+      };
+      this.transcriptWaiters.add(waiter);
+    });
+  }
+
+  private takeFinalizedInput(): FinalizedVoiceInput | undefined {
+    const input = this.finalizedInput;
+    if (!input || input.consumedByTool) return undefined;
+    input.consumedByTool = true;
+    return input;
+  }
+
+  private resolveTranscriptWaiter(input: FinalizedVoiceInput): void {
+    const waiter = this.transcriptWaiters.values().next().value as TranscriptWaiter | undefined;
+    if (!waiter || input.consumedByTool) return;
+    input.consumedByTool = true;
+    window.clearTimeout(waiter.timer);
+    this.transcriptWaiters.delete(waiter);
+    waiter.resolve(input);
+  }
+
+  private rejectTranscriptWaiters(error: Error): void {
+    for (const waiter of this.transcriptWaiters) {
+      window.clearTimeout(waiter.timer);
+      waiter.reject(error);
+    }
+    this.transcriptWaiters.clear();
+  }
+
   private deliverResult(result: VoiceAgentResult): void {
+    this.awaitingConfirmation = result.state === "confirmation";
     this.speak(result.spokenMessage);
   }
 
@@ -564,8 +633,6 @@ function mergeTranscript(current: string, next: string): string {
 function normalizeSpeech(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
-
-function sameUtterance(left: string, right: string): boolean { return normalizeSpeech(left) === normalizeSpeech(right); }
 
 function waitForOpen(socket: WebSocket): Promise<void> {
   return new Promise((resolve, reject) => {

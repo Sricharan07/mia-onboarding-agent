@@ -42,7 +42,8 @@ test("v1 PostgreSQL foundation migrates and enforces singleton setup plus sessio
       { id: 2, name: "encrypted_product_settings" },
       { id: 3, name: "diagnostic_lookup_indexes" },
       { id: 4, name: "stable_goal_run_identity" },
-      { id: 5, name: "separate_host_action_risk_review" }
+      { id: 5, name: "separate_host_action_risk_review" },
+      { id: 6, name: "constrain_mia_voice" }
     ]);
     assert.equal((await database.query<{ count: number }>(`
       SELECT COUNT(*)::int AS count FROM information_schema.tables WHERE table_schema = 'public'
@@ -67,6 +68,10 @@ test("v1 PostgreSQL foundation migrates and enforces singleton setup plus sessio
       }
     });
     assert.equal(await repositories.product.isSetup(), true);
+    await assert.rejects(
+      () => database.query(`UPDATE product SET voice_config = '{"enabled":true,"voice":"Puck","language":"en-US"}'::jsonb`),
+      /product_voice_config_valid/
+    );
     await assert.rejects(() => repositories.product.setup({
       product: {
         name: "Duplicate",

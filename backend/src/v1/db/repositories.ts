@@ -11,6 +11,7 @@ import type {
 import type { V1Database } from "./database.js";
 import { AppError, NotFoundError } from "../../utils/errors.js";
 import { redactSensitiveJson } from "../redaction.js";
+import type { MiaVoiceName } from "../voice.js";
 
 type Json = Record<string, unknown> | unknown[];
 
@@ -22,7 +23,7 @@ export type ProductRecord = {
   transcriptMode: "full" | "redacted" | "disabled";
   transcriptRetentionDays: number;
   scanConfig: Record<string, unknown>;
-  voiceConfig: { enabled: boolean; voice: string; language: string };
+  voiceConfig: { enabled: boolean; voice: MiaVoiceName; language: "en-US" };
   createdAt: string;
   updatedAt: string;
 };

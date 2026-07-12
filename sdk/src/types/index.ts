@@ -1,4 +1,5 @@
 export type MiaTheme = "light" | "dark" | "auto";
+export type MiaVoiceName = "Aoede" | "Kore" | "Leda";
 export type MiaStatus = "idle" | "connecting" | "listening" | "thinking" | "speaking" | "guiding" | "offline" | "error" | "ended";
 export type MiaCursorState = Exclude<MiaStatus, "ended"> | "fading";
 export type RiskLevel = "read" | "navigate" | "reversible_write" | "manual" | "blocked";
@@ -203,7 +204,7 @@ export type MiaOptions = {
   navigate?: (route: string) => void | Promise<void>;
   voice?: {
     enabled?: boolean;
-    voice?: string;
+    voice?: MiaVoiceName;
     openMic?: boolean;
     pushToTalk?: boolean;
   };

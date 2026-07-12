@@ -207,7 +207,9 @@ await mia.stopVoice();
 
 Gemini Live carries microphone input and speaks the backend agent's exact response. It cannot independently plan or execute actions. Text and voice share the same session, policy, cursor, confirmations, receipts, and final result.
 
-`Aoede` is the v1 default. With `openMic: true`, voice keeps listening until stopped and supports interruption. With `pushToTalk: true`, hold `Control+Space`; release either key to pause the microphone. Blur and page hiding also release push-to-talk safely.
+`Aoede` is the v1 default. The console administrator chooses from the curated `Aoede`, `Kore`, and `Leda` voices, and that product setting remains authoritative over an SDK preference. With `openMic: true`, voice keeps listening until stopped and supports interruption. With `pushToTalk: true`, hold `Control+Space`; release either key to pause the microphone. Blur and page hiding also release push-to-talk safely.
+
+Input audio transcription is authoritative for agent turns. If Gemini's transport tool paraphrases a request, the SDK submits the exact transcription instead, so voice and text reach the same persisted planner input.
 
 The browser requires a secure context and microphone permission. Voice confirmation is supported for every permitted reversible mutation and must resolve the same exact backend binding as the UI.
 

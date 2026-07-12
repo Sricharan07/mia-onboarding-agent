@@ -336,6 +336,13 @@ test("v1 agent resumes confirmations and navigation without persisting mutation 
       sessionId: created.sessionId, confirmationId: refreshed.id, userId: "resume-user",
       revision: reconfirm.revision, binding: refreshed.binding, approved: true, source: "ui", observation: observation(2)
     });
+    const redirectedRuntime = runtime(3);
+    redirectedRuntime.observation.route = "/login";
+    redirectedRuntime.observation.url = "http://localhost:3001/login";
+    const redirected = await agent.resumeSession("resume-user", {
+      ...redirectedRuntime, sessionId: created.sessionId, resumeToken: created.resumeToken
+    });
+    assert.equal(redirected.pending?.recovery, "replan", "a changed but unexpected route must never verify navigation");
     const navigatedRuntime = runtime(3);
     navigatedRuntime.observation.route = "/dashboard/crm/new";
     navigatedRuntime.observation.url = "http://localhost:3001/dashboard/crm/new";
@@ -344,6 +351,7 @@ test("v1 agent resumes confirmations and navigation without persisting mutation 
     });
     assert.equal(navigated.revision, approved.revision);
     assert.equal(navigated.pending?.recovery, "verify_navigation");
+    assert.equal(navigated.pending?.expectedRoute, "/dashboard/crm/new");
 
     const fillSession = await agent.createSession("fill-user", runtime());
     model.push(decision("actions", {
@@ -476,6 +484,7 @@ function observation(revision = 1) {
         tagName: "button",
         role: "button",
         name: "Create draft lead",
+        route: "/dashboard/crm/new",
         locators: [{ strategy: "role" as const, role: "button", name: "Create draft lead" }],
         bounds: { x: 20, y: 20, width: 160, height: 40 },
         viewportVisible: true,

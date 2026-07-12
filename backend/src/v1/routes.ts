@@ -25,6 +25,7 @@ import { parseWithSchema } from "../utils/zod.js";
 import { AppError } from "../utils/errors.js";
 import { removeStoredUpload, storeMultipartUpload } from "./uploads.js";
 import { redactSensitiveJson } from "./redaction.js";
+import { miaVoiceNameSchema } from "./voice.js";
 
 const setupSchema = z.object({
   setupToken: z.string().min(1),
@@ -51,7 +52,7 @@ const productUpdateSchema = z.object({
   transcriptRetentionDays: z.number().int().min(1).max(365).optional(),
   voiceConfig: z.object({
     enabled: z.boolean(),
-    voice: z.string().trim().min(1).max(100).default("Aoede"),
+    voice: miaVoiceNameSchema.default("Aoede"),
     language: z.literal("en-US").default("en-US")
   }).optional()
 }).refine((value) => Object.keys(value).length > 0, "At least one product setting is required.");
@@ -61,7 +62,7 @@ const routeIdSchema = z.object({ sessionId: z.string().min(1).max(200) });
 const confirmationParamsSchema = routeIdSchema.extend({ confirmationId: z.string().min(1).max(200) });
 const cancelSchema = z.object({ revision: z.number().int().nonnegative().optional() });
 const voiceTokenSchema = z.object({
-  voice: z.string().trim().min(1).max(100).optional(),
+  voice: miaVoiceNameSchema.optional(),
   sessionHandle: z.string().min(1).max(16_384).optional()
 });
 const eventSchema = z.object({
@@ -438,7 +439,7 @@ export async function registerV1Routes(app: FastifyInstance, dependencies: V1App
     }
     const requested = parseWithSchema(voiceTokenSchema, request.body ?? {});
     return dependencies.gemini.createLiveToken(
-      requested.voice ?? product.voiceConfig.voice,
+      product.voiceConfig.voice,
       product.voiceConfig.language,
       requested.sessionHandle
     );

@@ -53,6 +53,14 @@ test("v1 HTTP API supports secure setup, runtime tokens, agent turns, and SSE", 
     const adminToken = setup.json<{ token: string }>().token;
     assert.match(adminToken, /^mia_admin_/);
 
+    const unsupportedVoice = await app.inject({
+      method: "PATCH",
+      url: "/api/v1/product",
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { voiceConfig: { enabled: true, voice: "Puck", language: "en-US" } }
+    });
+    assert.equal(unsupportedVoice.statusCode, 400);
+
     const credentials = await app.inject({
       method: "PUT",
       url: "/api/v1/product/gemini",
@@ -107,6 +115,14 @@ test("v1 HTTP API supports secure setup, runtime tokens, agent turns, and SSE", 
     });
     assert.equal(runtimeTokenResponse.statusCode, 200, runtimeTokenResponse.body);
     const runtimeToken = runtimeTokenResponse.json<{ token: string }>().token;
+
+    const runtimeVoiceOverride = await app.inject({
+      method: "POST",
+      url: "/api/v1/runtime/voice/token",
+      headers: runtimeHeaders(runtimeToken),
+      payload: { voice: "Puck" }
+    });
+    assert.equal(runtimeVoiceOverride.statusCode, 400);
 
     const created = await app.inject({
       method: "POST",

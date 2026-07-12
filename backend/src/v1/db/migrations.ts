@@ -309,6 +309,25 @@ const migrations: Migration[] = [{
     UPDATE host_actions SET proposed_risk = effective_risk;
     ALTER TABLE host_actions ALTER COLUMN proposed_risk SET NOT NULL;
   `
+}, {
+  id: 6,
+  name: "constrain_mia_voice",
+  sql: `
+    UPDATE product
+    SET voice_config = jsonb_build_object(
+      'enabled', COALESCE((voice_config->>'enabled')::boolean, TRUE),
+      'voice', 'Aoede',
+      'language', 'en-US'
+    )
+    WHERE voice_config->>'voice' NOT IN ('Aoede', 'Kore', 'Leda')
+       OR voice_config->>'language' IS DISTINCT FROM 'en-US';
+
+    ALTER TABLE product ADD CONSTRAINT product_voice_config_valid CHECK (
+      voice_config->>'voice' IN ('Aoede', 'Kore', 'Leda')
+      AND voice_config->>'language' = 'en-US'
+      AND jsonb_typeof(voice_config->'enabled') = 'boolean'
+    );
+  `
 }];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {

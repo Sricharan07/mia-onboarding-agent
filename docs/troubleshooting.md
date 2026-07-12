@@ -124,7 +124,7 @@ The agent stops after three matching loop signatures or three consecutive failed
 - The runtime token needs `voice:live`.
 - Allow the returned Gemini WebSocket endpoint in CSP `connect-src` and network egress.
 - Check browser `Permissions-Policy`; a parent frame may deny microphone access.
-- `Aoede` is the default feminine voice. If another voice is heard, inspect the SDK configuration and deployed bundle rather than relying on a stale development process.
+- `Aoede` is the default voice. The console's curated product voice is authoritative; SDK requests cannot replace it. If another voice is heard, verify the effective voice returned by the token endpoint and rebuild the deployed bundle rather than relying on a stale development process.
 
 For push-to-talk, hold `Control+Space`. Releasing either key, switching tabs, or losing window focus pauses the microphone. Open-mic mode remains active until **Stop voice**.
 

@@ -239,11 +239,15 @@ export class Mia {
         type: action.type,
         status: pending.recovery === "verify_navigation" ? "completed" as const : "cancelled" as const,
         message: pending.recovery === "verify_navigation"
-          ? "The new route verifies that the navigation completed before reload."
+          ? `The observed route exactly matches the expected destination ${pending.expectedRoute}.`
           : "The pending action was cancelled after reload so Mia can re-observe safely.",
         targetRef: action.target?.ref,
         route: `${location.pathname}${location.search}`,
-        evidence: { recoveredAfterReload: true, route: `${location.pathname}${location.search}` }
+        evidence: {
+          recoveredAfterReload: true,
+          route: `${location.pathname}${location.search}`,
+          ...(pending.expectedRoute ? { expectedRoute: pending.expectedRoute, exactRouteMatch: true } : {})
+        }
       }));
       const runtime = await this.runtime(controller.signal);
       const response = await this.backend.continueSession({

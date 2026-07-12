@@ -1,6 +1,7 @@
 export type RouteId = "setup" | "overview" | "knowledge" | "skills" | "actions" | "test" | "runs" | "settings";
 export type LoadState = "idle" | "loading" | "ready" | "error";
 export type RiskLevel = "read" | "navigate" | "reversible_write" | "manual" | "blocked";
+export type MiaVoiceName = "Aoede" | "Kore" | "Leda";
 export type UiActionPolicy = "guide_only" | "navigate" | "reversible_write" | "manual" | "blocked";
 export type TranscriptMode = "full" | "redacted" | "disabled";
 
@@ -21,7 +22,7 @@ export type Product = {
   transcriptMode: TranscriptMode;
   transcriptRetentionDays: number;
   scanConfig: Record<string, unknown>;
-  voiceConfig: { enabled: boolean; voice: string; language: string };
+  voiceConfig: { enabled: boolean; voice: MiaVoiceName; language: "en-US" };
   createdAt: string;
   updatedAt: string;
 };

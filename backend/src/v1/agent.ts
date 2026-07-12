@@ -85,6 +85,7 @@ export class V1AgentService {
       message: string;
       actions: ActionDirective[];
       recovery: "confirm" | "verify_navigation" | "replan";
+      expectedRoute?: string;
     };
   }> {
     let session = await this.ownedSession(input.sessionId, userId);
@@ -120,11 +121,14 @@ export class V1AgentService {
           pendingConfirmation: null
         });
       }
-    } else if (session.status === "active"
-      && normalizeRoute(input.observation.route) !== normalizeRoute(session.currentRoute ?? input.observation.route)
-      && actions.some((action) => ["navigate", "go_back", "click"].includes(action.type))) {
-      recovery = "verify_navigation";
+    } else if (session.status === "active") {
+      const expectedRoute = expectedNavigationRoute(actions);
+      const routeChanged = normalizeRoute(input.observation.route) !== normalizeRoute(session.currentRoute ?? input.observation.route);
+      if (expectedRoute && routeChanged && normalizeRoute(input.observation.route) === normalizeRoute(expectedRoute)) {
+        recovery = "verify_navigation";
+      }
     }
+    const expectedRoute = recovery === "verify_navigation" ? expectedNavigationRoute(actions) : undefined;
     return {
       sessionId: session.id,
       revision: session.revision,
@@ -137,7 +141,8 @@ export class V1AgentService {
           : recovery === "verify_navigation" ? "Mia resumed after the page navigation."
             : "Mia is checking the page again after the reload.",
         actions,
-        recovery
+        recovery,
+        expectedRoute
       }
     };
   }
@@ -940,6 +945,13 @@ function sourceReference(match: KnowledgeMatch): Record<string, unknown> {
 function issuedActions(directive: Record<string, unknown>): ActionDirective[] {
   const raw = Array.isArray(directive.actions) ? directive.actions : [];
   return raw.filter((action): action is ActionDirective => Boolean(action && typeof action === "object" && "actionId" in action));
+}
+
+function expectedNavigationRoute(actions: ActionDirective[]): string | undefined {
+  const barrier = [...actions].reverse().find((action) => ["navigate", "click"].includes(action.type));
+  if (barrier?.type === "navigate") return barrier.route;
+  if (barrier?.type === "click") return barrier.target?.route;
+  return undefined;
 }
 
 function validateReceiptBatch(issued: ActionDirective[], receipts: ActionReceipt[]): void {

@@ -43,6 +43,7 @@ export class BackendClient {
       message: string;
       actions: import("../types/index.js").ActionDirective[];
       recovery: "confirm" | "verify_navigation" | "replan";
+      expectedRoute?: string;
     };
   }> {
     return this.request("/api/v1/runtime/sessions/resume", { method: "POST", body: payload });

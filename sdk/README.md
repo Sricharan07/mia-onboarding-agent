@@ -100,7 +100,7 @@ For nonce-based Content Security Policy, pass the response nonce as `ui.styleNon
 
 Gemini Live is used as a microphone and speech transport. Every user utterance is submitted to the same persisted agent used by text. The Live model is constrained to speak the backend agent's exact response and cannot independently plan or execute product actions.
 
-`Aoede` is the default voice. Open mic and hold `Control+Space` push-to-talk can be enabled together. When `openMic` is `false`, holding the shortcut starts voice if needed, enables the microphone for the hold, and pauses it on release.
+`Aoede` is the default voice. The administrator's configured `Aoede`, `Kore`, or `Leda` voice is authoritative over an SDK preference. Open mic and hold `Control+Space` push-to-talk can be enabled together. When `openMic` is `false`, holding the shortcut starts voice if needed, enables the microphone for the hold, and pauses it on release. Mia submits the provider's exact input transcription to the shared planner rather than trusting a paraphrased voice-tool argument.
 
 ## Lifecycle
 
