@@ -38,6 +38,6 @@
     "@axe-core/playwright": "^4.12.1",
     "axe-core": "^4.12.1",
     "selenium-webdriver": "^4.46.0",
-    "typescript": "^5.9.3"
+    "typescript": "^7.0.2"
   }
 }
