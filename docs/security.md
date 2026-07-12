@@ -41,6 +41,8 @@ Administrator passwords use scrypt with a unique salt. Administrator sessions, i
 
 The application does not encrypt all PostgreSQL rows or uploaded files. Use encrypted disks, encrypted backups, access-controlled object/block storage, and TLS to an external database as required by the deployment's data classification.
 
+Treat backups as production secrets even when they contain only hashes or encrypted fields. Release CI restores its disposable backup in-run, uploads only non-sensitive checksum and restore-result evidence, and destroys the dump before the runner exits.
+
 ## First-Run Setup
 
 An empty production database requires a setup token of at least 32 characters. Setup creates the singleton product and administrator transactionally and closes permanently after success. There are no default credentials.

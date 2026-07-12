@@ -127,6 +127,8 @@ Complete first-run setup through the bundled console, configure Gemini, ingest o
 - send `SIGTERM` and confirm graceful shutdown;
 - verify no default credential works and no raw secret appears in logs or API responses.
 
+Keep the restore backup inside the ephemeral runner and destroy it with the test deployment. Release evidence may retain only a checksum, byte count, and restore assertions; never upload a database dump or uploads archive as a CI artifact.
+
 ## 6. Publish
 
 Build the container and SDK from the verified commit. Publishing `@mia/onboarding-agent` requires authorized access to the `@mia` npm scope:
