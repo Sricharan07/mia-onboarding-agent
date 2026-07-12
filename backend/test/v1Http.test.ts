@@ -149,6 +149,21 @@ test("v1 HTTP API supports secure setup, runtime tokens, agent turns, and SSE", 
     assert.equal(runtimeTokenResponse.statusCode, 200, runtimeTokenResponse.body);
     const runtimeToken = runtimeTokenResponse.json<{ token: string }>().token;
 
+    const privacyUpdate = await app.inject({
+      method: "PATCH",
+      url: "/api/v1/product",
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { redactedSelectors: ["[data-customer-private]"] }
+    });
+    assert.equal(privacyUpdate.statusCode, 200, privacyUpdate.body);
+    const runtimeConfig = await app.inject({
+      method: "GET",
+      url: "/api/v1/runtime/config",
+      headers: runtimeHeaders(runtimeToken)
+    });
+    assert.equal(runtimeConfig.statusCode, 200, runtimeConfig.body);
+    assert.deepEqual(runtimeConfig.json<{ redactedSelectors: string[] }>().redactedSelectors, ["[data-customer-private]"]);
+
     const runtimeVoiceOverride = await app.inject({
       method: "POST",
       url: "/api/v1/runtime/voice/token",

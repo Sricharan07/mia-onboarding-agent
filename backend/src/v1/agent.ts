@@ -572,10 +572,13 @@ export class V1AgentService {
   ): Promise<ActionDirective[]> {
     const directives: ActionDirective[] = [];
     for (const action of planned) {
+      const targetRef = action.targetRef
+        ?? (action.type === "press_key" && observation.focusedNodeId ? `live:${observation.focusedNodeId}` : undefined);
+      const implicitTarget = Boolean(targetRef && !action.targetRef);
       const target = actionNeedsTarget(action.type)
-        ? resolveTarget(action.targetRef, observation, mapped)
-        : action.targetRef
-          ? resolveTarget(action.targetRef, observation, mapped)
+        ? resolveTarget(targetRef, observation, mapped)
+        : targetRef
+          ? resolveTarget(targetRef, observation, mapped)
           : undefined;
       validateActionArguments(action, observation, mapped);
       const host = action.type === "host_action"
@@ -592,7 +595,7 @@ export class V1AgentService {
         type: action.type,
         target: target?.target.ref ?? "",
         route: action.route ?? "",
-        key: action.key ?? "",
+        key: normalizeKeyName(action.key),
         hostAction: action.hostAction ?? "",
         payload: action.arguments ?? action.value ?? ""
       }));
@@ -609,7 +612,7 @@ export class V1AgentService {
         message: action.message,
         expectedOutcome: action.expectedOutcome,
         risk,
-        target: target?.target,
+        target: target ? { ...target.target, implicit: implicitTarget || undefined } : undefined,
         route: action.route,
         value: risk === "manual" ? undefined : action.value,
         key: action.key,
@@ -861,6 +864,8 @@ function resolveTarget(
         fingerprint: map.fingerprint,
         tagName: typeof map.metadata.tagName === "string" ? map.metadata.tagName : undefined,
         inputType: typeof map.metadata.type === "string" ? map.metadata.type : undefined,
+        formAssociated: typeof map.metadata.formAssociated === "boolean" ? map.metadata.formAssociated : undefined,
+        formSubmitter: typeof map.metadata.formSubmitter === "boolean" ? map.metadata.formSubmitter : undefined,
         label: map.name ?? map.description ?? map.elementKey,
         role: map.role ?? undefined,
         pageRoute: map.route,
@@ -885,13 +890,16 @@ function riskForAction(
 
   if (isProhibitedOperation(action.type, action.message, action.hostAction, node?.name, node?.text, node?.elementKey, map?.name, map?.description, map?.elementKey)) return "blocked";
   if (action.type === "click" && (node?.formSubmitter || isSubmitInputType(node?.inputType) || isSubmitInputType(mapInputType(map)))) return "blocked";
-  if (action.type === "press_key" && isEnterKey(action.key)) return "blocked";
-  if (action.type === "click" && (node?.role === "link" || map?.role === "link")) return destinationRoute ? "navigate" : "blocked";
+  if (action.type === "press_key" && isEnterKey(action.key) && ((!node && !map) || node?.formAssociated || mapFormAssociated(map))) return "blocked";
+  if (action.type === "press_key" && isSpaceKey(action.key) && (node?.formSubmitter || mapFormSubmitter(map))) return "blocked";
+  const activatesLink = action.type === "click"
+    || action.type === "press_key" && (isEnterKey(action.key) || isSpaceKey(action.key));
+  if (activatesLink && (node?.role === "link" || map?.role === "link")) return destinationRoute ? "navigate" : "blocked";
   if (host) return executableHostEffect(host.effect) ? host.effectiveRisk : "blocked";
   const policy = node?.actionPolicy ?? map?.actionPolicy;
   if (node?.sensitive || policy === "manual") return "manual";
   if (policy === "blocked" || policy === "read" || policy === "guide_only") return "blocked";
-  if (policy === "navigate") return action.type === "click" && Boolean(destinationRoute) ? "navigate" : "blocked";
+  if (policy === "navigate") return activatesLink && Boolean(destinationRoute) ? "navigate" : "blocked";
   return "reversible_write";
 }
 
@@ -906,6 +914,9 @@ function validateActionArguments(
 ): void {
   if (["fill", "select"].includes(action.type) && action.value === undefined) throw new AppError("ACTION_VALUE_REQUIRED", `${action.type} requires a value.`, 502);
   if (action.type === "press_key" && !action.key) throw new AppError("ACTION_KEY_REQUIRED", "press_key requires a key.", 502);
+  if (action.type === "press_key" && !SUPPORTED_KEY_NAMES.has(normalizeKeyName(action.key))) {
+    throw new AppError("ACTION_KEY_INVALID", "Gemini selected an unsupported key.", 502);
+  }
   if (action.type === "navigate") {
     if (!action.route || !action.route.startsWith("/")) throw new AppError("ACTION_ROUTE_INVALID", "Navigation requires a relative approved route.", 502);
     const allowed = new Set(routesAvailableToAgent(observation, mapped).map(canonicalRoute));
@@ -1087,7 +1098,31 @@ function mapInputType(map: Awaited<ReturnType<V1Repositories["knowledge"]["listM
 }
 
 function isEnterKey(key: string | undefined): boolean {
-  return key?.split("+").some((part) => part.trim().toLowerCase() === "enter") ?? false;
+  return normalizeKeyName(key) === "enter";
+}
+
+function isSpaceKey(key: string | undefined): boolean {
+  return normalizeKeyName(key) === "space";
+}
+
+function normalizeKeyName(key: string | undefined): string {
+  if (key === " ") return "space";
+  const normalized = key?.trim().toLowerCase() ?? "";
+  return normalized === "spacebar" ? "space" : normalized === "esc" ? "escape" : normalized;
+}
+
+const SUPPORTED_KEY_NAMES = new Set([
+  "enter", "escape", "tab", "space", "arrowup", "arrowdown", "arrowleft", "arrowright", "home", "end"
+]);
+
+function mapFormAssociated(map: Awaited<ReturnType<V1Repositories["knowledge"]["listMappedElements"]>>[number] | undefined): boolean {
+  if (typeof map?.metadata.formAssociated === "boolean") return map.metadata.formAssociated;
+  return ["button", "input", "select", "textarea"].includes(String(map?.metadata.tagName ?? "").toLowerCase());
+}
+
+function mapFormSubmitter(map: Awaited<ReturnType<V1Repositories["knowledge"]["listMappedElements"]>>[number] | undefined): boolean {
+  if (typeof map?.metadata.formSubmitter === "boolean") return map.metadata.formSubmitter;
+  return isSubmitInputType(mapInputType(map));
 }
 
 function short(value: string, limit = 500): string {

@@ -56,7 +56,10 @@ export const MIA_SHADOW_CURSOR_STYLES = `
 .mia-cursor::after {
   content: "";
   position: absolute;
-  inset: -13px;
+  left: -18px;
+  top: -18px;
+  width: 36px;
+  height: 36px;
   border-radius: 999px;
   opacity: 0;
   pointer-events: none;
@@ -68,7 +71,10 @@ export const MIA_SHADOW_CURSOR_STYLES = `
 }
 
 .mia-cursor::after {
-  inset: -18px;
+  left: -22px;
+  top: -22px;
+  width: 44px;
+  height: 44px;
   border: 1px solid rgba(125, 211, 252, 0.45);
   box-shadow: 0 0 24px rgba(56, 189, 248, 0.26);
   transform: scale(0.85);
@@ -81,11 +87,11 @@ export const MIA_SHADOW_CURSOR_STYLES = `
   overflow: hidden;
   width: 100%;
   height: 100%;
-  clip-path: polygon(12% 9%, 89% 50%, 12% 92%, 33% 52%);
+  clip-path: polygon(0 0, 0 82%, 22% 63%, 38% 100%, 54% 92%, 38% 57%, 70% 57%);
   background: linear-gradient(155deg, #80edff 0%, var(--mia-accent) 40%, var(--mia-accent-2) 100%);
   border: 1px solid rgba(186, 230, 253, 0.8);
   transform: rotate(var(--mia-triangle-rotation)) scale(var(--mia-flight-scale));
-  transform-origin: 40% 50%;
+  transform-origin: 0 0;
   filter: drop-shadow(0 3px 11px rgba(37, 99, 235, 0.56));
   transition: transform 0.14s linear, opacity 0.14s ease, filter 0.16s ease;
   will-change: transform, opacity, filter;
@@ -94,8 +100,8 @@ export const MIA_SHADOW_CURSOR_STYLES = `
 .mia-cursor-inner::after {
   content: "";
   position: absolute;
-  inset: 3px 5px 8px 5px;
-  clip-path: polygon(14% 12%, 100% 50%, 14% 88%, 34% 52%);
+  inset: 2px 4px 5px 2px;
+  clip-path: polygon(0 0, 0 78%, 22% 59%, 38% 100%, 49% 94%, 33% 54%, 68% 54%);
   background: linear-gradient(160deg, rgba(255, 255, 255, 0.9), rgba(147, 197, 253, 0.2));
   opacity: 0.75;
   mix-blend-mode: screen;
@@ -109,14 +115,17 @@ export const MIA_SHADOW_CURSOR_STYLES = `
   object-fit: contain;
   border-radius: 8px;
   transform: rotate(var(--mia-triangle-rotation)) scale(var(--mia-flight-scale));
-  transform-origin: 40% 50%;
+  transform-origin: 0 0;
   display: none;
   will-change: transform;
 }
 
 .mia-shimmer {
   position: absolute;
-  inset: -10px;
+  left: -17px;
+  top: -17px;
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
   background: conic-gradient(
     from 0deg,
@@ -136,7 +145,10 @@ export const MIA_SHADOW_CURSOR_STYLES = `
 
 .mia-ring {
   position: absolute;
-  inset: -9px;
+  left: -16px;
+  top: -16px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   border: 1.5px solid rgba(125, 211, 252, 0.85);
   opacity: 0;
@@ -147,7 +159,10 @@ export const MIA_SHADOW_CURSOR_STYLES = `
 
 .mia-spinner {
   position: absolute;
-  inset: -11px;
+  left: -18px;
+  top: -18px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
   border: 2px solid transparent;
   border-top-color: rgba(125, 211, 252, 0.95);
@@ -161,7 +176,10 @@ export const MIA_SHADOW_CURSOR_STYLES = `
 
 .mia-wave {
   position: absolute;
-  inset: -10px;
+  left: -17px;
+  top: -17px;
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
   border: 1.5px dashed rgba(56, 189, 248, 0.88);
   opacity: 0;

@@ -42,6 +42,8 @@ type BrowserElement = {
   description?: string;
   tagName: string;
   type?: string;
+  formAssociated?: boolean;
+  formSubmitter?: boolean;
   href?: string;
   explicitKey?: string;
   locators: unknown[];
@@ -213,9 +215,10 @@ export class V1UiScanner {
   }
 }
 
-export function actionPolicyForElement(element: Pick<BrowserElement, "role" | "name" | "description" | "tagName" | "type">): UiActionPolicy {
-  const semantic = [element.role, element.name, element.description, element.tagName, element.type].filter(Boolean).join(" ");
+export function actionPolicyForElement(element: Pick<BrowserElement, "role" | "name" | "description" | "tagName" | "type" | "formSubmitter">): UiActionPolicy {
+  const semantic = [element.role, element.name, element.description, element.tagName].filter(Boolean).join(" ");
   if (isProhibitedOperation(semantic)) return "blocked";
+  if (element.formSubmitter) return "blocked";
   if (["password", "file"].includes(element.type ?? "") || isProtectedInputSemantic(semantic)) return "manual";
   if (element.role === "link" || element.tagName === "a") return "navigate";
   if (["button", "textbox", "checkbox", "radio", "switch", "combobox", "listbox", "option", "slider", "spinbutton"].includes(element.role ?? "")
@@ -255,7 +258,14 @@ async function scanFrame(frame: Frame, redactedSelectors: string[]): Promise<Bro
           name: name || undefined,
           description,
           tagName,
-          type: element instanceof HTMLInputElement ? element.type : undefined,
+          type: element instanceof HTMLInputElement || element instanceof HTMLButtonElement ? element.type : undefined,
+          formAssociated: element instanceof HTMLInputElement || element instanceof HTMLButtonElement
+            || element instanceof HTMLSelectElement || element instanceof HTMLTextAreaElement
+            ? Boolean(element.form)
+            : false,
+          formSubmitter: element instanceof HTMLInputElement || element instanceof HTMLButtonElement
+            ? Boolean(element.form) && ["submit", "image"].includes(element.type.toLowerCase())
+            : false,
           href: element instanceof HTMLAnchorElement ? element.href : undefined,
           explicitKey: element.dataset.miaKey,
           locators: locators.slice(0, 8)
@@ -363,7 +373,15 @@ function normalizeElement(element: BrowserElement, route: string, frameIndex: nu
     locators: element.locators,
     fingerprint: hash(JSON.stringify({ route, role: element.role, name: element.name, tag: element.tagName, type: element.type })),
     actionPolicy: actionPolicyForElement(element),
-    metadata: { tagName: element.tagName, type: element.type, href: element.href, frameIndex, policySource: "inferred" }
+    metadata: {
+      tagName: element.tagName,
+      type: element.type,
+      href: element.href,
+      formAssociated: element.formAssociated,
+      formSubmitter: element.formSubmitter,
+      frameIndex,
+      policySource: "inferred"
+    }
   };
 }
 

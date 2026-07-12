@@ -26,7 +26,7 @@ Gemini decides what would help; deterministic code decides what is allowed and w
 | Operation | v1 behavior |
 | --- | --- |
 | Answer, explain, point, highlight, hover, scroll, focus | Allowed when grounded in supplied product context |
-| Approved same-origin navigation | Allowed and re-observed after navigation |
+| Approved same-origin navigation | Exact path/query/fragment is verified and re-observed after navigation |
 | Click, fill, clear, select, toggle, reversible host action | Requires an exact confirmation naming the change and target |
 | Passwords, payment details, CAPTCHA, WebAuthn, file pickers | Manual only |
 | Delete, send, publish, approve, pay, purchase, transfer, externally communicate, irreversible submit | Blocked before execution |
@@ -114,7 +114,7 @@ The console has eight workflows, in deployment order:
 1. **Setup**: finish product, Gemini, runtime key, knowledge, UI map, SDK, safety review, and live validation checks.
 2. **Overview**: monitor readiness, agent activity, usage, and the next operational task.
 3. **Knowledge**: crawl approved HTTPS documentation, upload Markdown/text/PDF files, and scan product routes.
-4. **Skills**: turn recordings into editable, reviewed agent guidance and publish only approved skills.
+4. **Skills**: turn MP4/MOV/WebM video or MP3/WAV/M4A/WebM audio recordings into editable, reviewed agent guidance and publish only approved skills.
 5. **Actions & Safety**: review SDK-detected host actions, JSON schemas, risks, and effective policy.
 6. **Test Mia**: prove Q&A, pointing, navigation, confirmed mutation, and voice against the live SDK.
 7. **Runs**: inspect transcripts, model assessments, retrieved sources, directives, approvals, receipts, retries, timing, tokens, and errors.

@@ -12,7 +12,7 @@ Mia serves the console at `/` and versioned JSON/SSE APIs under `/api/v1`. The b
 Authorization: Bearer mia_admin_...
 ```
 
-Administrator tokens are stored hashed, expire according to `CONSOLE_SESSION_TTL_SECONDS`, and can be revoked by logout.
+Administrator tokens are stored hashed, expire according to `CONSOLE_SESSION_TTL_SECONDS`, and can be revoked by logout. Changing the administrator password atomically revokes every other administrator session while preserving the authenticated session that made the change.
 
 ### Integration key
 
@@ -120,7 +120,7 @@ URL ingestion accepts `{ "name", "url", "maxPages" }`. Documentation must use HT
 - `POST /api/v1/skills/:id/publish`
 - `POST /api/v1/skills/:id/archive`
 
-Recording upload is multipart and produces a reviewed skill, not an executable script. Skill fields are name, description, goal, business context, steps, constraints, and expected outcomes. Only published skills enter retrieval.
+Recording upload is multipart and accepts MP4, MOV, video/audio WebM, MP3, WAV, or M4A. It produces a reviewed skill, not an executable script. Skill fields are name, description, goal, business context, steps, constraints, and expected outcomes. Only published skills enter retrieval.
 
 ### UI scanning and policy
 
@@ -148,7 +148,7 @@ Mapped-element policy is `guide_only`, `navigate`, `reversible_write`, `manual`,
 - `GET /api/v1/runs/:id`
 - `GET /api/v1/usage`
 
-An SDK action first appears as detected/needs review. Review sets `{ "status": "published" | "blocked", "risk": "read" | "navigate" | "reversible_write" | "manual" | "blocked" }`. Blocked actions cannot be published. Manifest changes return published actions to review.
+An SDK action first appears as detected/needs review with a typed effect: `read`, `navigate`, `draft_create`, `draft_update`, `reversible_change`, or `protected`. Review sets `{ "status": "published" | "blocked", "risk": "read" | "navigate" | "reversible_write" | "manual" | "blocked" }`. Blocked/protected actions cannot execute. Manifest changes return published actions to review.
 
 Run responses honor transcript mode and redact secrets regardless of mode.
 
@@ -191,6 +191,7 @@ Derive `userId` and authorization from the host product's authenticated server s
 - `POST /api/v1/runtime/sessions/:sessionId/continue/stream`
 - `POST /api/v1/runtime/sessions/:sessionId/confirmations/:confirmationId`
 - `POST /api/v1/runtime/sessions/:sessionId/cancel`
+- `GET /api/v1/runtime/config`
 - `POST /api/v1/runtime/voice/token`
 - `POST /api/v1/runtime/events`
 
@@ -204,7 +205,9 @@ Turn bodies add `utterance` and source (`text` or `voice`). The response is one 
 - `complete`: verified completion;
 - `unable`: honest safe stop.
 
-After executing a directive batch, submit the new observation and one receipt per action to `continue`. Receipt status is `completed`, `unverified`, `failed`, `cancelled`, or `manual`. The backend verifies action identity, idempotency key, batch completeness, confirmation state, and session revision before replanning.
+After executing a directive batch, submit the new observation and one receipt per action to `continue`. Receipt status is `completed`, `unverified`, `failed`, `cancelled`, or `manual`. The backend verifies action identity, idempotency key, batch completeness, confirmation state, and session revision before replanning. Failed/cancelled attempts remain auditable; one completed receipt makes any later equivalent plan a no-op replay.
+
+`GET /api/v1/runtime/config` returns the administrator's current redaction selectors. The SDK must apply them before collecting each observation. Runtime events that name a session are accepted only when that session belongs to the token's exact host user.
 
 Confirmation resolution includes the issued binding, current observation, approval boolean, and source (`text`, `voice`, or `ui`). A stale, expired, altered, or already-resolved binding is rejected.
 

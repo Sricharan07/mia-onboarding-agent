@@ -444,6 +444,14 @@ export async function registerV1Routes(app: FastifyInstance, dependencies: V1App
       requested.sessionHandle
     );
   });
+  app.get("/api/v1/runtime/config", async (request) => {
+    await requireRuntime(request, dependencies, "agent:run");
+    const product = await dependencies.repositories.product.get();
+    return {
+      redactedSelectors: product.redactedSelectors,
+      updatedAt: product.updatedAt
+    };
+  });
   app.post("/api/v1/runtime/events", async (request) => {
     const runtime = await requireRuntime(request, dependencies, "events:write");
     const event = parseWithSchema(eventSchema, request.body);

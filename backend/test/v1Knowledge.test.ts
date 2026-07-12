@@ -13,6 +13,7 @@ import { isPublicIp, resolvePublicHttpsUrl } from "../src/v1/network.js";
 import { actionPolicyForElement, hostResolverRules } from "../src/v1/scanner.js";
 import { V1UiScanner } from "../src/v1/scanner.js";
 import { V1SecretService } from "../src/v1/secrets.js";
+import { normalizeUploadMime, validateUploadContent } from "../src/v1/uploads.js";
 
 const databaseUrl = process.env.MIA_TEST_DATABASE_URL;
 
@@ -127,6 +128,27 @@ test("document extraction, SSRF policy, and UI action policy preserve product se
   assert.equal(actionPolicyForElement({ role: "textbox", name: "Verification code", tagName: "input", type: "text" }), "manual");
   assert.equal(actionPolicyForElement({ role: "textbox", name: "Bank routing number", tagName: "input", type: "text" }), "manual");
   assert.equal(actionPolicyForElement({ role: "link", name: "Pipeline", tagName: "a" }), "navigate");
+
+  assert.equal(normalizeUploadMime("audio/x-wav", "walkthrough.wav", "recording"), "audio/wav");
+  assert.equal(normalizeUploadMime("application/octet-stream", "walkthrough.m4a", "recording"), "audio/mp4");
+  assert.equal(normalizeUploadMime("audio/mpeg", "walkthrough.mp3", "recording"), "audio/mpeg");
+  assert.throws(() => normalizeUploadMime("audio/aac", "walkthrough.aac", "recording"), /MP3, WAV, or M4A/i);
+  const mediaDirectory = mkdtempSync(join(tmpdir(), "mia-v1-media-"));
+  try {
+    const wavPath = join(mediaDirectory, "walkthrough.wav");
+    const wav = Buffer.alloc(44);
+    wav.write("RIFF", 0, "ascii");
+    wav.writeUInt32LE(36, 4);
+    wav.write("WAVE", 8, "ascii");
+    wav.write("fmt ", 12, "ascii");
+    writeFileSync(wavPath, wav);
+    await assert.doesNotReject(() => validateUploadContent(wavPath, "audio/wav"));
+    const spoofedPath = join(mediaDirectory, "spoofed.wav");
+    writeFileSync(spoofedPath, "not a wave file");
+    await assert.rejects(() => validateUploadContent(spoofedPath, "audio/wav"), /contents do not match/i);
+  } finally {
+    rmSync(mediaDirectory, { recursive: true, force: true });
+  }
 });
 
 test("Playwright scanner discovers routes, redacts private regions, and auto-indexes semantic controls", {

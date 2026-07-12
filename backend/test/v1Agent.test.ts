@@ -342,6 +342,52 @@ test("v1 agent keeps a goal across questions and blocks protected operations bef
     assert.equal(guideOnly.type, "unable");
     assert.equal(guideOnly.status, "failed");
 
+    const safeKeySession = await agent.createSession("safe-key-user", runtime());
+    model.push(decision("actions", {
+      message: "Activate the reversible button",
+      actions: [{
+        actionId: "safe-key-model",
+        type: "press_key",
+        targetRef: "live:plain",
+        key: "Enter",
+        message: "Activate Pin draft",
+        expectedOutcome: "The draft is pinned"
+      }]
+    }));
+    const safeKey = await agent.submitTurn({
+      sessionId: safeKeySession.sessionId,
+      userId: "safe-key-user",
+      revision: safeKeySession.revision,
+      utterance: "Pin the draft with the keyboard",
+      source: "text",
+      runtime: runtime(8)
+    });
+    assert.equal(safeKey.status, "waiting_confirmation");
+    assert.equal(safeKey.actions[0]?.risk, "reversible_write");
+
+    const submitKeySession = await agent.createSession("submit-key-user", runtime());
+    model.push(decision("actions", {
+      message: "Activate the form submitter",
+      actions: [{
+        actionId: "submit-key-model",
+        type: "press_key",
+        targetRef: "live:continue",
+        key: "Space",
+        message: "Continue with Space",
+        expectedOutcome: "The form advances"
+      }]
+    }));
+    const submitKey = await agent.submitTurn({
+      sessionId: submitKeySession.sessionId,
+      userId: "submit-key-user",
+      revision: submitKeySession.revision,
+      utterance: "Continue with Space",
+      source: "text",
+      runtime: runtime(8)
+    });
+    assert.equal(submitKey.type, "unable");
+    assert.equal(submitKey.status, "failed");
+
     await agent.createSession("dangerous-host-user", {
       ...runtime(8),
       actions: [{
@@ -687,6 +733,18 @@ function observation(revision = 1) {
         name: "External account",
         locators: [{ strategy: "role" as const, role: "link", name: "External account" }],
         bounds: { x: 880, y: 80, width: 140, height: 40 },
+        viewportVisible: true,
+        sensitive: false
+      },
+      {
+        nodeId: "plain",
+        tagName: "button",
+        role: "button",
+        name: "Pin draft",
+        formAssociated: false,
+        formSubmitter: false,
+        locators: [{ strategy: "role" as const, role: "button", name: "Pin draft" }],
+        bounds: { x: 1040, y: 80, width: 120, height: 40 },
         viewportVisible: true,
         sensitive: false
       }

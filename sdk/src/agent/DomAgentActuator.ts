@@ -79,13 +79,17 @@ export class DomAgentActor {
       if (directive.type === "scroll_by") return { receipt: await this.scrollBy(directive, signal), visualContext: [] };
       if (directive.type === "wait") return { receipt: await this.wait(directive, signal), visualContext: [] };
 
-      const target = await resolveTarget(directive, this.options.collector);
+      const implicitKeyTarget = directive.type === "press_key" && (!directive.target || directive.target.implicit === true);
+      const activeElement = implicitKeyTarget ? deepActive(document) : null;
+      const target = implicitKeyTarget
+        ? { element: isHtmlElement(activeElement) ? activeElement : document.body }
+        : await resolveTarget(directive, this.options.collector);
       if (!target.element) return { receipt: receipt(directive, "failed", target.error ?? "The target is no longer available."), visualContext: [] };
       if (directive.target?.pageRoute && canonicalRoute(directive.target.pageRoute) !== currentRoute()) {
         return { receipt: receipt(directive, "failed", "The target belongs to a different page."), visualContext: [] };
       }
-      await this.pointTo(target.element, directive.target?.label ?? directive.message, signal);
-      const clearHighlight = showHighlight(target.element);
+      if (!implicitKeyTarget) await this.pointTo(target.element, directive.target?.label ?? directive.message, signal);
+      const clearHighlight = implicitKeyTarget ? () => undefined : showHighlight(target.element);
       try {
         if (directive.risk === "manual") {
           return { receipt: receipt(directive, "manual", "This protected step must be completed by the user.", { targetVisible: true }), visualContext: [] };
@@ -216,13 +220,21 @@ export class DomAgentActor {
     }
     if (!visibility.inViewport) throw new Error("The target could not be brought into the visible viewport.");
     if (!visibility.visible) throw new Error("The target is covered by another control and cannot be pointed to reliably.");
-    const x = rect.left + rect.width / 2;
-    const y = rect.top + rect.height / 2;
-    this.options.cursor.navigateTo(x, y, label);
     const cursor = this.options.cursor as MiaShadowCursor & { isPointingAt?: (targetX: number, targetY: number) => boolean };
-    if (typeof cursor.isPointingAt === "function") {
-      await waitFor(() => cursor.isPointingAt!(x, y), 2_000, signal, "Mia's cursor did not reach the target in time.");
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const x = rect.left + rect.width / 2;
+      const y = rect.top + rect.height / 2;
+      this.options.cursor.navigateTo(x, y, label);
+      if (typeof cursor.isPointingAt === "function") {
+        await waitFor(() => cursor.isPointingAt!(x, y), 2_000, signal, "Mia's cursor did not reach the target in time.");
+      }
+      const settled = await waitForStableRect(element, signal, 0);
+      const settledX = settled.left + settled.width / 2;
+      const settledY = settled.top + settled.height / 2;
+      if (Math.hypot(settledX - x, settledY - y) < 1) return;
+      rect = settled;
     }
+    throw new Error("The target kept moving while Mia tried to point to it.");
   }
 
   private async navigate(directive: ActionDirective, signal: AbortSignal): Promise<ActionReceipt> {
@@ -340,7 +352,7 @@ function snapshot(element: HTMLElement, revision: number): ElementSnapshot {
     url: location.href,
     focused: deepActive(element.ownerDocument) === element,
     activeElement: deepActive(element.ownerDocument),
-    value: typeof control.value === "string" ? control.value : undefined,
+    value: isContentEditable(element) ? element.textContent ?? "" : typeof control.value === "string" ? control.value : undefined,
     checked: typeof control.checked === "boolean" ? control.checked : undefined,
     selectedIndex: typeof control.selectedIndex === "number" ? control.selectedIndex : undefined,
     expanded: element.getAttribute("aria-expanded"),
@@ -380,6 +392,7 @@ function verify(
         : directive.type === "select" ? after.value === directive.value
           : directive.type === "toggle" ? evidence.checkedChanged || evidence.pressedChanged
             : directive.type === "click" ? evidence.routeChanged || evidence.targetChanged || evidence.immediateScopedDomChanged
+              : directive.type === "press_key" && (!directive.target || directive.target.implicit) ? interactionChanged || evidence.domChanged
               : interactionChanged;
   return {
     verified: exact,
@@ -433,7 +446,7 @@ function setControlValue(element: HTMLElement, value: string): void {
     element.dispatchEvent(new view.Event("change", { bubbles: true, composed: true }));
     return;
   }
-  if (element.isContentEditable) {
+  if (isContentEditable(element)) {
     if (element.getAttribute("aria-disabled") === "true") throw new Error("The target control is disabled.");
     if (element.getAttribute("aria-readonly") === "true") throw new Error("The target control is read-only.");
     element.textContent = value;
@@ -455,8 +468,8 @@ function selectValue(element: HTMLElement, value: string): void {
 }
 
 function pressKey(element: HTMLElement, key: string | undefined): void {
-  const normalized = key?.trim();
-  if (!normalized || !["Enter", "Escape", "Tab", " ", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"].includes(normalized)) {
+  const normalized = normalizeSupportedKey(key);
+  if (!normalized) {
     throw new Error("The requested key is not supported.");
   }
   const view = element.ownerDocument.defaultView ?? window;
@@ -464,7 +477,27 @@ function pressKey(element: HTMLElement, key: string | undefined): void {
   const init = { key: normalized, bubbles: true, cancelable: true, composed: true };
   const accepted = element.dispatchEvent(new view.KeyboardEvent("keydown", init));
   element.dispatchEvent(new view.KeyboardEvent("keyup", init));
-  if (accepted && (normalized === "Enter" || normalized === " ") && ["button", "a"].includes(element.tagName.toLowerCase())) element.click();
+  const tag = element.tagName.toLowerCase();
+  const type = tag === "input" ? (element as HTMLInputElement).type.toLowerCase() : "";
+  if (accepted && (normalized === "Enter" || normalized === " ")
+    && (["button", "a"].includes(tag) || tag === "input" && ["checkbox", "radio"].includes(type))) {
+    element.click();
+  }
+}
+
+function normalizeSupportedKey(key: string | undefined): string | undefined {
+  if (key === " ") return " ";
+  const normalized = key?.trim();
+  if (!normalized) return undefined;
+  return new Map([
+    ["enter", "Enter"], ["escape", "Escape"], ["esc", "Escape"], ["tab", "Tab"],
+    ["space", " "], ["spacebar", " "], ["arrowup", "ArrowUp"], ["arrowdown", "ArrowDown"],
+    ["arrowleft", "ArrowLeft"], ["arrowright", "ArrowRight"], ["home", "Home"], ["end", "End"]
+  ]).get(normalized.toLowerCase());
+}
+
+function isContentEditable(element: HTMLElement): boolean {
+  return element.isContentEditable || element.getAttribute("contenteditable") === "true";
 }
 
 function dispatchHover(element: HTMLElement): void {
@@ -612,14 +645,20 @@ function assertTargetCanExecute(element: HTMLElement, type: ActionDirective["typ
   }
   const readOnly = Boolean((element as HTMLInputElement).readOnly) || element.getAttribute("aria-readonly") === "true";
   if (readOnly && ["fill", "clear"].includes(type)) throw new Error("The target control is read-only.");
-  if (["click", "toggle"].includes(type) && formSubmitter(element)) throw new Error("Mia cannot activate native form submission controls.");
-  if (["click", "toggle"].includes(type) && element.tagName.toLowerCase() === "a") {
+  const normalizedKey = type === "press_key" ? normalizeSupportedKey(key) : undefined;
+  const activation = ["click", "toggle"].includes(type) || type === "press_key" && (normalizedKey === "Enter" || normalizedKey === " ");
+  if ((["click", "toggle"].includes(type) || type === "press_key" && normalizedKey === " ") && formSubmitter(element)) {
+    throw new Error("Mia cannot activate native form submission controls.");
+  }
+  if (type === "press_key" && normalizedKey === "Enter" && formAssociated(element)) {
+    throw new Error("Mia cannot press Enter on a form-associated control because it may submit the form.");
+  }
+  if (activation && element.tagName.toLowerCase() === "a") {
     const destination = new URL((element as HTMLAnchorElement).href, element.ownerDocument.baseURI);
     if (destination.origin !== location.origin || !destinationRoute || canonicalRoute(destination.href) !== canonicalRoute(destinationRoute)) {
       throw new Error("Mia cannot activate an unapproved or cross-origin link.");
     }
   }
-  if (type === "press_key" && key?.toLowerCase() === "enter") throw new Error("Mia cannot press Enter because it may submit a form.");
 }
 
 function visible(element: HTMLElement): boolean {

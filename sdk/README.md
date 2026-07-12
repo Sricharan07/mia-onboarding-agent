@@ -91,7 +91,7 @@ Use the supplied idempotency key for every host mutation. Return evidence that l
 
 ## Privacy
 
-The observer reads accessibility semantics and visible product text, not arbitrary JavaScript state. It traverses open shadow roots and same-origin frames. Passwords, authentication codes, payment fields, token-like values, configured private regions, and Mia's own UI are redacted before observations leave the browser.
+The observer reads accessibility semantics and visible product text, not arbitrary JavaScript state. It traverses open shadow roots and same-origin frames. Passwords, authentication codes, payment fields, token-like values, configured private regions, and Mia's own UI are redacted before observations leave the browser. Administrator selectors are loaded before every observation and merged with SDK selectors; URL queries and page titles remain off unless explicitly enabled.
 
 Canvas, chart, map, and image inspection is opt-in through `visualContextProvider`. The provider is invoked only after the agent explicitly determines semantic context is insufficient. Use `privacy.transformVisualContext` to apply any final image or description redaction before upload.
 

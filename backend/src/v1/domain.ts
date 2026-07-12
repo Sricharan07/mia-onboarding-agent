@@ -125,6 +125,7 @@ export type ActionType = z.infer<typeof actionTypeSchema>;
 
 export const agentTargetSchema = z.object({
   ref: z.string().min(1).max(300),
+  implicit: z.boolean().optional(),
   nodeId: z.string().max(200).optional(),
   elementKey: z.string().max(300).optional(),
   fingerprint: z.string().max(128).optional(),

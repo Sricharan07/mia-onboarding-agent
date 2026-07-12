@@ -90,7 +90,7 @@ const mia = await Mia.init({
 
 `backendUrl` may include no reusable credential. `tokenProvider` may return the raw token string or `{ token, expiresAt }`; the SDK caches it until close to expiry and requests a replacement when necessary.
 
-Use the host router for `navigate` so client-side route state stays coherent. Without it, Mia falls back only where browser navigation is appropriate.
+Use the host router for `navigate` so client-side route state stays coherent. The SDK verifies the exact approved path, query, and fragment before issuing a completed receipt. Without a host router, Mia falls back only where browser navigation is appropriate.
 
 ## Register Host Actions
 
@@ -138,7 +138,7 @@ const createDraftOpportunity = defineMiaAction({
 
 Register it with `actions: [createDraftOpportunity]`. Names must be unique snake case; descriptions must state business effects and exclusions; `inputSchema` must be valid JSON Schema; risk is `read`, `navigate`, `reversible_write`, `manual`, or `blocked`.
 
-The backend detects manifests automatically. An administrator must review and publish each action before Gemini can use it. Changing name, description, schema, or risk changes the manifest hash and returns it to review.
+The backend detects manifests automatically. An administrator must review and publish each action before Gemini can use it. Changing name, description, schema, risk, or effect changes the manifest hash and returns it to review.
 
 Use the supplied idempotency key for every mutation and return evidence that proves the resulting product state. Never define a reversible action that can delete, send, publish, approve, pay, externally communicate, or irreversibly submit through an indirect flag.
 
@@ -181,7 +181,7 @@ The provider runs only after the agent explicitly requests unavailable visual in
 
 The semantic observer collects roles, accessible names, descriptions, visible text, current values/states, focus, selection, viewport geometry, and stable node IDs. It traverses open shadow roots and same-origin frames.
 
-It excludes Mia's own UI and redacts password/payment/authentication controls, token-like values, configured private selectors, and sensitive patterns. Defaults omit URL query strings and page title.
+It excludes Mia's own UI and redacts password/payment/authentication controls, token-like values, configured private selectors, and sensitive patterns. Before every observation, the SDK loads the administrator's selectors from `/api/v1/runtime/config` and merges them with host-supplied selectors. Collection fails closed if that privacy configuration cannot be loaded. Defaults omit URL query strings and page title, and page text never includes document-head/title content.
 
 ```ts
 privacy: {
@@ -228,6 +228,7 @@ mia.destroy();                    // app shell/user teardown
 - `stop` aborts model requests, queued actors, speech, cursor animation, pending approval/input, and cancels the backend session.
 - `destroy` removes observers, hotkeys, panel, cursor, media, and network activity. Call it when the authenticated user or product shell changes.
 - Initializing creates or resumes one session. Reload recovery re-verifies navigation and cancels unsafe pending values rather than persisting them in browser storage.
+- The visible cursor's pointer hotspot, highlight ring, and verified target coordinates are the same point; Mia never moves the user's physical cursor.
 
 Set `ui.enabled: false` only when the host supplies equivalent transcript, progress, input, microphone, stop, confirmation, and missing-input controls.
 

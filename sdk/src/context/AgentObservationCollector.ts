@@ -26,8 +26,24 @@ export class AgentObservationCollector {
   private revision = 0;
   private destroyed = false;
 
-  constructor(private readonly options: MiaOptions) {
+  private readonly options: MiaOptions;
+  private readonly localRedactedSelectors: string[];
+
+  constructor(options: MiaOptions) {
+    this.localRedactedSelectors = [...(options.privacy?.redactedSelectors ?? [])];
+    this.options = {
+      ...options,
+      privacy: {
+        ...options.privacy,
+        redactedSelectors: this.localRedactedSelectors
+      }
+    };
     this.installTracking();
+  }
+
+  setRuntimeRedactedSelectors(selectors: string[]): void {
+    const effective = [...new Set([...this.localRedactedSelectors, ...selectors.map((selector) => selector.trim()).filter(Boolean)])];
+    this.options.privacy = { ...this.options.privacy, redactedSelectors: effective };
   }
 
   collect(): Observation {
@@ -64,7 +80,7 @@ export class AgentObservationCollector {
       revision: this.revision,
       url: this.options.privacy?.includeUrlQuery ? window.location.href : `${window.location.origin}${window.location.pathname}`,
       route: route || "/",
-      title: this.options.privacy?.includePageTitle === false ? undefined : redact(document.title, this.options),
+      title: this.options.privacy?.includePageTitle === true ? redact(document.title, this.options) : undefined,
       viewport: { width: window.innerWidth, height: window.innerHeight, scrollX: window.scrollX, scrollY: window.scrollY },
       focusedNodeId: focused ? this.idByElement.get(focused) : undefined,
       hoveredNodeId: this.hovered ? this.idByElement.get(this.hovered) : undefined,
@@ -408,7 +424,9 @@ function collectPageText(roots: RootContext[], options: MiaOptions): string | un
   let length = 0;
   for (const { root } of roots) {
     const document_ = documentForRoot(root);
-    const walker = document_.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const textRoot = root.nodeType === Node.DOCUMENT_NODE ? document_.body : root;
+    if (!textRoot) continue;
+    const walker = document_.createTreeWalker(textRoot, NodeFilter.SHOW_TEXT);
     let node = walker.nextNode();
     while (node && length < MAX_PAGE_TEXT) {
       const parent = node.parentElement;

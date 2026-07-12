@@ -84,6 +84,7 @@ export class MiaAssistantPanel {
     return new Promise((resolve, reject) => {
       const pending: PendingConfirmation = { resolve, settled: false };
       this.pendingConfirmation = pending;
+      this.updateState();
       const abort = () => {
         if (pending.settled) return;
         pending.settled = true;
@@ -104,6 +105,7 @@ export class MiaAssistantPanel {
     this.abortCleanup?.();
     this.abortCleanup = undefined;
     this.clearContext();
+    this.updateState();
     pending.resolve(approved);
     return true;
   }
@@ -115,6 +117,7 @@ export class MiaAssistantPanel {
     return new Promise((resolve, reject) => {
       const pending: PendingInput = { resolve, reject, settled: false };
       this.pendingInput = pending;
+      this.updateState();
       const abort = () => {
         if (pending.settled) return;
         pending.settled = true;
@@ -136,6 +139,7 @@ export class MiaAssistantPanel {
     this.abortCleanup?.();
     this.abortCleanup = undefined;
     this.clearContext();
+    this.updateState();
     pending.resolve(normalized);
     return true;
   }
@@ -175,11 +179,11 @@ export class MiaAssistantPanel {
           <div class="mia-progress" data-progress role="status" aria-live="polite" hidden></div>
           <div class="mia-transcript" data-transcript aria-live="polite"></div>
           <div class="mia-context" data-context hidden></div>
-          <form class="mia-composer" data-form>
+          <form class="mia-composer" data-form data-voice-enabled="${this.options.voiceEnabled}">
             <textarea data-composer rows="1" maxlength="4000" placeholder="Ask Mia" aria-label="Ask Mia"></textarea>
             <button class="mia-icon mia-mic" type="button" data-voice title="${this.voiceActive ? "Stop voice" : "Start voice"}" aria-label="${this.voiceActive ? "Stop voice" : "Start voice"}" ${this.options.voiceEnabled ? "" : "hidden"}></button>
             <button class="mia-icon mia-send" type="submit" data-send title="Send" aria-label="Send"></button>
-            <button class="mia-icon mia-stop" type="button" data-stop title="Stop Mia" aria-label="Stop Mia"></button>
+            <button class="mia-icon mia-stop" type="button" data-stop title="Stop Mia" aria-label="Stop Mia" hidden disabled></button>
           </form>
         </section>
         <button class="mia-launcher" type="button" data-launcher aria-expanded="false" aria-label="Open Mia">
@@ -332,6 +336,7 @@ export class MiaAssistantPanel {
     this.pendingConfirmation = undefined;
     this.pendingInput = undefined;
     this.clearContext();
+    this.updateState();
   }
 
   private async run(task: () => Promise<void>): Promise<void> {
@@ -349,6 +354,14 @@ export class MiaAssistantPanel {
     const send = this.shadow.querySelector<HTMLButtonElement>("[data-send]");
     if (composer) composer.disabled = this.busy && !this.hasPendingInput();
     if (send) send.disabled = this.busy && !this.hasPendingInput();
+    const canStop = this.busy || this.voiceActive || this.hasPendingConfirmation() || this.hasPendingInput();
+    const stop = this.shadow.querySelector<HTMLButtonElement>("[data-stop]");
+    const form = this.shadow.querySelector<HTMLElement>("[data-form]");
+    if (stop) {
+      stop.hidden = !canStop;
+      stop.disabled = !canStop;
+    }
+    if (form) form.setAttribute("data-can-stop", String(canStop));
     const voice = this.shadow.querySelector<HTMLButtonElement>("[data-voice]");
     if (voice) {
       voice.title = this.voiceActive ? "Stop voice" : "Start voice";
@@ -375,7 +388,7 @@ function toError(value: unknown): Error {
 
 const styles = `
 :host{all:initial;position:fixed;inset:0;z-index:2147483645;display:block;pointer-events:none;color-scheme:dark;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;letter-spacing:0}
-*{box-sizing:border-box;letter-spacing:0}button,textarea,input,select{font:inherit}button{cursor:pointer}
+*{box-sizing:border-box;letter-spacing:0}[hidden]{display:none!important}button,textarea,input,select{font:inherit}button{cursor:pointer}
 .mia-shell{position:absolute;right:24px;bottom:24px;pointer-events:auto;color:#f7f9fc}
 .mia-launcher{width:164px;height:58px;display:flex;align-items:center;gap:11px;padding:8px 12px;border:1px solid rgba(255,255,255,.25);border-radius:8px;color:inherit;background:linear-gradient(145deg,rgba(22,28,40,.86),rgba(12,16,24,.78));box-shadow:0 18px 50px rgba(5,9,16,.28),inset 0 1px 0 rgba(255,255,255,.18);backdrop-filter:blur(22px) saturate(145%);transition:opacity .16s ease,transform .2s ease,border-color .2s ease}
 .mia-launcher:hover{transform:translateY(-2px);border-color:rgba(105,229,197,.5)}.mia-launcher:focus-visible,.mia-icon:focus-visible,button:focus-visible,textarea:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid #6ce8c9;outline-offset:2px}
@@ -383,9 +396,9 @@ const styles = `
 .mia-launcher-mark,.mia-mark{display:grid;place-items:center;width:38px;height:38px;flex:0 0 auto;border-radius:7px;background:linear-gradient(145deg,#5876ff,#5f47d8 62%,#28b99a);font-weight:800;color:white;box-shadow:inset 0 1px 0 rgba(255,255,255,.3)}
 .mia-launcher-copy{min-width:0;display:flex;flex:1;flex-direction:column;align-items:flex-start;line-height:1.15}.mia-launcher-copy strong{font-size:15px}.mia-launcher-copy span{margin-top:3px;color:#bcc6d7;font-size:12px}
 .mia-dot{width:8px;height:8px;border-radius:50%;background:#45d6a9;box-shadow:0 0 0 4px rgba(69,214,169,.1)}.mia-chevron{display:none}
-.mia-panel{position:absolute;right:0;bottom:0;width:390px;max-height:min(680px,calc(100vh - 48px));display:grid;grid-template-rows:auto auto minmax(120px,1fr) auto auto;overflow:hidden;border:1px solid rgba(255,255,255,.22);border-radius:8px;background:linear-gradient(155deg,rgba(27,34,47,.82),rgba(11,15,23,.9) 56%,rgba(14,21,29,.84));box-shadow:0 28px 90px rgba(3,7,13,.4),inset 0 1px 0 rgba(255,255,255,.2);backdrop-filter:blur(28px) saturate(155%);animation:mia-panel-in .2s cubic-bezier(.22,1,.36,1)}
-.mia-panel[hidden]{display:none}.mia-header{height:66px;display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid rgba(255,255,255,.1)}
-.mia-brand{display:flex;align-items:center;gap:11px}.mia-brand>div{display:flex;flex-direction:column;line-height:1.15}.mia-brand strong{font-size:16px}.mia-brand span{margin-top:3px;color:#aeb9ca;font-size:12px}.mia-mark{width:36px;height:36px}
+.mia-panel{position:absolute;right:0;bottom:0;width:390px;min-width:0;max-width:calc(100vw - 20px);max-height:min(680px,calc(100vh - 48px));display:grid;grid-template-rows:auto auto minmax(120px,1fr) auto auto;overflow:hidden;border:1px solid rgba(255,255,255,.22);border-radius:8px;background:linear-gradient(155deg,rgba(27,34,47,.96),rgba(11,15,23,.98) 56%,rgba(14,21,29,.96));box-shadow:0 28px 90px rgba(3,7,13,.4),inset 0 1px 0 rgba(255,255,255,.2);backdrop-filter:blur(28px) saturate(155%);animation:mia-panel-in .2s cubic-bezier(.22,1,.36,1)}
+.mia-panel[hidden]{display:none}.mia-header{min-width:0;height:66px;display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid rgba(255,255,255,.1)}
+.mia-brand{min-width:0;display:flex;align-items:center;gap:11px}.mia-brand>div{min-width:0;display:flex;flex-direction:column;line-height:1.15}.mia-brand strong,.mia-brand span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mia-brand strong{font-size:16px}.mia-brand span{margin-top:3px;color:#aeb9ca;font-size:12px}.mia-mark{width:36px;height:36px}
 .mia-icon{width:38px;height:38px;display:grid;place-items:center;flex:0 0 auto;padding:0;border:1px solid rgba(255,255,255,.14);border-radius:7px;color:#e9eef7;background:rgba(255,255,255,.07)}.mia-icon:hover{background:rgba(255,255,255,.13);border-color:rgba(255,255,255,.24)}
 .mia-progress{min-height:34px;padding:9px 14px;border-bottom:1px solid rgba(255,255,255,.08);color:#8ee7cf;background:rgba(53,214,178,.055);font-size:12px;line-height:1.3}.mia-progress[hidden]{display:none}
 .mia-transcript{min-height:120px;overflow:auto;padding:15px 14px 10px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.2) transparent}.mia-empty{margin:18px 0;color:#aab5c6;text-align:center;font-size:13px}
@@ -393,10 +406,10 @@ const styles = `
 .mia-context{padding:13px 14px;border-top:1px solid rgba(255,255,255,.1);background:rgba(6,10,16,.24)}.mia-context[hidden]{display:none}.mia-context p{margin:0 0 11px;color:#edf1f8;font-size:13px;line-height:1.45}
 .mia-context-actions{display:flex;justify-content:flex-end;gap:8px}.mia-primary,.mia-secondary{min-height:36px;padding:0 13px;border-radius:6px}.mia-primary{display:inline-flex;align-items:center;gap:7px;border:1px solid rgba(132,246,216,.6);color:#071812;background:#70e7c6;font-weight:700}.mia-primary svg{width:16px}.mia-secondary{border:1px solid rgba(255,255,255,.17);color:#e3e9f2;background:rgba(255,255,255,.07)}
 .mia-context-input{display:flex;gap:8px}.mia-context-input input,.mia-context-input select{min-width:0;flex:1;height:38px;padding:0 10px;border:1px solid rgba(255,255,255,.18);border-radius:6px;color:#f5f7fb;background:rgba(7,11,18,.62)}
-.mia-composer{display:grid;grid-template-columns:minmax(0,1fr) 38px 38px 38px;gap:7px;padding:11px 12px;border-top:1px solid rgba(255,255,255,.11);background:rgba(5,8,13,.2)}.mia-composer textarea{height:38px;max-height:92px;resize:none;padding:9px 11px;border:1px solid rgba(255,255,255,.16);border-radius:7px;color:#f6f8fb;background:rgba(6,10,17,.58);line-height:1.35}.mia-composer textarea::placeholder{color:#8f9bad}.mia-send{color:#071812;background:#70e7c6;border-color:rgba(132,246,216,.6)}.mia-stop{color:#ffb7bd}.mia-icon:disabled,button:disabled,textarea:disabled{cursor:not-allowed;opacity:.45}
+.mia-composer{width:100%;min-width:0;display:flex;align-items:flex-end;gap:7px;padding:11px 12px;border-top:1px solid rgba(255,255,255,.11);background:rgba(5,8,13,.34)}.mia-composer textarea{width:auto;min-width:0;flex:1 1 0;height:38px;max-height:92px;resize:none;padding:9px 11px;border:1px solid rgba(255,255,255,.16);border-radius:7px;color:#f6f8fb;background:rgba(6,10,17,.72);line-height:1.35}.mia-composer textarea::placeholder{color:#8f9bad}.mia-send{color:#071812;background:#70e7c6;border-color:rgba(132,246,216,.6)}.mia-stop{color:#ffb7bd}.mia-icon:disabled,button:disabled,textarea:disabled{cursor:not-allowed;opacity:.45}
 .mia-shell[data-status="thinking"] .mia-dot,.mia-shell[data-status="connecting"] .mia-dot{background:#f2c96f;animation:mia-pulse 1.2s ease-in-out infinite}.mia-shell[data-status="error"] .mia-dot{background:#ff7781}.mia-shell[data-status="offline"] .mia-dot,.mia-shell[data-status="ended"] .mia-dot{background:#8792a3}.mia-shell[data-status="listening"] .mia-dot{animation:mia-pulse .8s ease-in-out infinite}
 @keyframes mia-pulse{50%{transform:scale(1.35);box-shadow:0 0 0 7px rgba(69,214,169,.06)}}
 @keyframes mia-panel-in{from{opacity:0;transform:translateY(8px) scale(.985)}to{opacity:1;transform:none}}
-@media(max-width:520px){.mia-shell{right:10px;bottom:10px;left:10px}.mia-launcher{width:154px;margin-left:auto}.mia-panel{position:fixed;left:10px;right:10px;bottom:10px;width:auto;max-height:calc(100vh - 20px)}.mia-composer{grid-template-columns:minmax(0,1fr) 38px 38px}.mia-stop{grid-column:3}.mia-mic[hidden]+.mia-send{grid-column:2}}
+@media(max-width:520px){.mia-shell{right:max(10px,env(safe-area-inset-right));bottom:max(10px,env(safe-area-inset-bottom));left:max(10px,env(safe-area-inset-left))}.mia-launcher{width:154px;margin-left:auto}.mia-panel{position:fixed;left:max(10px,env(safe-area-inset-left));right:max(10px,env(safe-area-inset-right));bottom:max(10px,env(safe-area-inset-bottom));width:auto;max-height:calc(100dvh - 20px - env(safe-area-inset-top) - env(safe-area-inset-bottom))}.mia-composer{gap:6px;padding:10px}.mia-composer textarea{min-width:72px}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 `;

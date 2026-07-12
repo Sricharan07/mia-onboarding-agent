@@ -126,6 +126,7 @@ export type MiaActionManifest = Pick<MiaActionDefinition, "name" | "description"
 
 export type AgentTarget = {
   ref: string;
+  implicit?: boolean;
   nodeId?: string;
   elementKey?: string;
   fingerprint?: string;

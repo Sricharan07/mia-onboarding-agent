@@ -228,8 +228,8 @@ export class MiaShadowCursor {
   }
 
   navigateTo(targetX: number, targetY: number, label?: string): void {
-    const x = clamp(targetX, 8, Math.max(8, window.innerWidth - 8));
-    const y = clamp(targetY, 8, Math.max(8, window.innerHeight - 8));
+    const x = clamp(targetX, 0, Math.max(0, window.innerWidth - 1));
+    const y = clamp(targetY, 0, Math.max(0, window.innerHeight - 1));
     this.navTarget = {
       x,
       y,
@@ -250,7 +250,7 @@ export class MiaShadowCursor {
   }
 
   isPointingAt(targetX: number, targetY: number): boolean {
-    return this.navMode === "pointingAtTarget" && Math.hypot(this.iconPos.x - targetX, this.iconPos.y - targetY) < 10;
+    return this.navMode === "pointingAtTarget" && Math.hypot(this.iconPos.x - targetX, this.iconPos.y - targetY) < 4;
   }
 
   returnToCursor(): void {
@@ -413,7 +413,8 @@ export class MiaShadowCursor {
     this.vel.y = (this.iconPos.y - prevY) / dt;
     const speed = Math.hypot(this.vel.x, this.vel.y);
 
-    if (speed > 8) this.rotationTarget = (Math.atan2(this.vel.y, this.vel.x) * 180) / Math.PI;
+    if (this.navMode === "pointingAtTarget") this.rotationTarget = 0;
+    else if (speed > 8) this.rotationTarget = (Math.atan2(this.vel.y, this.vel.x) * 180) / Math.PI;
     this.flightScaleTarget = 1 + clamp(speed / 2200, 0, 0.22);
     if (this.navMode === "navigatingToTarget" || this.navMode === "returningToCursor") this.flightScaleTarget += 0.04;
     if (this.navMode === "pointingAtTarget") this.flightScaleTarget += 0.03;
@@ -565,7 +566,7 @@ export class MiaShadowCursor {
   private template(): string {
     return `
       <div class="mia-root" data-state="idle" data-nav-mode="followingCursor">
-        <div class="mia-cursor">
+        <div class="mia-cursor" data-hotspot="top-left">
           <div class="mia-cursor-inner"></div>
           <img class="mia-cursor-img" alt="" />
           <div class="mia-shimmer"></div>

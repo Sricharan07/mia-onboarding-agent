@@ -458,6 +458,8 @@ export class Mia {
   }
 
   private async runtime(signal: AbortSignal, visualContext: MiaVisualContext[] = []) {
+    const runtimeConfig = await this.backend.getRuntimeConfig(signal);
+    this.collector.setRuntimeRedactedSelectors(runtimeConfig.redactedSelectors);
     const observation = this.collector.collect();
     const context = await Promise.all((this.options.contextProviders ?? []).map(async (provider): Promise<MiaContextEntry> => ({
       name: provider.name,

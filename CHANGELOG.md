@@ -4,6 +4,14 @@ All notable changes to Mia are documented here. The project follows [Keep a Chan
 
 ## Unreleased
 
+### Fixed
+
+- Enforced typed host-action effects, synonym-resistant prohibited-operation policy, manual-action non-execution, and administrator-reviewed UI policy across rescans.
+- Added strict final judgment for grounded answers, append-only action attempts with completed no-op replay, exact route verification, and cross-origin link defense.
+- Revoked other administrator sessions on password change, bound runtime events to their host user, and pinned UI scans against DNS rebinding.
+- Synchronized administrator redaction selectors into every SDK observation, kept page titles private by default, and excluded document-head text.
+- Corrected contenteditable verification, safe Space/Escape handling, cursor hotspot geometry, mobile assistant controls, and audio walkthrough uploads.
+
 ## 1.0.0 - 2026-07-10
 
 ### Added

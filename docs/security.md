@@ -37,7 +37,7 @@ Protect:
 - UI scanner username/password;
 - agent resume tokens while active.
 
-Administrator passwords use scrypt with a unique salt. Administrator sessions, integration keys, runtime tokens, and resume tokens are stored as one-way hashes. Gemini and scanner secrets stored through the console are encrypted with authenticated encryption derived from `MIA_SECRET_ENCRYPTION_KEY`.
+Administrator passwords use scrypt with a unique salt. Administrator sessions, integration keys, runtime tokens, and resume tokens are stored as one-way hashes. A password change updates the hash and revokes every other administrator session in one database transaction. Gemini and scanner secrets stored through the console are encrypted with authenticated encryption derived from `MIA_SECRET_ENCRYPTION_KEY`.
 
 The application does not encrypt all PostgreSQL rows or uploaded files. Use encrypted disks, encrypted backups, access-controlled object/block storage, and TLS to an external database as required by the deployment's data classification.
 
@@ -75,7 +75,7 @@ The backend never accepts model-created CSS as authority, arbitrary JavaScript, 
 
 Read/guidance actions can proceed without approval. Reversible writes require a short-lived confirmation bound to the exact session, revision, action batch, target, arguments, and opaque binding. Text, UI, and voice approval use the same backend resolution. Stale, expired, denied, altered, reused, or mismatched confirmations fail closed.
 
-Every action has an idempotency key. The SDK reports a structured receipt and new observation; the backend accepts exactly one receipt for each issued action. Mia re-observes after barriers and requires a final model judgment grounded in receipts and page evidence before claiming completion.
+Every action has an idempotency key. The SDK reports a structured receipt and new observation; the backend records each issued attempt while permitting only one completed receipt for an idempotency key. Equivalent completed actions are replayed as no-ops. Mia re-observes after barriers and requires a final model judgment for both answers and action completion, grounded in validated state and bounded product evidence.
 
 ## Prohibited Operations
 
@@ -93,7 +93,7 @@ Before network or telemetry boundaries it removes:
 
 - password and recognized secret/payment inputs;
 - token-, credential-, card-, and authentication-like values;
-- configured `privacy.redactedSelectors` regions;
+- administrator and host-configured `privacy.redactedSelectors` regions;
 - Mia's own panel and cursor;
 - URL query and page title unless explicitly enabled;
 - values matched by configured sensitive patterns.
@@ -110,7 +110,7 @@ Retrieved documents, mapped text, skills, and page content are wrapped as eviden
 
 ## Scanner Network Controls
 
-Production scanning blocks loopback, link-local, private, reserved, multicast, and metadata-service targets by default, including redirects and subresources. `UI_SCAN_ALLOW_PRIVATE_NETWORKS=true` is an explicit deployment-level exception for trusted internal products.
+Production scanning blocks loopback, link-local, private, reserved, multicast, and metadata-service targets by default, including redirects and subresources. Public origins are resolved before launch and Chromium is pinned to those validated addresses for the entire scan, preventing DNS rebinding after preflight. `UI_SCAN_ALLOW_PRIVATE_NETWORKS=true` is an explicit deployment-level exception for trusted internal products.
 
 Use a dedicated account with the smallest permissions required. Configure redaction selectors before the first scan. Do not scan broad production administrator sessions or pages containing secrets that cannot be reliably redacted.
 
@@ -135,7 +135,7 @@ Place additional edge throttling, request-size enforcement, authentication, and 
 
 - **Integration key exposed:** revoke it in Settings, create a replacement, and update the host backend. Existing runtime tokens minted from product credentials should be treated as exposed until expiry; changing product origin revokes them immediately but is not a routine rotation mechanism.
 - **Gemini key exposed:** rotate it at the provider, update environment/console storage, and review provider usage.
-- **Administrator session exposed:** log out/revoke, change the password, and review Runs and configuration changes.
+- **Administrator session exposed:** change the password from a trusted active session to revoke every other session, then review Runs and configuration changes.
 - **Encryption key exposed:** rotate all encrypted provider/scanner credentials and plan a controlled data-key migration; simply changing the environment key makes stored ciphertext unreadable.
 - **PostgreSQL/uploads exposed:** preserve evidence, isolate the deployment, rotate credentials, assess transcript/knowledge scope, restore from a known-good backup if needed, and follow applicable notification requirements.
 

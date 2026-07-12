@@ -73,6 +73,24 @@ test("backend client binds a provider session handle into refreshed Live tokens"
   }
 });
 
+test("backend client loads the authoritative runtime privacy configuration", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({
+    redactedSelectors: ["[data-private]", "[data-private]", "#payment"],
+    updatedAt: "2026-07-12T12:00:00.000Z"
+  });
+  try {
+    const client = new BackendClient({
+      backendUrl: "http://localhost:4000",
+      tokenProvider: () => "runtime-token"
+    });
+    const config = await client.getRuntimeConfig();
+    assert.deepEqual(config.redactedSelectors, ["[data-private]", "#payment"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 function observation() {
   return {
     id: "observation_1",

@@ -18,6 +18,7 @@ type RuntimePayload = {
 };
 type TokenCache = RuntimeToken & { expiresAtMs?: number };
 type StreamEvent = { type: string; data: unknown };
+export type RuntimeConfig = { redactedSelectors: string[]; updatedAt: string };
 
 export class BackendClient {
   private readonly baseUrl: string;
@@ -98,6 +99,17 @@ export class BackendClient {
     });
   }
 
+  async getRuntimeConfig(signal?: AbortSignal): Promise<RuntimeConfig> {
+    const value = await this.request<unknown>("/api/v1/runtime/config", { method: "GET", signal });
+    if (!value || typeof value !== "object") throw new Error("Mia backend returned an invalid runtime configuration.");
+    const config = value as Partial<RuntimeConfig>;
+    if (!Array.isArray(config.redactedSelectors) || !config.redactedSelectors.every((selector) => typeof selector === "string")
+      || typeof config.updatedAt !== "string") {
+      throw new Error("Mia backend returned an invalid runtime configuration.");
+    }
+    return { redactedSelectors: [...new Set(config.redactedSelectors)].slice(0, 100), updatedAt: config.updatedAt };
+  }
+
   async recordEvent(eventType: string, payload: Record<string, unknown>, sessionId?: string): Promise<void> {
     await this.request("/api/v1/runtime/events", { method: "POST", body: { sessionId, eventType, payload } });
   }
@@ -140,11 +152,12 @@ export class BackendClient {
     return final;
   }
 
-  private async request<T>(path: string, input: { method: string; body?: unknown }): Promise<T> {
+  private async request<T>(path: string, input: { method: string; body?: unknown; signal?: AbortSignal }): Promise<T> {
     const response = await this.fetchWithAuth(path, {
       method: input.method,
       headers: { "content-type": "application/json", accept: "application/json" },
-      body: input.body === undefined ? undefined : JSON.stringify(input.body)
+      body: input.body === undefined ? undefined : JSON.stringify(input.body),
+      signal: input.signal
     });
     if (!response.ok) throw await responseError(response);
     return response.json() as Promise<T>;

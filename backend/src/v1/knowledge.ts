@@ -356,8 +356,10 @@ function assertDocumentMime(mimeType: string, name: string): void {
 }
 
 function assertRecordingMime(mimeType: string): void {
-  if (!new Set(["video/mp4", "video/webm", "video/quicktime"]).has(mimeType.toLowerCase())) {
-    throw new AppError("RECORDING_TYPE_INVALID", "Upload an MP4, WebM, or QuickTime recording.", 400);
+  if (!new Set([
+    "video/mp4", "video/webm", "video/quicktime", "audio/mpeg", "audio/wav", "audio/mp4", "audio/webm"
+  ]).has(mimeType.toLowerCase())) {
+    throw new AppError("RECORDING_TYPE_INVALID", "Upload an MP4, MOV, WebM, MP3, WAV, or M4A recording.", 400);
   }
 }
 

@@ -141,7 +141,7 @@ Application logs are structured. Error payloads are sanitized before logging, bu
 
 ## Scanner Network Policy
 
-The scanner accepts only the configured product origin and administrator-approved HTTPS documentation origins. It resolves DNS, checks redirects and resources, and blocks private/reserved networks by default in production.
+The scanner accepts only the configured product origin and administrator-approved HTTPS resource origins. It resolves every public origin before launch, pins Chromium to the validated addresses for the full scan, checks navigation/resource origins, and blocks private/reserved networks by default in production.
 
 Set `UI_SCAN_ALLOW_PRIVATE_NETWORKS=true` only when the backend is intentionally inside a trusted network and the target is owned. Use a dedicated least-privilege scan account. Redact secrets and private regions before scanning.
 

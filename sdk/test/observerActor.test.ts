@@ -19,7 +19,14 @@ test("assistant panel preserves its controls across status and voice updates", (
       styleNonce: "test-csp-nonce"
     });
     panel.mount();
+    const mountedHost = document.querySelector<HTMLElement>("[data-mia-assistant-panel]")!;
+    const mountedRoot = mountedHost.shadowRoot!;
+    const stop = mountedRoot.querySelector<HTMLButtonElement>("[data-stop]")!;
+    assert.equal(stop.hidden, true);
+    assert.equal(stop.disabled, true);
     panel.setStatus("thinking");
+    assert.equal(stop.hidden, false);
+    assert.equal(stop.disabled, false);
     panel.setVoiceActive(true);
     panel.setStatus("idle");
 
@@ -31,6 +38,7 @@ test("assistant panel preserves its controls across status and voice updates", (
     assert.equal(root.querySelector("style")?.nonce, "test-csp-nonce");
     assert.match(style, /:host\{[^}]*position:fixed;inset:0;[^}]*pointer-events:none/);
     assert.match(style, /\.mia-shell\{[^}]*position:absolute;[^}]*pointer-events:auto/);
+    assert.match(style, /\.mia-composer\{[^}]*display:flex/);
     assert.equal(root.querySelector("[data-status-label]")?.textContent, "Ready");
     assert.equal(root.querySelector("[data-launcher-status]")?.textContent, "Ready");
     assert.equal(root.querySelector("[data-shell]")?.getAttribute("data-status"), "idle");
@@ -55,14 +63,18 @@ test("semantic observer traverses open shadow roots, preserves stable IDs, and r
       <label>Verification code<input id="protected-code" name="entry" autocomplete="one-time-code" value="123456"></label>
       <label>Card number<input id="protected-card" name="entry" autocomplete="cc-number" value="4111111111111111"></label>
       <section data-private>Private customer 4111 1111 1111 1111</section>
+      <section data-admin-private><button>Administrator-redacted action</button></section>
       <div id="shadow-host"></div>
     </main>
   `);
   try {
     const host = document.querySelector<HTMLElement>("#shadow-host")!;
     host.attachShadow({ mode: "open" }).innerHTML = `<button aria-label="Shadow action">Internal label</button>`;
+    document.title = "Private customer workspace";
     const collector = new AgentObservationCollector(options());
     const first = collector.collect();
+    assert.equal(first.title, undefined, "page titles are private unless the host explicitly opts in");
+    assert.ok(first.nodes.some((node) => node.name === "Administrator-redacted action"));
     const create = first.nodes.find((node) => node.elementKey === "create-lead");
     assert.ok(create);
     assert.ok(first.nodes.some((node) => node.name === "Shadow action"));
@@ -82,6 +94,11 @@ test("semantic observer traverses open shadow roots, preserves stable IDs, and r
     assert.equal(first.pageText?.includes("Private customer"), false);
     assert.equal(first.pageText?.includes("4111"), false);
 
+    collector.setRuntimeRedactedSelectors(["[data-admin-private]"]);
+    const serverRedacted = collector.collect();
+    assert.equal(serverRedacted.nodes.some((node) => node.name === "Administrator-redacted action"), false);
+    assert.equal(serverRedacted.pageText?.includes("Administrator-redacted action"), false);
+
     const old = document.querySelector("[data-mia-key='create-lead']")!;
     const replacement = document.createElement("button");
     replacement.dataset.miaKey = "create-lead";
@@ -90,6 +107,13 @@ test("semantic observer traverses open shadow roots, preserves stable IDs, and r
     const second = collector.collect();
     assert.equal(second.nodes.find((node) => node.elementKey === "create-lead")?.nodeId, create.nodeId);
     collector.destroy();
+
+    const titleCollector = new AgentObservationCollector({
+      ...options(),
+      privacy: { ...options().privacy, includePageTitle: true }
+    });
+    assert.equal(titleCollector.collect().title, "Private customer workspace");
+    titleCollector.destroy();
   } finally {
     cleanup();
   }
@@ -416,6 +440,116 @@ test("DOM actor enforces exact approved routes for targets and navigation", asyn
     assert.equal(navigated.receipts[0]?.status, "completed");
     assert.equal(location.pathname + location.search + location.hash, "/dashboard/crm?view=summary#totals");
     assert.equal(navigated.receipts[0]?.evidence.exactRouteMatch, true);
+    collector.destroy();
+  } finally {
+    cleanup();
+  }
+});
+
+test("DOM actor verifies contenteditable fields and safe supported key actions", async () => {
+  const cleanup = installDom(`<main>
+    <div id="dialog">Open dialog</div>
+    <div id="editor" contenteditable="true" role="textbox" aria-label="Notes"></div>
+    <button id="plain" type="button" aria-pressed="false">Pin draft</button>
+    <form id="form">
+      <input id="form-field" aria-label="Search">
+      <button id="submit" type="submit">Submit</button>
+    </form>
+  </main>`);
+  try {
+    let submissions = 0;
+    document.querySelector("#form")!.addEventListener("submit", (event) => { event.preventDefault(); submissions += 1; });
+    document.querySelector("#plain")!.addEventListener("click", (event) => {
+      (event.currentTarget as HTMLElement).setAttribute("aria-pressed", "true");
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") (document.querySelector("#dialog") as HTMLElement).hidden = true;
+    });
+    const collector = new AgentObservationCollector(options());
+    const observation = collector.collect();
+    const node = (id: string) => observation.nodes.find((candidate) =>
+      candidate.locators.some((locator) => locator.strategy === "css" && locator.selector === `#${id}`))!;
+    const cursor = { navigateTo: () => undefined, returnToCursor: () => undefined } as unknown as MiaShadowCursor;
+    const actor = new DomAgentActor({ collector, cursor, config: options() });
+
+    const editor = node("editor");
+    const filled = await actor.executeBatch([{
+      actionId: "contenteditable_fill",
+      idempotencyKey: "contenteditable_fill_key",
+      type: "fill",
+      message: "Enter the notes",
+      expectedOutcome: "The notes contain the exact text",
+      risk: "reversible_write",
+      target: { ref: `live:${editor.nodeId}`, nodeId: editor.nodeId, label: editor.name, role: editor.role, locators: editor.locators },
+      value: "Review with Avery"
+    }], observation, new AbortController().signal);
+    assert.equal(filled.receipts[0]?.status, "completed");
+    assert.equal(document.querySelector("#editor")!.textContent, "Review with Avery");
+
+    const refreshedEditor = collector.collect().nodes.find((candidate) =>
+      candidate.locators.some((locator) => locator.strategy === "css" && locator.selector === "#editor"))!;
+    const cleared = await actor.executeBatch([{
+      actionId: "contenteditable_clear",
+      idempotencyKey: "contenteditable_clear_key",
+      type: "clear",
+      message: "Clear the notes",
+      expectedOutcome: "The notes are empty",
+      risk: "reversible_write",
+      target: { ref: `live:${refreshedEditor.nodeId}`, nodeId: refreshedEditor.nodeId, label: refreshedEditor.name, role: refreshedEditor.role, locators: refreshedEditor.locators }
+    }], collector.collect(), new AbortController().signal);
+    assert.equal(cleared.receipts[0]?.status, "completed");
+    assert.equal(document.querySelector("#editor")!.textContent, "");
+
+    const plain = node("plain");
+    const space = await actor.executeBatch([{
+      actionId: "space_button",
+      idempotencyKey: "space_button_key",
+      type: "press_key",
+      key: "Space",
+      message: "Pin the draft",
+      expectedOutcome: "The draft is pinned",
+      risk: "reversible_write",
+      target: { ref: `live:${plain.nodeId}`, nodeId: plain.nodeId, label: plain.name, role: plain.role, formAssociated: false, formSubmitter: false, locators: plain.locators }
+    }], collector.collect(), new AbortController().signal);
+    assert.equal(space.receipts[0]?.status, "completed");
+    assert.equal(document.querySelector("#plain")!.getAttribute("aria-pressed"), "true");
+
+    for (const [id, key] of [["submit", "Space"], ["form-field", "Enter"]] as const) {
+      const target = node(id);
+      const blocked = await actor.executeBatch([{
+        actionId: `blocked_${id}`,
+        idempotencyKey: `blocked_${id}_key`,
+        type: "press_key",
+        key,
+        message: "Use the form control",
+        expectedOutcome: "The form responds",
+        risk: "reversible_write",
+        target: {
+          ref: `live:${target.nodeId}`,
+          nodeId: target.nodeId,
+          label: target.name,
+          role: target.role,
+          formAssociated: true,
+          formSubmitter: id === "submit",
+          locators: target.locators
+        }
+      }], collector.collect(), new AbortController().signal);
+      assert.equal(blocked.receipts[0]?.status, "failed");
+    }
+    assert.equal(submissions, 0);
+
+    (document.querySelector("#editor") as HTMLElement).focus();
+    const escape = await actor.executeBatch([{
+      actionId: "global_escape",
+      idempotencyKey: "global_escape_key",
+      type: "press_key",
+      key: "escape",
+      message: "Close the open dialog",
+      expectedOutcome: "The dialog closes",
+      risk: "reversible_write"
+    }], collector.collect(), new AbortController().signal);
+    assert.equal(escape.receipts[0]?.status, "completed");
+    assert.equal((document.querySelector("#dialog") as HTMLElement).hidden, true);
     collector.destroy();
   } finally {
     cleanup();
