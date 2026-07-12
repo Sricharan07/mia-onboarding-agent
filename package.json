@@ -21,7 +21,7 @@
     "audit:prod": "npm audit --omit=dev && npm --prefix backend/console audit --omit=dev && npm --prefix example/demo-crm+sdk audit --omit=dev",
     "audit:all": "npm audit && npm --prefix backend/console audit && npm --prefix example/demo-crm+sdk audit",
     "pack:sdk": "npm pack --dry-run -w sdk",
-    "check:demo": "npm --prefix example/demo-crm+sdk run check",
+    "check:demo": "npm --prefix example/demo-crm+sdk run test && npm --prefix example/demo-crm+sdk run check",
     "acceptance:browsers": "node scripts/browser-acceptance.mjs",
     "acceptance:safari": "node scripts/safari-acceptance.mjs",
     "acceptance:voice": "node scripts/voice-acceptance.mjs",

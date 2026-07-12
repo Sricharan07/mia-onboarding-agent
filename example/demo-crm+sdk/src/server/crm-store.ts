@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import seedRows from "@/app/(main)/dashboard/crm/_components/opportunities-table/data.json";
 import {
   type CrmActivity,
@@ -13,7 +15,8 @@ import {
   type OpportunityStage,
 } from "@/lib/crm-types";
 
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 type SeedRow = {
@@ -25,37 +28,66 @@ type SeedRow = {
   value: string;
 };
 
-const dataDir = path.join(process.cwd(), "data");
+const idempotencyRecordSchema = z.object({
+  key: z.string().min(1).max(256),
+  operation: z.string().min(1),
+  requestHash: z.string().regex(/^[a-f0-9]{64}$/),
+  createdAt: z.string(),
+});
+const storedCrmStateSchema = crmSnapshotSchema.extend({
+  _miaIdempotency: z.array(idempotencyRecordSchema).default([]),
+});
+
+type StoredCrmState = z.infer<typeof storedCrmStateSchema>;
+type IdempotentMutation = { key: string; operation: string; payload: unknown };
+
+const dataDir = process.env.MIA_DEMO_DATA_DIR?.trim() || path.join(process.cwd(), "data");
 const statePath = path.join(dataDir, "crm-state.json");
 
-let writeQueue = Promise.resolve();
+let writeQueue: Promise<void> = Promise.resolve();
 
 const owners = ["Mia Chen", "Avery Stone", "Noah Kim", "Priya Shah", "Jordan Lee"];
 const contacts = ["Tim", "Riley", "Morgan", "Casey", "Sam", "Alex", "Jamie", "Taylor"];
 
-export async function getCrmSnapshot(): Promise<CrmSnapshot> {
-  return readState();
+export class IdempotencyConflictError extends Error {
+  readonly code = "IDEMPOTENCY_KEY_REUSED";
+
+  constructor(readonly idempotencyKey: string) {
+    super("This idempotency key was already used for a different request.");
+    this.name = "IdempotencyConflictError";
+  }
 }
 
-export async function updateOpportunity(id: string, patch: OpportunityPatch): Promise<CrmSnapshot> {
-  return mutateState((state) => {
-    const opportunity = findOpportunity(state, id);
-    const nextAmount = patch.amount ?? opportunity.amount;
-    Object.assign(opportunity, {
-      ...patch,
-      amount: nextAmount,
-      value: formatCurrency(nextAmount),
-      lastActivityAt: "Just now",
-    });
-    state.activities.unshift(
-      activity({
-        title: `Updated ${opportunity.account} opportunity`,
-        actor: "Sales Ops",
-        type: "crm_change",
-        opportunityId: opportunity.id,
-      }),
-    );
-  });
+export async function getCrmSnapshot(): Promise<CrmSnapshot> {
+  return toPublicSnapshot(await readStoredState());
+}
+
+export async function updateOpportunity(
+  id: string,
+  patch: OpportunityPatch,
+  idempotencyKey?: string,
+): Promise<CrmSnapshot> {
+  return mutateState(
+    (state) => {
+      const opportunity = findOpportunity(state, id);
+      const nextAmount = patch.amount ?? opportunity.amount;
+      Object.assign(opportunity, {
+        ...patch,
+        amount: nextAmount,
+        value: formatCurrency(nextAmount),
+        lastActivityAt: "Just now",
+      });
+      state.activities.unshift(
+        activity({
+          title: `Updated ${opportunity.account} opportunity`,
+          actor: "Sales Ops",
+          type: "crm_change",
+          opportunityId: opportunity.id,
+        }),
+      );
+    },
+    idempotencyKey ? { key: idempotencyKey, operation: `update_opportunity:${id}`, payload: patch } : undefined,
+  );
 }
 
 export async function createDraftOpportunity(
@@ -65,36 +97,48 @@ export async function createDraftOpportunity(
   const draftId = idempotencyKey
     ? `DRAFT-${stableId(idempotencyKey)}`
     : `DRAFT-${Date.now().toString(36).toUpperCase()}`;
-  const state = await mutateState((current) => {
-    if (current.opportunities.some((opportunity) => opportunity.id === draftId)) return;
-    const amount = input.amount ?? 0;
-    current.opportunities.unshift({
-      id: draftId,
-      account: input.account,
-      contactName: input.contactName ?? "Unassigned",
-      owner: "Unassigned",
-      stage: "Qualified",
-      priority: 3,
-      health: "Needs Review",
-      amount,
-      value: formatCurrency(amount),
-      probability: 20,
-      closeDate: futureDate(21),
-      lastActivityAt: "Just now",
-      nextStep: "Review and qualify this draft opportunity.",
-      outcome: "open",
-      isDraft: true,
-      notes: [],
-    });
-    current.activities.unshift(
-      activity({
-        title: `Created draft opportunity for ${input.account}`,
-        actor: "Mia Assistant",
-        type: "mia_action",
-        opportunityId: draftId,
-      }),
-    );
-  });
+  const state = await mutateState(
+    (current) => {
+      const existing = current.opportunities.find((opportunity) => opportunity.id === draftId);
+      if (existing) {
+        const sameRequest =
+          existing.account === input.account &&
+          existing.contactName === (input.contactName ?? "Unassigned") &&
+          existing.amount === (input.amount ?? 0) &&
+          existing.isDraft;
+        if (!sameRequest && idempotencyKey) throw new IdempotencyConflictError(idempotencyKey);
+        return;
+      }
+      const amount = input.amount ?? 0;
+      current.opportunities.unshift({
+        id: draftId,
+        account: input.account,
+        contactName: input.contactName ?? "Unassigned",
+        owner: "Unassigned",
+        stage: "Qualified",
+        priority: 3,
+        health: "Needs Review",
+        amount,
+        value: formatCurrency(amount),
+        probability: 20,
+        closeDate: futureDate(21),
+        lastActivityAt: "Just now",
+        nextStep: "Review and qualify this draft opportunity.",
+        outcome: "open",
+        isDraft: true,
+        notes: [],
+      });
+      current.activities.unshift(
+        activity({
+          title: `Created draft opportunity for ${input.account}`,
+          actor: "Mia Assistant",
+          type: "mia_action",
+          opportunityId: draftId,
+        }),
+      );
+    },
+    idempotencyKey ? { key: idempotencyKey, operation: "create_draft_opportunity", payload: input } : undefined,
+  );
   return { state, draftId };
 }
 
@@ -158,31 +202,104 @@ export function formatCurrency(amount: number): string {
   }).format(amount);
 }
 
-async function mutateState(mutator: (state: CrmSnapshot) => void): Promise<CrmSnapshot> {
-  writeQueue = writeQueue.then(async () => {
-    const state = await readState();
+async function mutateState(
+  mutator: (state: CrmSnapshot) => void,
+  idempotency?: IdempotentMutation,
+): Promise<CrmSnapshot> {
+  const operation = writeQueue.then(async () => {
+    const state = await readStoredState();
+    const requestHash = idempotency ? hashRequest(idempotency.operation, idempotency.payload) : undefined;
+    const previous = idempotency ? state._miaIdempotency.find((record) => record.key === idempotency.key) : undefined;
+
+    if (previous) {
+      if (previous.operation !== idempotency?.operation || previous.requestHash !== requestHash) {
+        throw new IdempotencyConflictError(previous.key);
+      }
+      return toPublicSnapshot(state);
+    }
+
     mutator(state);
-    const next = recomputeState({ ...state, updatedAt: new Date().toISOString() });
-    await writeState(next);
+    const nextSnapshot = recomputeState({ ...toPublicSnapshot(state), updatedAt: new Date().toISOString() });
+    const next: StoredCrmState = {
+      ...nextSnapshot,
+      _miaIdempotency:
+        idempotency && requestHash
+          ? [
+              ...state._miaIdempotency,
+              {
+                key: idempotency.key,
+                operation: idempotency.operation,
+                requestHash,
+                createdAt: new Date().toISOString(),
+              },
+            ]
+          : state._miaIdempotency,
+    };
+    await writeStoredState(next);
+    return toPublicSnapshot(next);
   });
-  await writeQueue;
-  return readState();
+  writeQueue = operation.then(
+    () => undefined,
+    () => undefined,
+  );
+  return operation;
 }
 
-async function readState(): Promise<CrmSnapshot> {
+async function readStoredState(): Promise<StoredCrmState> {
   try {
     const raw = await readFile(statePath, "utf8");
-    return migrateState(crmSnapshotSchema.parse(JSON.parse(raw)));
-  } catch {
-    const initial = recomputeState(createInitialState());
-    await writeState(initial);
+    const state = storedCrmStateSchema.parse(JSON.parse(raw));
+    return { ...migrateState(state), _miaIdempotency: state._miaIdempotency };
+  } catch (error) {
+    if (!isMissingFile(error)) throw error;
+    const initial: StoredCrmState = {
+      ...recomputeState(createInitialState()),
+      _miaIdempotency: [],
+    };
+    await writeStoredState(initial);
     return initial;
   }
 }
 
-async function writeState(state: CrmSnapshot): Promise<void> {
-  await mkdir(dataDir, { recursive: true });
-  await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+async function writeStoredState(state: StoredCrmState): Promise<void> {
+  await mkdir(dataDir, { recursive: true, mode: 0o700 });
+  const temporaryPath = `${statePath}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporaryPath, `${JSON.stringify(storedCrmStateSchema.parse(state), null, 2)}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+      flag: "wx",
+    });
+    await rename(temporaryPath, statePath);
+  } finally {
+    await unlink(temporaryPath).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== "ENOENT") throw error;
+    });
+  }
+}
+
+function toPublicSnapshot(state: StoredCrmState): CrmSnapshot {
+  return crmSnapshotSchema.parse(state);
+}
+
+function hashRequest(operation: string, payload: unknown): string {
+  return createHash("sha256")
+    .update(JSON.stringify({ operation, payload: canonicalJson(payload) }))
+    .digest("hex");
+}
+
+function canonicalJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalJson);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => [key, canonicalJson(entry)]),
+  );
+}
+
+function isMissingFile(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
 function createInitialState(): CrmSnapshot {
