@@ -165,6 +165,51 @@ test("v1 PostgreSQL foundation migrates and enforces singleton setup plus sessio
     const providerError = await database.query<{ error: string }>("SELECT error FROM ai_requests WHERE id = 'provider_error_redaction'");
     assert.equal(providerError.rows[0]?.error.includes("provider-secret"), false);
     assert.equal(providerError.rows[0]?.error.includes("654321"), false);
+
+    await repositories.agent.createSession({
+      id: "agent_session_recent",
+      resumeTokenHash: "resume-hash-recent",
+      userId: "user_recent",
+      route: "/dashboard"
+    });
+    await database.query("UPDATE agent_sessions SET updated_at = NOW() - INTERVAL '31 days' WHERE id = 'agent_session_test'");
+    await database.query(`
+      INSERT INTO runtime_events (id, event_type, payload, created_at) VALUES
+        ('event_expired', 'sdk_ready', '{}'::jsonb, NOW() - INTERVAL '31 days'),
+        ('event_recent', 'sdk_ready', '{}'::jsonb, NOW())
+    `);
+    await database.query(`
+      INSERT INTO ai_requests (id, purpose, model, created_at) VALUES
+        ('ai_expired', 'agent_plan', 'test-model', NOW() - INTERVAL '31 days')
+    `);
+    await database.query(`
+      INSERT INTO runtime_tokens (id, prefix, token_hash, user_id, allowed_origin, capabilities, expires_at, max_uses) VALUES
+        ('runtime_expired', 'mia_rt_expired', 'runtime-expired-hash', 'user', 'http://localhost:3001', '[]'::jsonb, NOW() - INTERVAL '1 day', 1),
+        ('runtime_active', 'mia_rt_active', 'runtime-active-hash', 'user', 'http://localhost:3001', '[]'::jsonb, NOW() + INTERVAL '1 day', 1)
+    `);
+    await database.query(`
+      INSERT INTO admin_sessions (id, token_hash, expires_at) VALUES
+        ('admin_expired', 'admin-expired-hash', NOW() - INTERVAL '1 day'),
+        ('admin_active', 'admin-active-hash', NOW() + INTERVAL '1 day')
+    `);
+    assert.deepEqual(await repositories.diagnostics.purgeExpired(30), {
+      sessions: 1,
+      events: 1,
+      aiRequests: 1,
+      tokens: 1,
+      adminSessions: 1
+    });
+    for (const [table, expired, active] of [
+      ["agent_sessions", "agent_session_test", "agent_session_recent"],
+      ["runtime_events", "event_expired", "event_recent"],
+      ["runtime_tokens", "runtime_expired", "runtime_active"],
+      ["admin_sessions", "admin_expired", "admin_active"]
+    ] as const) {
+      assert.equal((await database.query<{ count: number }>(`SELECT COUNT(*)::int AS count FROM ${table} WHERE id = $1`, [expired])).rows[0]?.count, 0, expired);
+      assert.equal((await database.query<{ count: number }>(`SELECT COUNT(*)::int AS count FROM ${table} WHERE id = $1`, [active])).rows[0]?.count, 1, active);
+    }
+    assert.equal((await database.query<{ count: number }>("SELECT COUNT(*)::int AS count FROM ai_requests WHERE id = 'ai_expired'")).rows[0]?.count, 0);
+    assert.equal((await database.query<{ count: number }>("SELECT COUNT(*)::int AS count FROM ai_requests WHERE id = 'provider_error_redaction'")).rows[0]?.count, 1);
   } finally {
     await database.close();
   }
