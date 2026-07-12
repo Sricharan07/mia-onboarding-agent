@@ -37,7 +37,7 @@ export const MIA_SHADOW_CURSOR_STYLES = `
   position: fixed;
   inset: 0;
   pointer-events: none;
-  z-index: 2147483647;
+  z-index: 2147483644;
   font-family: "IBM Plex Sans", "Inter", system-ui, sans-serif;
   contain: layout style paint;
 }

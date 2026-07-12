@@ -83,6 +83,7 @@ export class Mia {
       config: options,
       onAction: (action, receipt) => {
         if (!receipt) {
+          if (action.target) this.panel?.closePanel();
           this.emit({ type: "action_requested", action });
           this.setStatus("guiding");
           this.cursor.setBubbleText(action.message);

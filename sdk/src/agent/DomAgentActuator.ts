@@ -76,45 +76,61 @@ export class DomAgentActor {
         if (directive.risk === "manual") {
           return { receipt: receipt(directive, "manual", "This protected step must be completed by the user.", { targetVisible: true }), visualContext: [] };
         }
-        assertTargetCanExecute(target.element, directive.type);
-        const before = snapshot(target.element, this.options.collector.getRevision());
-        switch (directive.type) {
-          case "point":
-          case "highlight":
-          case "scroll_to":
-            return { receipt: receipt(directive, "completed", "Mia pointed to the target.", { inViewport: inViewport(topRect(target.element)) }), visualContext: [] };
-          case "hover":
-            dispatchHover(target.element);
-            return { receipt: receipt(directive, "completed", "Mia hovered over the target.", { hoverEventsDispatched: true }), visualContext: [] };
-          case "focus":
-            target.element.focus({ preventScroll: true });
-            break;
-          case "click":
-            target.element.click();
-            break;
-          case "fill":
-            if (directive.value === undefined) throw new Error("The fill action did not include a value.");
-            setControlValue(target.element, directive.value);
-            break;
-          case "clear":
-            setControlValue(target.element, "");
-            break;
-          case "select":
-            if (directive.value === undefined) throw new Error("The select action did not include a value.");
-            selectValue(target.element, directive.value);
-            break;
-          case "toggle":
-            target.element.click();
-            break;
-          case "press_key":
-            pressKey(target.element, directive.key);
-            break;
-          default:
-            throw new Error(`Unsupported DOM action: ${directive.type}.`);
+        assertTargetCanExecute(target.element, directive.type, directive.key);
+        if (["point", "highlight", "scroll_to"].includes(directive.type)) {
+          const visibility = targetVisibility(target.element, topRect(target.element));
+          return {
+            receipt: receipt(
+              directive,
+              visibility.visible ? "completed" : "unverified",
+              visibility.visible ? "Mia pointed to the target." : "The target moved or became covered before Mia could finish pointing.",
+              { inViewport: visibility.inViewport, targetVisible: visibility.visible }
+            ),
+            visualContext: []
+          };
         }
-        await settle(signal);
+        if (directive.type === "hover") {
+          dispatchHover(target.element);
+          return { receipt: receipt(directive, "completed", "Mia hovered over the target.", { hoverEventsDispatched: true }), visualContext: [] };
+        }
+        const before = snapshot(target.element, this.options.collector.getRevision());
+        const mutations = trackImmediateMutations(target.element);
+        let immediateScopedDomChanged = false;
+        try {
+          switch (directive.type) {
+            case "focus":
+              target.element.focus({ preventScroll: true });
+              break;
+            case "click":
+              target.element.click();
+              break;
+            case "fill":
+              if (directive.value === undefined) throw new Error("The fill action did not include a value.");
+              setControlValue(target.element, directive.value);
+              break;
+            case "clear":
+              setControlValue(target.element, "");
+              break;
+            case "select":
+              if (directive.value === undefined) throw new Error("The select action did not include a value.");
+              selectValue(target.element, directive.value);
+              break;
+            case "toggle":
+              target.element.click();
+              break;
+            case "press_key":
+              pressKey(target.element, directive.key);
+              break;
+            default:
+              throw new Error(`Unsupported DOM action: ${directive.type}.`);
+          }
+          immediateScopedDomChanged = mutations.takeImmediate();
+          await settle(signal);
+        } finally {
+          mutations.disconnect();
+        }
         const after = snapshot(target.element, this.options.collector.getRevision());
-        const verification = verify(directive, before, after);
+        const verification = verify(directive, before, after, immediateScopedDomChanged);
         if (!["point", "highlight", "scroll_to", "hover"].includes(directive.type)) this.options.cursor.returnToCursor();
         const result = receipt(directive, verification.verified ? "completed" : "unverified", verification.message, verification.evidence);
         this.idempotentReceipts.set(directive.idempotencyKey, result);
@@ -172,12 +188,24 @@ export class DomAgentActor {
   }
 
   private async pointTo(element: HTMLElement, label: string, signal: AbortSignal): Promise<void> {
-    element.scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "center", inline: "nearest" });
-    await delay(prefersReducedMotion() ? 0 : 220, signal);
-    const rect = topRect(element);
-    if (rect.width <= 0 || rect.height <= 0) throw new Error("The target disappeared before Mia could point to it.");
-    this.options.cursor.navigateTo(rect.left + rect.width / 2, rect.top + rect.height / 2, label);
-    await delay(prefersReducedMotion() ? 0 : 420, signal);
+    let rect = await scrollTargetIntoView(element, "center", signal);
+    let visibility = targetVisibility(element, rect);
+    if (!visibility.visible) {
+      for (const block of ["start", "end"] as const) {
+        rect = await scrollTargetIntoView(element, block, signal, true);
+        visibility = targetVisibility(element, rect);
+        if (visibility.visible) break;
+      }
+    }
+    if (!visibility.inViewport) throw new Error("The target could not be brought into the visible viewport.");
+    if (!visibility.visible) throw new Error("The target is covered by another control and cannot be pointed to reliably.");
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    this.options.cursor.navigateTo(x, y, label);
+    const cursor = this.options.cursor as MiaShadowCursor & { isPointingAt?: (targetX: number, targetY: number) => boolean };
+    if (typeof cursor.isPointingAt === "function") {
+      await waitFor(() => cursor.isPointingAt!(x, y), 2_000, signal, "Mia's cursor did not reach the target in time.");
+    }
   }
 
   private async navigate(directive: ActionDirective, signal: AbortSignal): Promise<ActionReceipt> {
@@ -271,12 +299,14 @@ function allRoots(): Array<Document | ShadowRoot> {
 type ElementSnapshot = {
   url: string;
   focused: boolean;
+  activeElement: Element | null;
   value?: string;
   checked?: boolean;
   selectedIndex?: number;
   expanded?: string | null;
   pressed?: string | null;
   open?: boolean;
+  targetState: string;
   revision: number;
 };
 
@@ -285,41 +315,82 @@ function snapshot(element: HTMLElement, revision: number): ElementSnapshot {
   return {
     url: location.href,
     focused: deepActive(element.ownerDocument) === element,
+    activeElement: deepActive(element.ownerDocument),
     value: typeof control.value === "string" ? control.value : undefined,
     checked: typeof control.checked === "boolean" ? control.checked : undefined,
     selectedIndex: typeof control.selectedIndex === "number" ? control.selectedIndex : undefined,
     expanded: element.getAttribute("aria-expanded"),
     pressed: element.getAttribute("aria-pressed"),
     open: typeof control.open === "boolean" ? control.open : undefined,
+    targetState: targetState(element),
     revision
   };
 }
 
-function verify(directive: ActionDirective, before: ElementSnapshot, after: ElementSnapshot): { verified: boolean; message: string; evidence: Record<string, unknown> } {
+function verify(
+  directive: ActionDirective,
+  before: ElementSnapshot,
+  after: ElementSnapshot,
+  immediateScopedDomChanged: boolean
+): { verified: boolean; message: string; evidence: Record<string, unknown> } {
   const evidence = {
     routeChanged: before.url !== after.url,
     focusChanged: before.focused !== after.focused,
+    activeElementChanged: before.activeElement !== after.activeElement,
     valueChanged: before.value !== after.value,
     checkedChanged: before.checked !== after.checked,
     selectedIndexChanged: before.selectedIndex !== after.selectedIndex,
     expandedChanged: before.expanded !== after.expanded,
     pressedChanged: before.pressed !== after.pressed,
     openChanged: before.open !== after.open,
+    targetChanged: before.targetState !== after.targetState,
+    immediateScopedDomChanged,
     domChanged: after.revision !== before.revision
   };
-  const interactionChanged = evidence.routeChanged || evidence.valueChanged || evidence.checkedChanged
+  const interactionChanged = evidence.routeChanged || evidence.activeElementChanged || evidence.valueChanged || evidence.checkedChanged
     || evidence.selectedIndexChanged || evidence.expandedChanged || evidence.pressedChanged
-    || evidence.openChanged || evidence.domChanged;
+    || evidence.openChanged || evidence.targetChanged || evidence.immediateScopedDomChanged;
   const exact = directive.type === "focus" ? after.focused
     : directive.type === "fill" ? after.value === directive.value
       : directive.type === "clear" ? after.value === ""
         : directive.type === "select" ? after.value === directive.value
           : directive.type === "toggle" ? evidence.checkedChanged || evidence.pressedChanged
-            : interactionChanged;
+            : directive.type === "click" ? evidence.routeChanged || evidence.targetChanged || evidence.immediateScopedDomChanged
+              : interactionChanged;
   return {
     verified: exact,
     message: exact ? "The page state confirms the action completed." : "The action was dispatched, but the page exposed no confirming state change.",
     evidence
+  };
+}
+
+function targetState(element: HTMLElement): string {
+  const control = element as HTMLElement & { disabled?: boolean; readOnly?: boolean };
+  return JSON.stringify({
+    connected: element.isConnected,
+    hidden: element.hidden,
+    disabled: control.disabled,
+    readOnly: control.readOnly,
+    className: element.className,
+    text: normalize(element.textContent || "").slice(0, 500),
+    expanded: element.getAttribute("aria-expanded"),
+    pressed: element.getAttribute("aria-pressed"),
+    selected: element.getAttribute("aria-selected"),
+    busy: element.getAttribute("aria-busy")
+  });
+}
+
+function trackImmediateMutations(element: HTMLElement): { takeImmediate: () => boolean; disconnect: () => void } {
+  const scope = element.closest<HTMLElement>("form,[role='dialog'],[role='menu'],[role='listbox'],[data-mia-action-scope]")
+    ?? element.parentElement
+    ?? element;
+  const view = scope.ownerDocument.defaultView ?? window;
+  const Observer = (view as unknown as { MutationObserver: typeof MutationObserver }).MutationObserver;
+  const observer = new Observer(() => undefined);
+  observer.observe(scope, { attributes: true, childList: true, characterData: true, subtree: true });
+  return {
+    takeImmediate: () => observer.takeRecords().length > 0,
+    disconnect: () => observer.disconnect()
   };
 }
 
@@ -384,10 +455,27 @@ function dispatchHover(element: HTMLElement): void {
 function showHighlight(element: HTMLElement): () => void {
   const overlay = document.createElement("div");
   overlay.dataset.miaSdkRoot = "highlight";
-  const rect = topRect(element);
-  overlay.style.cssText = `position:fixed;z-index:2147483644;pointer-events:none;left:${rect.left - 4}px;top:${rect.top - 4}px;width:${rect.width + 8}px;height:${rect.height + 8}px;border:2px solid #35d6b2;border-radius:6px;box-shadow:0 0 0 4px rgba(53,214,178,.18),0 10px 34px rgba(4,16,24,.22);transition:opacity .22s ease`;
+  overlay.style.cssText = "position:fixed;z-index:2147483643;pointer-events:none;border:2px solid #35d6b2;border-radius:6px;box-shadow:0 0 0 4px rgba(53,214,178,.18),0 10px 34px rgba(4,16,24,.22);transition:opacity .22s ease";
   document.body.append(overlay);
-  return () => { overlay.style.opacity = "0"; window.setTimeout(() => overlay.remove(), 240); };
+  let frame = 0;
+  const update = () => {
+    if (!element.isConnected) {
+      overlay.style.opacity = "0";
+      return;
+    }
+    const rect = topRect(element);
+    overlay.style.left = `${rect.left - 4}px`;
+    overlay.style.top = `${rect.top - 4}px`;
+    overlay.style.width = `${rect.width + 8}px`;
+    overlay.style.height = `${rect.height + 8}px`;
+    frame = window.requestAnimationFrame(update);
+  };
+  update();
+  return () => {
+    window.cancelAnimationFrame(frame);
+    overlay.style.opacity = "0";
+    window.setTimeout(() => overlay.remove(), 240);
+  };
 }
 
 function topRect(element: HTMLElement): DOMRect {
@@ -448,6 +536,8 @@ async function matchesTarget(element: HTMLElement, target: NonNullable<ActionDir
   }
   if (target.tagName && element.tagName.toLowerCase() !== target.tagName.toLowerCase()) return false;
   if (target.inputType && (element as HTMLInputElement).type !== target.inputType) return false;
+  if (target.formAssociated !== undefined && formAssociated(element) !== target.formAssociated) return false;
+  if (target.formSubmitter !== undefined && formSubmitter(element) !== target.formSubmitter) return false;
   if (target.role && roleOf(element) !== target.role) return false;
   if (target.label && normalize(accessibleName(element)) !== normalize(target.label)) return false;
   return true;
@@ -491,13 +581,15 @@ function scannedAccessibleName(element: HTMLElement): string {
     || element.getAttribute("alt") || element.textContent || "";
 }
 
-function assertTargetCanExecute(element: HTMLElement, type: ActionDirective["type"]): void {
+function assertTargetCanExecute(element: HTMLElement, type: ActionDirective["type"], key?: string): void {
   const disabled = Boolean((element as HTMLButtonElement).disabled) || element.getAttribute("aria-disabled") === "true";
   if (disabled && ["focus", "click", "fill", "clear", "select", "toggle", "press_key"].includes(type)) {
     throw new Error("The target control is disabled.");
   }
   const readOnly = Boolean((element as HTMLInputElement).readOnly) || element.getAttribute("aria-readonly") === "true";
   if (readOnly && ["fill", "clear"].includes(type)) throw new Error("The target control is read-only.");
+  if (["click", "toggle"].includes(type) && formSubmitter(element)) throw new Error("Mia cannot activate native form submission controls.");
+  if (type === "press_key" && key?.toLowerCase() === "enter") throw new Error("Mia cannot press Enter because it may submit a form.");
 }
 
 function visible(element: HTMLElement): boolean {
@@ -521,6 +613,137 @@ function isHtmlElement(value: unknown): value is HTMLElement {
 
 function inViewport(rect: DOMRect): boolean {
   return rect.right > 0 && rect.bottom > 0 && rect.left < innerWidth && rect.top < innerHeight;
+}
+
+async function scrollTargetIntoView(
+  element: HTMLElement,
+  block: ScrollLogicalPosition,
+  signal: AbortSignal,
+  correction = false
+): Promise<DOMRect> {
+  const behavior: ScrollBehavior = correction || prefersReducedMotion() ? "auto" : "smooth";
+  for (const frame of frameAncestors(element).reverse()) frame.scrollIntoView({ behavior, block: "center", inline: "nearest" });
+  element.scrollIntoView({ behavior, block, inline: "nearest" });
+  return waitForStableRect(element, signal, behavior === "smooth" ? 120 : 0);
+}
+
+function frameAncestors(element: HTMLElement): HTMLElement[] {
+  const frames: HTMLElement[] = [];
+  let view = element.ownerDocument.defaultView;
+  while (view && view !== window) {
+    const frame = view.frameElement;
+    if (!isHtmlElement(frame)) break;
+    frames.push(frame);
+    view = frame.ownerDocument.defaultView;
+  }
+  return frames;
+}
+
+async function waitForStableRect(element: HTMLElement, signal: AbortSignal, minimumMs: number): Promise<DOMRect> {
+  const started = performance.now();
+  const deadline = started + 3_000;
+  let previous = topRect(element);
+  let stableSince = started;
+  const stableDuration = minimumMs > 0 ? 180 : 48;
+  while (performance.now() < deadline) {
+    await nextFrame(signal);
+    if (!element.isConnected) throw new Error("The target disappeared while Mia was scrolling to it.");
+    const current = topRect(element);
+    if (current.width <= 0 || current.height <= 0) throw new Error("The target disappeared before Mia could point to it.");
+    const delta = Math.max(
+      Math.abs(current.left - previous.left),
+      Math.abs(current.top - previous.top),
+      Math.abs(current.width - previous.width),
+      Math.abs(current.height - previous.height)
+    );
+    const now = performance.now();
+    if (delta >= 0.5) stableSince = now;
+    if (now - started >= minimumMs && now - stableSince >= stableDuration) return current;
+    previous = current;
+  }
+  throw new Error("The page did not finish positioning the target in time.");
+}
+
+function nextFrame(signal: AbortSignal): Promise<void> {
+  assertActive(signal);
+  return new Promise((resolve, reject) => {
+    const frame = window.requestAnimationFrame(() => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    });
+    const abort = () => {
+      window.cancelAnimationFrame(frame);
+      reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+    };
+    signal.addEventListener("abort", abort, { once: true });
+  });
+}
+
+function targetVisibility(element: HTMLElement, rect: DOMRect): { inViewport: boolean; visible: boolean } {
+  const viewport = inViewport(rect);
+  if (!viewport) return { inViewport: false, visible: false };
+  return { inViewport: true, visible: hitTestTarget(element) };
+}
+
+function hitTestTarget(element: HTMLElement): boolean {
+  let current: HTMLElement = element;
+  const targetRect = element.getBoundingClientRect();
+  let x = targetRect.left + targetRect.width / 2;
+  let y = targetRect.top + targetRect.height / 2;
+  while (true) {
+    const document_ = current.ownerDocument;
+    if (!hitTestComposedTree(current, x, y)) return false;
+    const view = document_.defaultView;
+    if (!view || view === window) return true;
+    const frame = view.frameElement;
+    if (!isHtmlElement(frame)) return false;
+    const frameRect = frame.getBoundingClientRect();
+    x += frameRect.left;
+    y += frameRect.top;
+    current = frame;
+  }
+}
+
+function hitTestComposedTree(element: HTMLElement, x: number, y: number): boolean {
+  const shadowHosts: HTMLElement[] = [];
+  let root: Node = element.getRootNode();
+  while (isShadowRoot(root)) {
+    const host = root.host;
+    if (!isHtmlElement(host)) return false;
+    shadowHosts.unshift(host);
+    root = host.getRootNode();
+  }
+  let surface: Document | ShadowRoot = element.ownerDocument;
+  for (const host of shadowHosts) {
+    const hit = elementFromSurfacePoint(surface, x, y);
+    if (!hit || (hit !== host && !host.contains(hit))) return false;
+    if (!host.shadowRoot) return false;
+    surface = host.shadowRoot;
+  }
+  const hit = elementFromSurfacePoint(surface, x, y);
+  return hit === undefined || hit === element || Boolean(hit && element.contains(hit));
+}
+
+function elementFromSurfacePoint(surface: Document | ShadowRoot, x: number, y: number): Element | null | undefined {
+  const hitTest = (surface as Document & { elementFromPoint?: (clientX: number, clientY: number) => Element | null }).elementFromPoint;
+  return typeof hitTest === "function" ? hitTest.call(surface, x, y) : undefined;
+}
+
+function isShadowRoot(node: Node): node is ShadowRoot {
+  return node.nodeType === 11 && "host" in node;
+}
+
+function formAssociated(element: HTMLElement): boolean {
+  if (!["button", "input", "select", "textarea"].includes(element.tagName.toLowerCase())) return false;
+  return Boolean((element as HTMLButtonElement | HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement).form);
+}
+
+function formSubmitter(element: HTMLElement): boolean {
+  if (!formAssociated(element)) return false;
+  const tag = element.tagName.toLowerCase();
+  if (tag !== "button" && tag !== "input") return false;
+  const type = (element as HTMLButtonElement | HTMLInputElement).type.toLowerCase();
+  return type === "submit" || type === "image";
 }
 
 function receipt(directive: ActionDirective, status: ActionReceipt["status"], message: string, evidence: Record<string, unknown> = {}): ActionReceipt {
@@ -548,10 +771,10 @@ function delay(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-async function waitFor(predicate: () => boolean, timeoutMs: number, signal: AbortSignal): Promise<void> {
+async function waitFor(predicate: () => boolean, timeoutMs: number, signal: AbortSignal, timeoutMessage = "The page did not reach the expected state in time."): Promise<void> {
   const deadline = performance.now() + timeoutMs;
   while (!predicate()) {
-    if (performance.now() >= deadline) throw new Error("The page did not reach the expected state in time.");
+    if (performance.now() >= deadline) throw new Error(timeoutMessage);
     await delay(50, signal);
   }
 }

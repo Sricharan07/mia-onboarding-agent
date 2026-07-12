@@ -155,12 +155,23 @@ test("DOM actor rejects no-op clicks, stale mapped targets, and immutable contro
   const cleanup = installDom(`
     <main>
       <button id="noop">No operation</button>
+      <output id="background-status">Idle</output>
+      <button id="toggle" aria-expanded="false">Open details</button>
       <input id="disabled" aria-label="Disabled value" disabled value="unchanged">
       <input id="readonly" aria-label="Read-only value" readonly value="unchanged">
       <button id="stale">Replacement action</button>
+      <form id="protected-form"><button id="submit">Continue</button></form>
     </main>
   `);
   try {
+    document.querySelector("#noop")!.addEventListener("click", () => {
+      window.setTimeout(() => { document.querySelector("#background-status")!.textContent = "Background refresh"; }, 40);
+    });
+    document.querySelector("#toggle")!.addEventListener("click", (event) => {
+      (event.currentTarget as HTMLElement).setAttribute("aria-expanded", "true");
+    });
+    let submitted = 0;
+    document.querySelector("#protected-form")!.addEventListener("submit", (event) => { event.preventDefault(); submitted += 1; });
     const collector = new AgentObservationCollector(options());
     const observation = collector.collect();
     const node = (id: string) => observation.nodes.find((candidate) => candidate.locators.some((locator) => locator.strategy === "css" && locator.selector === `#${id}`))!;
@@ -177,7 +188,43 @@ test("DOM actor rejects no-op clicks, stale mapped targets, and immutable contro
       target: { ref: `live:${node("noop").nodeId}`, nodeId: node("noop").nodeId, label: "No operation", role: "button", locators: [] }
     }], observation, new AbortController().signal);
     assert.equal(noOp.receipts[0]?.status, "unverified");
-    assert.equal(noOp.receipts[0]?.evidence.domChanged, false);
+    assert.equal(noOp.receipts[0]?.evidence.domChanged, true, "the unrelated background mutation should be observed");
+    assert.equal(noOp.receipts[0]?.evidence.immediateScopedDomChanged, false);
+
+    const toggled = await actor.executeBatch([{
+      actionId: "toggle_click",
+      idempotencyKey: "toggle_click_key",
+      type: "click",
+      message: "Open details",
+      expectedOutcome: "The details expand",
+      risk: "reversible_write",
+      target: { ref: `live:${node("toggle").nodeId}`, nodeId: node("toggle").nodeId, label: "Open details", role: "button", locators: [] }
+    }], collector.collect(), new AbortController().signal);
+    assert.equal(toggled.receipts[0]?.status, "completed");
+    assert.equal(toggled.receipts[0]?.evidence.expandedChanged, true);
+
+    const submitTarget = node("submit");
+    const protectedSubmit = await actor.executeBatch([{
+      actionId: "protected_submit",
+      idempotencyKey: "protected_submit_key",
+      type: "click",
+      message: "Continue",
+      expectedOutcome: "The form advances",
+      risk: "reversible_write",
+      target: {
+        ref: `live:${submitTarget.nodeId}`,
+        nodeId: submitTarget.nodeId,
+        label: "Continue",
+        role: "button",
+        inputType: "submit",
+        formAssociated: true,
+        formSubmitter: true,
+        locators: []
+      }
+    }], collector.collect(), new AbortController().signal);
+    assert.equal(protectedSubmit.receipts[0]?.status, "failed");
+    assert.match(protectedSubmit.receipts[0]?.message ?? "", /cannot activate native form submission/i);
+    assert.equal(submitted, 0);
 
     document.querySelector("#noop")!.textContent = "Different operation";
     const staleLive = await actor.executeBatch([{
@@ -243,6 +290,61 @@ test("DOM actor rejects no-op clicks, stale mapped targets, and immutable contro
     }], collector.collect(), new AbortController().signal);
     assert.equal(stale.receipts[0]?.status, "failed");
     assert.match(stale.receipts[0]?.message ?? "", /no longer matches/i);
+    collector.destroy();
+  } finally {
+    cleanup();
+  }
+});
+
+test("DOM actor waits for normal-motion scrolling before positioning Mia's cursor", async () => {
+  const cleanup = installDom(`<main><button id="moving-target">Stage filter</button></main>`);
+  try {
+    const target = document.querySelector<HTMLElement>("#moving-target")!;
+    let top = 640;
+    Object.defineProperty(target, "getBoundingClientRect", {
+      configurable: true,
+      value: () => new DOMRect(120, top, 180, 40)
+    });
+    Object.defineProperty(target, "scrollIntoView", {
+      configurable: true,
+      value: () => {
+        [540, 440, 340, 240, 140].forEach((value, index) => {
+          window.setTimeout(() => { top = value; }, (index + 1) * 100);
+        });
+      }
+    });
+    const collector = new AgentObservationCollector(options());
+    const observation = collector.collect();
+    const node = observation.nodes.find((candidate) => candidate.role === "button" && candidate.name === "Stage filter")!;
+    let pointedAt: { x: number; y: number } | undefined;
+    const cursor = {
+      navigateTo: (x: number, y: number) => { pointedAt = { x, y }; },
+      isPointingAt: () => true,
+      returnToCursor: () => undefined
+    } as unknown as MiaShadowCursor;
+    const actor = new DomAgentActor({ collector, cursor, config: options() });
+    const result = await actor.executeBatch([{
+      actionId: "point_after_scroll",
+      idempotencyKey: "point_after_scroll_key",
+      type: "point",
+      message: "Point to the Stage filter",
+      expectedOutcome: "Mia's cursor reaches the Stage filter",
+      risk: "read",
+      target: {
+        ref: `live:${node.nodeId}`,
+        nodeId: node.nodeId,
+        label: node.name,
+        role: node.role,
+        inputType: node.inputType,
+        formAssociated: node.formAssociated,
+        formSubmitter: node.formSubmitter,
+        locators: node.locators
+      }
+    }], observation, new AbortController().signal);
+    assert.equal(result.receipts[0]?.status, "completed", JSON.stringify(result.receipts[0]));
+    assert.ok(pointedAt);
+    assert.equal(Math.round(pointedAt.y), 160);
+    assert.equal(result.receipts[0]?.evidence.targetVisible, true);
     collector.destroy();
   } finally {
     cleanup();

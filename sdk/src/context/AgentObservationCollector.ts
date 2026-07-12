@@ -387,7 +387,7 @@ function isProductMutation(record: MutationRecord): boolean {
 }
 
 function isSdkNode(node: Node): boolean {
-  const element = node.nodeType === Node.ELEMENT_NODE ? node as Element : node.parentElement;
+  const element = node.nodeType === 1 ? node as Element : node.parentElement;
   return Boolean(element && isSdkElement(element));
 }
 

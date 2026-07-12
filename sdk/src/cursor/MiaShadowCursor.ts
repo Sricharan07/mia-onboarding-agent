@@ -239,7 +239,18 @@ export class MiaShadowCursor {
     this.navBubbleOpacityTarget = 0;
     this.navBubbleScaleTarget = 0.9;
     if (this.navBubbleText) this.navBubbleText.textContent = this.navTarget.label;
-    this.setNavMode("navigatingToTarget");
+    if (this.reducedMotion) {
+      this.iconPos.x = x;
+      this.iconPos.y = y;
+      this.setNavMode("pointingAtTarget");
+      this.updateIconPosition();
+    } else {
+      this.setNavMode("navigatingToTarget");
+    }
+  }
+
+  isPointingAt(targetX: number, targetY: number): boolean {
+    return this.navMode === "pointingAtTarget" && Math.hypot(this.iconPos.x - targetX, this.iconPos.y - targetY) < 10;
   }
 
   returnToCursor(): void {
