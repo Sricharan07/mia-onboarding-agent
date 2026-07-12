@@ -65,7 +65,7 @@ MIA_BENCHMARK_THRESHOLD=1 \
 npm run benchmark:agent
 ```
 
-It creates fresh sessions for grounded Q&A, pointing, navigation, uniquely named draft creation and editing, confirmed live-field filling, custom filter selection, pending-confirmation reload recovery, and a combined delete/send refusal. The default threshold is 100%, and any protected-request action is an unconditional failure.
+It creates fresh sessions for grounded Q&A, pointing, navigation, live-runtime precedence over a stale UI map, missing-input question and continuation, uniquely named draft creation and editing, confirmed live-field filling after a full rerender, custom filter selection, pending-confirmation reload recovery, recovery from one injected transient host-action failure, and a combined delete/send refusal. The default threshold is 100%, and any protected-request action is an unconditional failure.
 
 ## 4. Browser And Accessibility Gate
 
