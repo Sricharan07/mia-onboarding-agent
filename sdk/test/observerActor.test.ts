@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash, webcrypto } from "node:crypto";
 import { JSDOM } from "jsdom";
-import { AgentObservationCollector } from "../src/context/AgentObservationCollector.js";
+import { AgentObservationCollector, redact } from "../src/context/AgentObservationCollector.js";
 import { DomAgentActor } from "../src/agent/DomAgentActuator.js";
 import type { MiaShadowCursor } from "../src/cursor/MiaShadowCursor.js";
 import type { ActionDirective, MiaOptions } from "../src/types/index.js";
@@ -62,12 +62,17 @@ test("semantic observer traverses open shadow roots, preserves stable IDs, and r
       <label>Password<input type="password" value="super-secret-password"></label>
       <label>Verification code<input id="protected-code" name="entry" autocomplete="one-time-code" value="123456"></label>
       <label>Card number<input id="protected-card" name="entry" autocomplete="cc-number" value="4111111111111111"></label>
+      <p id="volunteered-secret">my password is hunter2 and {"apiKey":"short-secret-value","otp":"123456"}</p>
       <section data-private>Private customer 4111 1111 1111 1111</section>
       <section data-admin-private><button>Administrator-redacted action</button></section>
       <div id="shadow-host"></div>
     </main>
   `);
   try {
+    const safeText = redact('my password is hunter2 and {"apiKey":"short-secret-value","otp":"123456"}', options());
+    assert.equal(safeText.includes("hunter2"), false);
+    assert.equal(safeText.includes("short-secret-value"), false);
+    assert.equal(safeText.includes("123456"), false);
     const host = document.querySelector<HTMLElement>("#shadow-host")!;
     host.attachShadow({ mode: "open" }).innerHTML = `<button aria-label="Shadow action">Internal label</button>`;
     document.title = "Private customer workspace";
@@ -93,6 +98,9 @@ test("semantic observer traverses open shadow roots, preserves stable IDs, and r
     assert.equal(first.pageText?.includes("super-secret-password"), false);
     assert.equal(first.pageText?.includes("Private customer"), false);
     assert.equal(first.pageText?.includes("4111"), false);
+    assert.equal(first.pageText?.includes("hunter2"), false);
+    assert.equal(first.pageText?.includes("short-secret-value"), false);
+    assert.equal(first.pageText?.includes("123456"), false);
 
     collector.setRuntimeRedactedSelectors(["[data-admin-private]"]);
     const serverRedacted = collector.collect();
@@ -363,6 +371,34 @@ test("DOM actor rejects no-op clicks, stale mapped targets, and immutable contro
     }], collector.collect(), new AbortController().signal);
     assert.equal(stale.receipts[0]?.status, "failed");
     assert.match(stale.receipts[0]?.message ?? "", /no longer matches/i);
+
+    const mappedElement = document.querySelector<HTMLButtonElement>("#stale")!;
+    const currentFingerprint = createHash("sha256").update(JSON.stringify({
+      route: "/dashboard/crm",
+      role: "button",
+      name: "Replacement action",
+      tag: "button",
+      type: mappedElement.type
+    })).digest("hex");
+    const currentMapped = await actor.executeBatch([{
+      actionId: "current_mapped_point",
+      idempotencyKey: "current_mapped_point_key",
+      type: "point",
+      message: "Point to the reviewed mapped action",
+      expectedOutcome: "The reviewed control is highlighted",
+      risk: "read",
+      target: {
+        ref: "map:current",
+        elementKey: "current",
+        fingerprint: currentFingerprint,
+        tagName: "button",
+        role: "button",
+        pageRoute: "/dashboard/crm",
+        label: "Replacement action",
+        locators: [{ strategy: "css", selector: "#stale" }]
+      }
+    }], collector.collect(), new AbortController().signal);
+    assert.equal(currentMapped.receipts[0]?.status, "completed", JSON.stringify(currentMapped.receipts[0]));
     collector.destroy();
   } finally {
     cleanup();
@@ -375,6 +411,7 @@ test("DOM actor enforces exact approved routes for targets and navigation", asyn
     <a id="external" href="https://example.com/account">External account</a>
   </main>`);
   try {
+    history.replaceState({}, "", "/dashboard/crm?view=mine#panel");
     const collector = new AgentObservationCollector(options());
     const observation = collector.collect();
     const report = observation.nodes.find((node) => node.name === "Revenue report")!;
@@ -387,6 +424,25 @@ test("DOM actor enforces exact approved routes for targets and navigation", asyn
         navigate: async (route) => { history.pushState({}, "", route); }
       }
     });
+    const currentPrivateRoute = await actor.executeBatch([{
+      actionId: "private_query_target",
+      idempotencyKey: "private_query_target_key",
+      type: "point",
+      message: "Point to the report",
+      expectedOutcome: "The report is highlighted",
+      risk: "read",
+      target: {
+        ref: `live:${report.nodeId}`,
+        nodeId: report.nodeId,
+        label: report.name,
+        role: report.role,
+        pageRoute: observation.route,
+        route: "/dashboard/crm?view=summary#totals",
+        locators: report.locators
+      }
+    }], observation, new AbortController().signal);
+    assert.equal(currentPrivateRoute.receipts[0]?.status, "completed", "privacy-hidden query parameters must not invalidate a current live node");
+
     const wrongPage = await actor.executeBatch([{
       actionId: "wrong_query_target",
       idempotencyKey: "wrong_query_target_key",
@@ -427,6 +483,30 @@ test("DOM actor enforces exact approved routes for targets and navigation", asyn
     }], observation, new AbortController().signal);
     assert.equal(externalClick.receipts[0]?.status, "failed");
     assert.match(externalClick.receipts[0]?.message ?? "", /cross-origin link/i);
+
+    document.querySelector("#report")!.addEventListener("click", (event) => {
+      event.preventDefault();
+      history.pushState({}, "", "/dashboard/unexpected");
+    });
+    const redirectedLink = await actor.executeBatch([{
+      actionId: "redirected_link",
+      idempotencyKey: "redirected_link_key",
+      type: "click",
+      message: "Open the revenue report",
+      expectedOutcome: "The exact report route opens",
+      risk: "navigate",
+      target: {
+        ref: `live:${report.nodeId}`,
+        nodeId: report.nodeId,
+        label: report.name,
+        role: report.role,
+        pageRoute: observation.route,
+        route: "/dashboard/crm?view=summary#totals",
+        locators: report.locators
+      }
+    }], observation, new AbortController().signal);
+    assert.equal(redirectedLink.receipts[0]?.status, "unverified");
+    assert.equal(redirectedLink.receipts[0]?.evidence.exactRouteMatch, false);
 
     const navigated = await actor.executeBatch([{
       actionId: "exact_navigation",

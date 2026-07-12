@@ -10,8 +10,13 @@ const CANDIDATE_SELECTOR = [
 ].join(",");
 const DEFAULT_SECRET_PATTERNS = [
   /\b(?:bearer\s+)?[A-Za-z0-9_-]{32,}\b/gi,
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
+  /\b(?:gh[pousr]_|npm_)[A-Za-z0-9]{20,}\b/g,
+  /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g,
+  /\b(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{12,}\b/g,
+  /\bAKIA[0-9A-Z]{16}\b/g,
   /\b(?:\d[ -]*?){13,19}\b/g,
-  /((?:password|passcode|secret|token|api.?key|cvv|cvc|ssn)\s*[:=]\s*)\S+/gi
+  /((?:password|passcode|passphrase|secret|api.?key|access.?token|auth(?:entication|orization)?.?token|bearer.?token|session.?(?:token|cookie)|one.?time.?(?:code|password)|verification.?code|security.?code|recovery.?code|otp|cvv|cvc|ssn|card.?number|bank.?account|routing.?number|private.?key|seed.?phrase)\s*["']?\s*(?::|=|\bis\b)\s*["']?\s*)[^\s,;}"']+/gi
 ];
 
 type RootContext = { root: Document | ShadowRoot; frameId: string; offsetX: number; offsetY: number };

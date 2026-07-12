@@ -282,14 +282,15 @@ export class Mia {
     mode: "text" | "voice"
   ): Promise<VoiceAgentResult> {
     const session = this.requireSession();
-    this.addTranscript("user", utterance);
+    const safeUtterance = redact(utterance, this.options).trim();
+    this.addTranscript("user", safeUtterance);
     this.setStatus("thinking");
     const runtime = await this.runtime(signal);
     let response = await this.backend.submitTurn({
       ...runtime,
       sessionId: session.sessionId,
       revision: this.revision,
-      utterance,
+      utterance: safeUtterance,
       source,
       signal
     }, (event) => this.handleStreamEvent(event));
@@ -494,8 +495,8 @@ export class Mia {
     else if (event.type === "thinking") this.setStatus("thinking");
     else if (event.type === "speaking") this.setStatus("speaking");
     else if (event.type === "input_level") this.cursor.setListeningLevel(event.level);
-    else if (event.type === "user_transcript") this.emit({ type: "transcript", role: "user", text: event.text });
-    else if (event.type === "assistant_transcript") this.emit({ type: "transcript", role: "assistant", text: event.text });
+    else if (event.type === "user_transcript") this.emit({ type: "transcript", role: "user", text: redact(event.text, this.options) });
+    else if (event.type === "assistant_transcript") this.emit({ type: "transcript", role: "assistant", text: redact(event.text, this.options) });
     else if (event.type === "error") this.handleError(event.error);
     else if (event.type === "ended") {
       this.voiceActive = false;
@@ -539,8 +540,9 @@ export class Mia {
   }
 
   private addTranscript(role: "user" | "assistant" | "system", text: string): void {
-    this.panel?.addTranscript({ role, text });
-    this.emit({ type: "transcript", role, text });
+    const safeText = redact(text, this.options);
+    this.panel?.addTranscript({ role, text: safeText });
+    this.emit({ type: "transcript", role, text: safeText });
   }
 
   private setStatus(status: MiaStatus): void {

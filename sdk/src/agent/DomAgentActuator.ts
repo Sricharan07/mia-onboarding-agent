@@ -85,7 +85,7 @@ export class DomAgentActor {
         ? { element: isHtmlElement(activeElement) ? activeElement : document.body }
         : await resolveTarget(directive, this.options.collector);
       if (!target.element) return { receipt: receipt(directive, "failed", target.error ?? "The target is no longer available."), visualContext: [] };
-      if (directive.target?.pageRoute && canonicalRoute(directive.target.pageRoute) !== currentRoute()) {
+      if (directive.target?.pageRoute && !pageScopeMatches(directive.target.pageRoute, currentRoute())) {
         return { receipt: receipt(directive, "failed", "The target belongs to a different page."), visualContext: [] };
       }
       if (!implicitKeyTarget) await this.pointTo(target.element, directive.target?.label ?? directive.message, signal);
@@ -371,6 +371,8 @@ function verify(
   after: ElementSnapshot,
   immediateScopedDomChanged: boolean
 ): { verified: boolean; message: string; evidence: Record<string, unknown> } {
+  const expectedRoute = directive.target?.route ? canonicalRoute(directive.target.route) : undefined;
+  const exactRouteMatch = expectedRoute ? canonicalRoute(after.url) === expectedRoute : undefined;
   const evidence = {
     routeChanged: before.url !== after.url,
     focusChanged: before.focused !== after.focused,
@@ -384,12 +386,15 @@ function verify(
     targetChanged: before.targetState !== after.targetState,
     transientLayerChanged: before.transientLayerState !== after.transientLayerState,
     immediateScopedDomChanged,
-    domChanged: after.revision !== before.revision
+    domChanged: after.revision !== before.revision,
+    ...(expectedRoute ? { expectedRoute, exactRouteMatch } : {})
   };
   const interactionChanged = evidence.routeChanged || evidence.activeElementChanged || evidence.valueChanged || evidence.checkedChanged
     || evidence.selectedIndexChanged || evidence.expandedChanged || evidence.pressedChanged
     || evidence.openChanged || evidence.targetChanged || evidence.transientLayerChanged || evidence.immediateScopedDomChanged;
-  const exact = directive.type === "focus" ? after.focused
+  const exactRouteActivation = Boolean(expectedRoute && ["click", "press_key"].includes(directive.type));
+  const exact = exactRouteActivation ? evidence.routeChanged && exactRouteMatch === true
+    : directive.type === "focus" ? after.focused
     : directive.type === "fill" ? after.value === directive.value
       : directive.type === "clear" ? after.value === ""
         : directive.type === "select" ? after.value === directive.value
@@ -646,7 +651,7 @@ function accessibleName(element: HTMLElement): string {
 
 async function matchesTarget(element: HTMLElement, target: NonNullable<ActionDirective["target"]>): Promise<boolean> {
   if (target.fingerprint) {
-    const fingerprint = await mappedFingerprint(element, target.route);
+    const fingerprint = await mappedFingerprint(element, target.pageRoute);
     return fingerprint === target.fingerprint;
   }
   if (target.tagName && element.tagName.toLowerCase() !== target.tagName.toLowerCase()) return false;
@@ -660,12 +665,13 @@ async function matchesTarget(element: HTMLElement, target: NonNullable<ActionDir
 
 async function mappedFingerprint(element: HTMLElement, route: string | undefined): Promise<string | undefined> {
   if (!globalThis.crypto?.subtle || !route) return undefined;
+  const tag = element.tagName.toLowerCase();
   const value = JSON.stringify({
     route,
     role: scannedRoleOf(element),
     name: normalize(scannedAccessibleName(element)) || undefined,
-    tag: element.tagName.toLowerCase(),
-    type: element.tagName.toLowerCase() === "input" ? (element as HTMLInputElement).type : undefined
+    tag,
+    type: ["input", "button"].includes(tag) ? (element as HTMLInputElement | HTMLButtonElement).type : undefined
   });
   const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -912,6 +918,17 @@ function assertActive(signal: AbortSignal): void {
 
 function currentRoute(): string {
   return canonicalRoute(`${location.pathname}${location.search}${location.hash}`);
+}
+
+function pageScopeMatches(expected: string, actual: string): boolean {
+  const expectedUrl = new URL(expected, location.origin);
+  const actualUrl = new URL(actual, location.origin);
+  const expectedPath = expectedUrl.pathname.length > 1 ? expectedUrl.pathname.replace(/\/+$/, "") : expectedUrl.pathname || "/";
+  const actualPath = actualUrl.pathname.length > 1 ? actualUrl.pathname.replace(/\/+$/, "") : actualUrl.pathname || "/";
+  if (expectedPath !== actualPath) return false;
+  return expectedUrl.search || expectedUrl.hash
+    ? expectedUrl.search === actualUrl.search && expectedUrl.hash === actualUrl.hash
+    : true;
 }
 
 function canonicalRoute(value: string): string {

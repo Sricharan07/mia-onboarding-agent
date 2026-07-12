@@ -120,3 +120,53 @@ test("Gemini Live always submits the authoritative audio transcription instead o
     else delete (globalThis as Record<string, unknown>).window;
   }
 });
+
+test("push-to-talk gates the microphone and unexpected voice termination releases capture", async () => {
+  const previousWebSocket = Object.getOwnPropertyDescriptor(globalThis, "WebSocket");
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.defineProperty(globalThis, "WebSocket", {
+    configurable: true,
+    value: class TestWebSocket { static readonly OPEN = 1; static readonly CLOSED = 3; static readonly CLOSING = 2; }
+  });
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: { setTimeout, clearTimeout }
+  });
+  try {
+    const messages: Array<Record<string, unknown>> = [];
+    const events: Array<{ type: string; reconnectable?: boolean }> = [];
+    let stopped = 0;
+    const track = { enabled: true, stop: () => { stopped += 1; } };
+    const voice = new GeminiLiveClient({} as BackendClient) as unknown as {
+      socket: { readyState: number; send: (message: string) => void; close: () => void };
+      handlers: { onEvent: (event: { type: string; reconnectable?: boolean }) => void } | undefined;
+      micStream: { getAudioTracks: () => Array<typeof track>; getTracks: () => Array<typeof track> };
+      microphoneEnabled: boolean;
+      connected: boolean;
+      setMicrophoneEnabled: (enabled: boolean) => void;
+      endUnexpectedly: (error: Error, reconnectable: boolean) => Promise<void>;
+    };
+    voice.socket = { readyState: 1, send: (message) => messages.push(JSON.parse(message) as Record<string, unknown>), close: () => undefined };
+    voice.handlers = { onEvent: (event) => events.push(event) };
+    voice.micStream = { getAudioTracks: () => [track], getTracks: () => [track] };
+    voice.microphoneEnabled = true;
+    voice.connected = true;
+
+    voice.setMicrophoneEnabled(false);
+    assert.equal(track.enabled, false);
+    assert.equal(messages.some((message) => Boolean((message.realtimeInput as { audioStreamEnd?: boolean } | undefined)?.audioStreamEnd)), true);
+    voice.setMicrophoneEnabled(true);
+    assert.equal(track.enabled, true);
+
+    await voice.endUnexpectedly(new Error("Voice transport failed."), true);
+    assert.equal(stopped, 1, "an ended voice session must release its microphone track");
+    assert.deepEqual(events.map((event) => event.type), ["input_level", "ready", "listening", "error", "ended"]);
+    assert.equal(events.at(-1)?.reconnectable, true);
+    assert.equal(voice.handlers, undefined);
+  } finally {
+    if (previousWebSocket) Object.defineProperty(globalThis, "WebSocket", previousWebSocket);
+    else delete (globalThis as Record<string, unknown>).WebSocket;
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+    else delete (globalThis as Record<string, unknown>).window;
+  }
+});

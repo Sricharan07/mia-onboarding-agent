@@ -230,8 +230,7 @@ export class GeminiLiveClient {
     track.enabled = this.microphoneEnabled;
     track.addEventListener("ended", () => {
       if (this.intentionalClose || this.stoppingMicrophone) return;
-      this.handlers?.onEvent({ type: "error", error: new Error("Microphone capture stopped.") });
-      void this.disconnect();
+      void this.endUnexpectedly(new Error("Microphone capture stopped."), false);
     }, { once: true });
     this.meter = new MicLevelMeter(track, (level) => this.handlers?.onEvent({ type: "input_level", level: this.microphoneEnabled ? level : 0 }));
     this.meter.start();
@@ -545,9 +544,16 @@ export class GeminiLiveClient {
           last = toError(error);
         }
       }
-      this.handlers?.onEvent({ type: "error", error: last });
-      this.handlers?.onEvent({ type: "ended", reconnectable: true });
+      await this.endUnexpectedly(last, true);
     })().finally(() => { this.reconnecting = undefined; });
+  }
+
+  private async endUnexpectedly(error: Error, reconnectable: boolean): Promise<void> {
+    if (this.intentionalClose) return;
+    const handlers = this.handlers;
+    handlers?.onEvent({ type: "error", error });
+    await this.disconnect();
+    handlers?.onEvent({ type: "ended", reconnectable });
   }
 
   private assertLifecycle(value: number): void {
