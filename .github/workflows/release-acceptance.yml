@@ -58,10 +58,10 @@ jobs:
       MIA_DEMO_USER_ID: release-demo-user
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -142,11 +142,11 @@ jobs:
 
       - name: Upload acceptance evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mia-linux-release-evidence-${{ github.sha }}
           path: |
-            ${{ runner.temp }}/mia-release-evidence
+            /tmp/mia-release-evidence
             ${{ runner.temp }}/mia-release-logs
           if-no-files-found: error
 
@@ -175,10 +175,10 @@ jobs:
       MIA_DEMO_USER_ID: safari-demo-user
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -250,11 +250,11 @@ jobs:
 
       - name: Upload Safari evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mia-safari-release-evidence-${{ github.sha }}
           path: |
-            ${{ runner.temp }}/mia-safari-evidence
+            /tmp/mia-safari-evidence
             ${{ runner.temp }}/mia-safari-logs
           if-no-files-found: error
 
@@ -275,7 +275,7 @@ jobs:
       CORS_ORIGIN: http://127.0.0.1:4000,http://127.0.0.1:3001
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Generate one-run deployment secrets
         run: |
@@ -314,7 +314,7 @@ jobs:
 
       - name: Upload backup proof
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mia-docker-backup-proof-${{ github.sha }}
           path: ${{ runner.temp }}/mia-release-backup.sql

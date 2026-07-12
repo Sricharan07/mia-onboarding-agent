@@ -105,6 +105,13 @@ async function testDemo() {
 }
 
 async function signInIfNeeded() {
+  await driver.wait(async () => {
+    const [content, signIn] = await Promise.all([
+      driver.findElements(By.css(".page-content")),
+      driver.findElements(By.xpath("//h1[normalize-space()='Sign in to Mia']")),
+    ]);
+    return content.length > 0 || signIn.length > 0;
+  }, 30_000, "The Mia console did not render an authenticated page or the sign-in form.");
   const signIn = await driver.findElements(By.xpath("//h1[normalize-space()='Sign in to Mia']"));
   if (signIn.length) {
     await driver.findElement(By.css("input[type='email']")).sendKeys(email);

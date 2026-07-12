@@ -28,16 +28,19 @@ jobs:
       MIA_TEST_DATABASE_URL: postgres://mia:mia-ci-database-password@127.0.0.1:5432/mia_test
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
 
       - name: Install root workspace dependencies
         run: npm ci
+
+      - name: Install the scanner browser
+        run: npx playwright install --with-deps chromium
 
       - name: Test backend and SDK
         run: npm run test
@@ -86,7 +89,7 @@ jobs:
       SETUP_TOKEN: mia-ci-setup-token-with-32-characters
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Start an empty deployment
         run: docker compose up --build --detach
