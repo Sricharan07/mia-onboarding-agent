@@ -237,9 +237,15 @@ async function installEventCapture(page, key) {
 async function waitForEvent(page, key, predicate, timeout = 90_000) {
   const handle = await page.waitForFunction(({ storageKey, predicateSource }) => {
     const test = Function(`return (${predicateSource})`)();
-    return window[storageKey]?.find((event) => test(event));
+    const events = window[storageKey] ?? [];
+    const match = events.find((event) => test(event));
+    if (match) return { outcome: "match", event: match };
+    const failure = events.find((event) => event.type === "error");
+    return failure ? { outcome: "error", event: failure } : undefined;
   }, { storageKey: key, predicateSource: predicate.toString() }, { timeout });
-  return handle.jsonValue();
+  const result = await handle.jsonValue();
+  if (result.outcome === "error") throw new Error(`SDK runtime error: ${result.event.error ?? "unknown error"}`);
+  return result.event;
 }
 
 function runtimeErrors(page, key) {

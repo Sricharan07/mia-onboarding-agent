@@ -110,7 +110,8 @@ async function scenario(iteration, name, prompt, verify) {
         prompt: detail?.confirmation?.prompt,
         actionType: detail?.action?.type,
         receiptType: detail?.receipt?.type,
-        receiptStatus: detail?.receipt?.status
+        receiptStatus: detail?.receipt?.status,
+        error: detail?.error?.message
       });
     });
   });
@@ -149,12 +150,15 @@ async function approveUntilTerminal(page, maximumApprovals = 4) {
   while (true) {
     const handle = await page.waitForFunction((approvedCount) => {
       const events = window.__miaBenchmarkEvents ?? [];
+      const failure = events.find((event) => event.type === "error");
+      if (failure) return { type: "error", error: failure.error };
       if (events.some((event) => ["answer", "completed"].includes(event.type))) return { type: "terminal" };
       const confirmations = events.filter((event) => event.type === "confirmation_required");
       if (confirmations.length > approvedCount) return { type: "confirmation" };
       return undefined;
     }, approvals, { timeout: 90_000 });
     const outcome = await handle.jsonValue();
+    if (outcome.type === "error") throw new Error(`SDK runtime error: ${outcome.error ?? "unknown error"}`);
     if (outcome.type === "terminal") return;
     assert.ok(approvals < maximumApprovals, `selection required more than ${maximumApprovals} approvals`);
     await page.getByRole("button", { name: "Approve" }).click();
@@ -165,9 +169,15 @@ async function approveUntilTerminal(page, maximumApprovals = 4) {
 async function waitForEvent(page, predicate, timeout = 90_000) {
   const handle = await page.waitForFunction((source) => {
     const test = Function(`return (${source})`)();
-    return window.__miaBenchmarkEvents?.find((event) => test(event));
+    const events = window.__miaBenchmarkEvents ?? [];
+    const match = events.find((event) => test(event));
+    if (match) return { outcome: "match", event: match };
+    const failure = events.find((event) => event.type === "error");
+    return failure ? { outcome: "error", event: failure } : undefined;
   }, predicate.toString(), { timeout });
-  return handle.jsonValue();
+  const result = await handle.jsonValue();
+  if (result.outcome === "error") throw new Error(`SDK runtime error: ${result.event.error ?? "unknown error"}`);
+  return result.event;
 }
 
 function eventsFor(page) {
