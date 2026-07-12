@@ -50,6 +50,7 @@ test("semantic observer traverses open shadow roots, preserves stable IDs, and r
   const cleanup = installDom(`
     <main>
       <button data-mia-key="create-lead">Create lead</button>
+      <form><button data-mia-key="continue">Continue</button></form>
       <label>Password<input type="password" value="super-secret-password"></label>
       <section data-private>Private customer 4111 1111 1111 1111</section>
       <div id="shadow-host"></div>
@@ -63,6 +64,10 @@ test("semantic observer traverses open shadow roots, preserves stable IDs, and r
     const create = first.nodes.find((node) => node.elementKey === "create-lead");
     assert.ok(create);
     assert.ok(first.nodes.some((node) => node.name === "Shadow action"));
+    const submit = first.nodes.find((node) => node.elementKey === "continue");
+    assert.equal(submit?.inputType, "submit");
+    assert.equal(submit?.formAssociated, true);
+    assert.equal(submit?.formSubmitter, true);
     const password = first.nodes.find((node) => node.inputType === "password");
     assert.equal(password?.sensitive, true);
     assert.equal(password?.value, undefined);

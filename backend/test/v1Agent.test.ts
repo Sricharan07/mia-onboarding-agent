@@ -183,6 +183,21 @@ test("v1 agent keeps a goal across questions and blocks protected operations bef
     assert.equal((await repositories.agent.getSession(created.sessionId)).goal, "Create a draft lead");
 
     let revision = answered.revision;
+    model.push(decision("ask_user", { message: "Enter your one-time verification code.", field: "verification_code" }));
+    const protectedQuestion = await agent.submitTurn({
+      sessionId: created.sessionId,
+      userId: "user_2",
+      revision,
+      utterance: "Help me sign in",
+      source: "text",
+      runtime: runtime(3)
+    });
+    assert.equal(protectedQuestion.type, "unable");
+    assert.equal(protectedQuestion.status, "failed");
+    assert.equal(protectedQuestion.input, undefined);
+    assert.match(protectedQuestion.message, /will not ask for or handle secrets/i);
+    revision = protectedQuestion.revision;
+
     const prohibited = [
       ["Delete this account", "Delete the account"],
       ["Send this proposal", "Send the proposal"],
@@ -209,6 +224,45 @@ test("v1 agent keeps a goal across questions and blocks protected operations bef
       assert.equal(blocked.status, "failed", utterance);
       revision = blocked.revision;
     }
+
+    model.push(decision("actions", {
+      message: "Continue to the next step",
+      actions: [planned("click", "live:continue", "Continue")]
+    }));
+    const neutralSubmit = await agent.submitTurn({
+      sessionId: created.sessionId,
+      userId: "user_2",
+      revision,
+      utterance: "Continue",
+      source: "text",
+      runtime: runtime(4)
+    });
+    assert.equal(neutralSubmit.type, "unable");
+    assert.equal(neutralSubmit.status, "failed");
+    revision = neutralSubmit.revision;
+
+    model.push(decision("actions", {
+      message: "Use the focused form",
+      actions: [{
+        actionId: "from_model",
+        type: "press_key",
+        key: "Enter",
+        message: "Continue with Enter",
+        expectedOutcome: "The next step opens"
+      }]
+    }));
+    const enterSubmit = await agent.submitTurn({
+      sessionId: created.sessionId,
+      userId: "user_2",
+      revision,
+      utterance: "Continue with the keyboard",
+      source: "text",
+      runtime: runtime(5)
+    });
+    assert.equal(enterSubmit.type, "unable");
+    assert.equal(enterSubmit.status, "failed");
+    revision = enterSubmit.revision;
+
     const confirmationCount = await database.query<{ count: number }>("SELECT COUNT(*)::int AS count FROM confirmations");
     assert.equal(confirmationCount.rows[0]?.count, 0);
 
@@ -456,6 +510,19 @@ function observation(revision = 1) {
         actionPolicy: "navigate" as const,
         locators: [{ strategy: "role" as const, role: "button", name: "Save draft" }],
         bounds: { x: 260, y: 80, width: 140, height: 40 },
+        viewportVisible: true,
+        sensitive: false
+      },
+      {
+        nodeId: "continue",
+        tagName: "button",
+        role: "button",
+        name: "Continue",
+        inputType: "submit",
+        formAssociated: true,
+        formSubmitter: true,
+        locators: [{ strategy: "role" as const, role: "button", name: "Continue" }],
+        bounds: { x: 420, y: 80, width: 120, height: 40 },
         viewportVisible: true,
         sensitive: false
       }

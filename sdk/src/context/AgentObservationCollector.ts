@@ -124,7 +124,9 @@ export class AgentObservationCollector {
       description,
       text,
       value: sensitive ? undefined : redact(readValue(element), this.options).slice(0, 2_000) || undefined,
-      inputType: tagName(element) === "input" ? (element as HTMLInputElement).type : undefined,
+      inputType: inputTypeForElement(element),
+      formAssociated: isFormAssociated(element),
+      formSubmitter: isFormSubmitter(element),
       route: routeForElement(element),
       elementKey: element.dataset.miaKey?.slice(0, 300),
       locators: buildLocators(element, role, name),
@@ -308,6 +310,23 @@ function readElementText(element: HTMLElement): string {
 function readValue(element: HTMLElement): string {
   if (["input", "textarea", "select"].includes(tagName(element))) return normalize((element as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement).value);
   return element.isContentEditable ? normalize(element.textContent || "") : "";
+}
+
+function inputTypeForElement(element: HTMLElement): string | undefined {
+  const tag = tagName(element);
+  if (tag === "input" || tag === "button") return (element as HTMLInputElement | HTMLButtonElement).type.toLowerCase();
+  return undefined;
+}
+
+function isFormAssociated(element: HTMLElement): boolean {
+  const tag = tagName(element);
+  if (!["button", "input", "select", "textarea"].includes(tag)) return false;
+  return Boolean((element as HTMLButtonElement | HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement).form);
+}
+
+function isFormSubmitter(element: HTMLElement): boolean {
+  const type = inputTypeForElement(element);
+  return isFormAssociated(element) && (type === "submit" || type === "image");
 }
 
 function buildLocators(element: HTMLElement, role?: string, name?: string): TargetLocator[] {

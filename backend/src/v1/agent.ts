@@ -699,7 +699,7 @@ function buildPlannerPrompt(
     `- map:${element.elementKey} | route=${element.route} | ${element.role ?? "element"} | ${short(element.name ?? element.description ?? element.elementKey)} | policy=${element.actionPolicy}`
   ).join("\n");
   const actions = context.hostActions.map((action) =>
-    `- ${action.name} | risk=${action.risk} | ${action.description} | input=${JSON.stringify(action.inputSchema)}`
+    `- ${action.name} | risk=${action.effectiveRisk} | ${action.description} | input=${JSON.stringify(action.inputSchema)}`
   ).join("\n");
   const skills = context.skills.slice(0, 20).map((skill) =>
     `- ${skill.name}: ${skill.description}; goal=${skill.goal}; steps=${skill.steps.map((step) => typeof step === "object" && step && "intent" in step ? String(step.intent) : JSON.stringify(step)).join(" > ")}`
@@ -818,6 +818,8 @@ function resolveTarget(
         elementKey: node.elementKey,
         tagName: node.tagName,
         inputType: node.inputType,
+        formAssociated: node.formAssociated,
+        formSubmitter: node.formSubmitter,
         label: node.name ?? node.text,
         role: node.role,
         route: node.route,
@@ -860,7 +862,9 @@ function riskForAction(
   const semantic = [action.type, action.message, action.hostAction, node?.name, node?.text, node?.elementKey, map?.name, map?.description, map?.elementKey]
     .filter(Boolean).join(" ");
   if (PROHIBITED_OPERATION.test(semantic)) return "blocked";
-  if (host) return host.risk;
+  if (action.type === "click" && (node?.formSubmitter || isSubmitInputType(node?.inputType) || isSubmitInputType(mapInputType(map)))) return "blocked";
+  if (action.type === "press_key" && isEnterKey(action.key)) return "blocked";
+  if (host) return host.effectiveRisk;
   if (node?.sensitive || map?.actionPolicy === "manual") return "manual";
   if (map?.actionPolicy === "blocked" || node?.actionPolicy === "blocked") return "blocked";
   return "reversible_write";
@@ -987,6 +991,16 @@ function sanitizeReceipt(receipt: ActionReceipt): ActionReceipt {
 }
 
 function sanitizeDecision(decision: PlannerDecision): PlannerDecision {
+  if (decision.type === "ask_user" && isSensitiveInputRequest(decision)) {
+    return {
+      assessment: "The requested information is protected and must not pass through Mia.",
+      progress: "Protected input left to the user",
+      type: "unable",
+      message: "Please complete that protected information directly in the product. Mia will not ask for or handle secrets.",
+      actions: [],
+      successEvidence: []
+    };
+  }
   return {
     ...decision,
     assessment: redactSensitiveText(decision.assessment, 1_000),
@@ -1000,6 +1014,24 @@ function sanitizeDecision(decision: PlannerDecision): PlannerDecision {
       arguments: action.arguments ? redactSensitiveJson(action.arguments) : undefined
     }))
   };
+}
+
+const SENSITIVE_INPUT_REQUEST = /\b(?:password|passcode|passphrase|credential|secret|captcha|webauthn|security\s*key|private\s*key|seed\s*phrase|recovery\s*(?:code|phrase)|(?:one[- ]?time|verification|authentication|security|2fa|mfa)\s*(?:code|password|pin)|otp|api\s*key|access\s*token|auth(?:entication|orization)?\s*token|bearer\s*token|session\s*(?:cookie|token)|credit\s*card|debit\s*card|card\s*number|payment\s*(?:detail|information)|cvv|cvc|bank\s*(?:account|routing)|routing\s*number|social\s*security|ssn|tax\s*id|personal\s*identification\s*number)\b/i;
+
+function isSensitiveInputRequest(decision: PlannerDecision): boolean {
+  return SENSITIVE_INPUT_REQUEST.test(`${decision.field ?? ""} ${decision.message} ${(decision.choices ?? []).join(" ")}`.replace(/_/g, " "));
+}
+
+function isSubmitInputType(inputType: string | undefined): boolean {
+  return inputType === "submit" || inputType === "image";
+}
+
+function mapInputType(map: Awaited<ReturnType<V1Repositories["knowledge"]["listMappedElements"]>>[number] | undefined): string | undefined {
+  return typeof map?.metadata.type === "string" ? map.metadata.type.toLowerCase() : undefined;
+}
+
+function isEnterKey(key: string | undefined): boolean {
+  return key?.split("+").some((part) => part.trim().toLowerCase() === "enter") ?? false;
 }
 
 function short(value: string, limit = 500): string {

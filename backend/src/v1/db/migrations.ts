@@ -299,6 +299,16 @@ const migrations: Migration[] = [{
     ALTER TABLE agent_steps DROP CONSTRAINT agent_steps_session_id_step_index_key;
     ALTER TABLE agent_steps ADD CONSTRAINT agent_steps_goal_run_step_key UNIQUE (session_id, goal_run_id, step_index);
   `
+}, {
+  id: 5,
+  name: "separate_host_action_risk_review",
+  sql: `
+    ALTER TABLE host_actions RENAME COLUMN risk TO effective_risk;
+    ALTER TABLE host_actions
+      ADD COLUMN proposed_risk TEXT CHECK (proposed_risk IN ('read', 'navigate', 'reversible_write', 'manual', 'blocked'));
+    UPDATE host_actions SET proposed_risk = effective_risk;
+    ALTER TABLE host_actions ALTER COLUMN proposed_risk SET NOT NULL;
+  `
 }];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {

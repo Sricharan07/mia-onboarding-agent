@@ -7,6 +7,7 @@ import type { HostAction, Product, RiskLevel } from "../types";
 import { errorMessage, formatDateTime, json } from "../utils/format";
 
 const RISKS: RiskLevel[] = ["read", "navigate", "reversible_write", "manual", "blocked"];
+const RISK_RANK: Record<RiskLevel, number> = { read: 0, navigate: 1, reversible_write: 2, manual: 3, blocked: 4 };
 const PROHIBITED = ["Delete", "Send", "Publish", "Approve", "Pay", "External communication", "Irreversible submit"];
 
 export function ActionsPage({ api, refreshNonce, notify }: { api: BackendApi; refreshNonce: number; notify: (message: string) => void }) {
@@ -27,7 +28,7 @@ export function ActionsPage({ api, refreshNonce, notify }: { api: BackendApi; re
   }, [api]);
   useEffect(() => { void load(); }, [load, refreshNonce]);
   const selected = actions.find((action) => action.name === selectedName) ?? null;
-  useEffect(() => { if (selected) setRisk(selected.risk); setPendingReview(null); }, [selected]);
+  useEffect(() => { if (selected) setRisk(selected.effectiveRisk); setPendingReview(null); }, [selected]);
   const visible = useMemo(() => actions.filter((action) => `${action.name} ${action.description} ${action.status}`.toLowerCase().includes(query.toLowerCase())), [actions, query]);
   const perform = async (status: "published" | "blocked") => {
     if (!selected) return;
@@ -53,7 +54,7 @@ export function ActionsPage({ api, refreshNonce, notify }: { api: BackendApi; re
           <section className="detail-pane">
             {selected ? <><header className="detail-header"><div><div className="title-with-status"><h2>{selected.name}</h2><StatusBadge value={selected.status} /></div><p>Detected {formatDateTime(selected.firstSeenAt)} - last seen {formatDateTime(selected.lastSeenAt)}</p></div><Button size="sm" variant="secondary" onClick={() => void load()}><RefreshCw /> Refresh</Button></header>
               <div className="detail-copy"><span>Description</span><p>{selected.description}</p></div>
-              <div className="policy-review"><Field label="Effective risk" hint="Reversible writes require an exact confirmation naming the action and target."><select value={risk} onChange={(event) => setRisk(event.target.value as RiskLevel)}>{RISKS.map((value) => <option key={value} value={value}>{value.replace(/_/g, " ")}</option>)}</select></Field><div className="effective-policy"><span>Review state</span><strong>{selected.reviewedAt ? `Reviewed ${formatDateTime(selected.reviewedAt)}` : "Not reviewed"}</strong><small>Manifest {selected.manifestHash.slice(0, 12)}</small></div></div>
+              <div className="policy-review"><Field label="Effective risk" hint={`The SDK proposes ${selected.proposedRisk.replace(/_/g, " ")}. Policy can only stay the same or become more restrictive.`}><select value={risk} onChange={(event) => setRisk(event.target.value as RiskLevel)}>{RISKS.filter((value) => RISK_RANK[value] >= RISK_RANK[selected.proposedRisk]).map((value) => <option key={value} value={value}>{value.replace(/_/g, " ")}</option>)}</select></Field><div className="effective-policy"><span>SDK binding</span><strong>Detected and schema-bound</strong><small>Proposed risk: {selected.proposedRisk.replace(/_/g, " ")}</small></div><div className="effective-policy"><span>Review state</span><strong>{selected.reviewedAt ? `Reviewed ${formatDateTime(selected.reviewedAt)}` : "Not reviewed"}</strong><small>Manifest {selected.manifestHash.slice(0, 12)}</small></div></div>
               <div className="schema-view"><header><h3>Input schema</h3><span>Validated by the backend before execution</span></header><pre>{json(selected.inputSchema)}</pre></div>
               <footer className="detail-actions"><Button variant="danger" disabled={busy} onClick={() => setPendingReview("block")}><Ban /> Block</Button><Button disabled={busy || risk === "blocked"} onClick={() => setPendingReview("publish")}><Check /> {selected.status === "published" ? "Update policy" : "Publish action"}</Button></footer>
             </> : null}

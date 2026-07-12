@@ -156,7 +156,8 @@ export type HostAction = {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
-  risk: RiskLevel;
+  proposedRisk: RiskLevel;
+  effectiveRisk: RiskLevel;
   status: "detected" | "needs_review" | "published" | "blocked";
   manifestHash: string;
   firstSeenAt: string;

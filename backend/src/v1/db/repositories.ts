@@ -173,7 +173,9 @@ export type SkillRecord = {
   publishedAt: string | null;
 };
 
-export type HostActionRecord = HostActionManifest & {
+export type HostActionRecord = Omit<HostActionManifest, "risk"> & {
+  proposedRisk: RiskLevel;
+  effectiveRisk: RiskLevel;
   status: "detected" | "needs_review" | "published" | "blocked";
   manifestHash: string;
   firstSeenAt: string;
@@ -712,14 +714,14 @@ export class AgentRepository {
     await this.database.transaction(async (client) => {
       for (const manifest of manifests) {
         await client.query(`
-          INSERT INTO host_actions (name, description, input_schema, risk, status, manifest_hash)
-          VALUES ($1, $2, $3::jsonb, $4, $5, $6)
+          INSERT INTO host_actions (name, description, input_schema, proposed_risk, effective_risk, status, manifest_hash)
+          VALUES ($1, $2, $3::jsonb, $4, $4, $5, $6)
           ON CONFLICT (name) DO UPDATE SET
             description = EXCLUDED.description,
             input_schema = EXCLUDED.input_schema,
-            risk = EXCLUDED.risk,
+            proposed_risk = EXCLUDED.proposed_risk,
             status = CASE
-              WHEN EXCLUDED.risk = 'blocked' THEN 'blocked'
+              WHEN EXCLUDED.proposed_risk = 'blocked' THEN 'blocked'
               WHEN host_actions.manifest_hash = EXCLUDED.manifest_hash THEN host_actions.status
               ELSE 'needs_review'
             END,
@@ -751,12 +753,23 @@ export class AgentRepository {
   }
 
   async reviewHostAction(name: string, input: { status: "published" | "blocked"; risk: RiskLevel }): Promise<HostActionRecord> {
+    const current = await this.database.query<Pick<HostActionRecord, "proposedRisk">>(`
+      SELECT proposed_risk AS "proposedRisk" FROM host_actions WHERE name = $1
+    `, [name]);
+    const action = current.rows[0];
+    if (!action) throw new NotFoundError(`Host action not found: ${name}`);
+    if (input.status === "published" && !isAtLeastAsRestrictive(input.risk, action.proposedRisk)) {
+      throw new AppError(
+        "ACTION_REVIEW_RISK_DOWNGRADE",
+        `Effective risk cannot be less restrictive than the SDK-proposed ${action.proposedRisk} risk.`,
+        400
+      );
+    }
     const result = await this.database.query<HostActionRecord>(`
-      UPDATE host_actions SET status = $2, risk = $3, reviewed_at = NOW(), last_seen_at = NOW()
+      UPDATE host_actions SET status = $2, effective_risk = $3, reviewed_at = NOW(), last_seen_at = NOW()
       WHERE name = $1 RETURNING ${hostActionColumns()}
     `, [name, input.status, input.risk]);
-    if (!result.rows[0]) throw new NotFoundError(`Host action not found: ${name}`);
-    return result.rows[0];
+    return result.rows[0]!;
   }
 
   async addEvent(input: { id: string; sessionId?: string; userId?: string; eventType: string; payload?: Record<string, unknown> }): Promise<void> {
@@ -1419,12 +1432,18 @@ function confirmationColumns(): string {
 }
 
 function hostActionColumns(): string {
-  return `name, description, input_schema AS "inputSchema", risk, status, manifest_hash AS "manifestHash",
+  return `name, description, input_schema AS "inputSchema", proposed_risk AS "proposedRisk",
+    effective_risk AS "effectiveRisk", status, manifest_hash AS "manifestHash",
     first_seen_at::text AS "firstSeenAt", last_seen_at::text AS "lastSeenAt", reviewed_at::text AS "reviewedAt"`;
 }
 
 function hostActionSelect(suffix: string): string {
   return `SELECT ${hostActionColumns()} FROM host_actions ${suffix}`;
+}
+
+function isAtLeastAsRestrictive(effective: RiskLevel, proposed: RiskLevel): boolean {
+  const rank: Record<RiskLevel, number> = { read: 0, navigate: 1, reversible_write: 2, manual: 3, blocked: 4 };
+  return rank[effective] >= rank[proposed];
 }
 
 function knowledgeSourceColumns(): string {

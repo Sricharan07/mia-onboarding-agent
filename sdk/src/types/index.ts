@@ -42,6 +42,8 @@ export type ObservationNode = {
   text?: string;
   value?: string;
   inputType?: string;
+  formAssociated?: boolean;
+  formSubmitter?: boolean;
   route?: string;
   elementKey?: string;
   locators: TargetLocator[];
@@ -126,6 +128,8 @@ export type AgentTarget = {
   fingerprint?: string;
   tagName?: string;
   inputType?: string;
+  formAssociated?: boolean;
+  formSubmitter?: boolean;
   label?: string;
   role?: string;
   route?: string;
