@@ -27,7 +27,7 @@ import { redactSensitiveJson, redactSensitiveText } from "./redaction.js";
 import type { V1Gemini } from "./gemini.js";
 import { AppError } from "../utils/errors.js";
 import { createId } from "../utils/id.js";
-import { executableHostEffect, isProhibitedOperation } from "./safety.js";
+import { executableHostEffect, hasProtectedInputSchema, isProhibitedOperation, isProtectedInputSemantic } from "./safety.js";
 
 const MAX_STEPS = 24;
 const MAX_CONSECUTIVE_FAILURES = 3;
@@ -121,13 +121,12 @@ export class V1AgentService {
           route: input.observation.route,
           pendingConfirmation: null
         });
+        await this.repositories.agent.expirePendingConfirmations(session.id);
       }
-    } else if (session.status === "active") {
-      const expectedRoute = expectedNavigationRoute(actions);
-      const routeChanged = routePath(input.observation.route) !== routePath(session.currentRoute ?? input.observation.route);
-      if (expectedRoute && routeChanged && routePath(input.observation.route) === routePath(expectedRoute)) {
-        recovery = "verify_navigation";
-      }
+    } else if (session.status === "active" && expectedNavigationRoute(actions)) {
+      // The browser verifies the exact path, query, and fragment. The semantic
+      // observation may intentionally hide query data for privacy.
+      recovery = "verify_navigation";
     }
     const expectedRoute = recovery === "verify_navigation" ? expectedNavigationRoute(actions) : undefined;
     return {
@@ -330,6 +329,7 @@ export class V1AgentService {
       pendingConfirmation: null,
       error: "Cancelled by user."
     });
+    await this.repositories.agent.expirePendingConfirmations(session.id);
     await this.repositories.agent.addEvent({ id: createId("event"), sessionId, userId, eventType: "session_cancelled" });
     return { revision: updated.revision, status: "cancelled" };
   }
@@ -684,7 +684,11 @@ export class V1AgentService {
 
   private async syncActions(actions: HostActionManifest[]): Promise<void> {
     await this.repositories.agent.syncHostActions(actions.map((action) => {
-      const normalized: HostActionManifest = isProhibitedOperation(action.name)
+      assertValidHostSchema(action);
+      const protectedAction = isProhibitedOperation(action.name, action.description)
+        || isProtectedInputSemantic(action.name, action.description)
+        || hasProtectedInputSchema(action.inputSchema);
+      const normalized: HostActionManifest = protectedAction
         ? { ...action, risk: "blocked", effect: "protected" }
         : action;
       return { ...normalized, manifestHash: hash(stableJson(normalized)) };
@@ -945,7 +949,10 @@ function stopAtBarrier(actions: ActionDirective[]): ActionDirective[] {
   const result: ActionDirective[] = [];
   for (const action of actions) {
     result.push(action);
-    if (!action.replay && (action.confirmation || ["navigate", "go_back", "click", "host_action", "request_visual"].includes(action.type))) break;
+    if (!action.replay && [
+      "navigate", "go_back", "hover", "focus", "click", "fill", "clear", "select", "toggle",
+      "press_key", "wait", "host_action", "request_visual"
+    ].includes(action.type)) break;
   }
   return result;
 }
@@ -1193,15 +1200,18 @@ function sameOriginRoute(value: unknown, currentUrl: string): string | undefined
   }
 }
 
-function routePath(value: string): string {
-  const route = new URL(value, "https://mia.invalid").pathname || "/";
-  return route.length > 1 ? route.replace(/\/+$/, "") : route;
-}
-
 function canonicalRoute(value: string): string {
   const url = new URL(value, "https://mia.invalid");
   const path = url.pathname.length > 1 ? url.pathname.replace(/\/+$/, "") : url.pathname || "/";
   return `${path}${url.search}${url.hash}`;
+}
+
+function assertValidHostSchema(action: HostActionManifest): void {
+  try {
+    ajv.compile(action.inputSchema);
+  } catch {
+    throw new AppError("HOST_ACTION_SCHEMA_INVALID", `Host action ${action.name} has an invalid JSON input schema.`, 400);
+  }
 }
 
 function stableJson(value: unknown): string {

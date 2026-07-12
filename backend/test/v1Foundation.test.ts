@@ -3,8 +3,26 @@ import test from "node:test";
 import { loadV1Config, validateSetupTokenForState } from "../src/v1/config.js";
 import { V1Database } from "../src/v1/db/database.js";
 import { V1Repositories } from "../src/v1/db/repositories.js";
+import { redactSensitiveJson, redactSensitiveText } from "../src/v1/redaction.js";
 
 const databaseUrl = process.env.MIA_TEST_DATABASE_URL;
+
+test("secret redaction covers natural-language, JSON, and provider token forms", () => {
+  const redacted = redactSensitiveText([
+    "my password is hunter2",
+    '{"apiKey":"short-secret-value","otp":"123456"}',
+    "ghp_abcdefghijklmnopqrstuvwxyz123456",
+    "AKIA1234567890ABCDEF"
+  ].join(" "));
+  for (const secret of ["hunter2", "short-secret-value", "123456", "ghp_abcdefghijklmnopqrstuvwxyz123456", "AKIA1234567890ABCDEF"]) {
+    assert.equal(redacted.includes(secret), false, secret);
+  }
+  assert.match(redacted, /\[redacted\]/);
+  assert.deepEqual(redactSensitiveJson({ otp: "123456", nested: { routingNumber: "021000021" } }), {
+    otp: "[redacted]",
+    nested: { routingNumber: "[redacted]" }
+  });
+});
 
 test("production setup requires a strong token only until the singleton product exists", () => {
   const base = {
@@ -137,6 +155,16 @@ test("v1 PostgreSQL foundation migrates and enforces singleton setup plus sessio
       () => repositories.agent.reviewHostAction(manifest.name, { status: "published", risk: "read" }),
       /cannot be less restrictive/i
     );
+
+    await repositories.diagnostics.logAiRequest({
+      id: "provider_error_redaction",
+      purpose: "agent_plan",
+      model: "test-model",
+      error: '{"password":"provider-secret","otp":"654321"}'
+    });
+    const providerError = await database.query<{ error: string }>("SELECT error FROM ai_requests WHERE id = 'provider_error_redaction'");
+    assert.equal(providerError.rows[0]?.error.includes("provider-secret"), false);
+    assert.equal(providerError.rows[0]?.error.includes("654321"), false);
   } finally {
     await database.close();
   }

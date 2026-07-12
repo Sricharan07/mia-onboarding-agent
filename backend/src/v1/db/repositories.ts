@@ -10,7 +10,7 @@ import type {
 } from "../domain.js";
 import type { V1Database } from "./database.js";
 import { AppError, NotFoundError } from "../../utils/errors.js";
-import { redactSensitiveJson } from "../redaction.js";
+import { redactSensitiveJson, redactSensitiveText } from "../redaction.js";
 import type { MiaVoiceName } from "../voice.js";
 
 type Json = Record<string, unknown> | unknown[];
@@ -744,6 +744,14 @@ export class AgentRepository {
     return result.rows[0];
   }
 
+  async expirePendingConfirmations(sessionId: string): Promise<number> {
+    const result = await this.database.query(`
+      UPDATE confirmations SET status = 'expired', resolved_at = COALESCE(resolved_at, NOW())
+      WHERE session_id = $1 AND status = 'pending'
+    `, [sessionId]);
+    return result.rowCount ?? 0;
+  }
+
   async syncHostActions(manifests: Array<HostActionManifest & { manifestHash: string }>): Promise<HostActionRecord[]> {
     await this.database.transaction(async (client) => {
       for (const manifest of manifests) {
@@ -1017,8 +1025,11 @@ export class KnowledgeRepository {
                  elements.action_policy AS "actionPolicy", elements.metadata
           FROM ui_elements elements JOIN ui_map_versions versions ON versions.id = elements.map_version_id
           WHERE versions.id = (SELECT id FROM ui_map_versions WHERE status = 'ready' ORDER BY completed_at DESC LIMIT 1)
-            AND elements.route = $1
-          ORDER BY elements.element_key LIMIT $2
+            AND (
+              elements.route = $1
+              OR (STRPOS($1, '?') = 0 AND SPLIT_PART(elements.route, '?', 1) = SPLIT_PART($1, '?', 1))
+            )
+          ORDER BY (elements.route = $1) DESC, elements.element_key LIMIT $2
         `, [route, limit])
       : await this.database.query(`
           SELECT elements.element_key AS "elementKey", elements.route, elements.role, elements.name,
@@ -1225,7 +1236,16 @@ export class DiagnosticsRepository {
     await this.database.query(`
       INSERT INTO ai_requests (id, session_id, purpose, model, latency_ms, input_tokens, output_tokens, error)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-    `, [input.id, input.sessionId ?? null, input.purpose, input.model, input.latencyMs ?? null, input.inputTokens ?? null, input.outputTokens ?? null, input.error ?? null]);
+    `, [
+      input.id,
+      input.sessionId ?? null,
+      input.purpose,
+      input.model,
+      input.latencyMs ?? null,
+      input.inputTokens ?? null,
+      input.outputTokens ?? null,
+      input.error ? redactSensitiveText(input.error, 2_000) : null
+    ]);
   }
 
   async listRuns(limit = 100, transcriptMode: ProductRecord["transcriptMode"] = "full"): Promise<Array<Record<string, unknown>>> {
@@ -1242,6 +1262,10 @@ export class DiagnosticsRepository {
   }
 
   async getRun(id: string, transcriptMode: ProductRecord["transcriptMode"] = "full"): Promise<Record<string, unknown>> {
+    await this.database.query(`
+      UPDATE confirmations SET status = 'expired', resolved_at = COALESCE(resolved_at, NOW())
+      WHERE session_id = $1 AND status = 'pending' AND expires_at <= NOW()
+    `, [id]);
     const session = await this.database.query(`
       SELECT id, user_id AS "userId", status, revision, goal, current_route AS "currentRoute",
              step_count AS "stepCount", consecutive_failures AS "consecutiveFailures",

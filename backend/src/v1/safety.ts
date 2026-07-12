@@ -22,6 +22,24 @@ export function executableHostEffect(effect: HostActionEffect): boolean {
 }
 
 export function isProtectedInputSemantic(...values: Array<string | null | undefined>): boolean {
-  const semantic = values.filter(Boolean).join(" ").replace(/[_-]+/g, " ").replace(/\s+/g, " ");
-  return /\b(password|passcode|passphrase|pin|otp|one time code|verification code|authentication code|security code|recovery code|token|secret|api key|access key|private key|seed phrase|credit card|debit card|card number|payment|cvv|cvc|bank account|routing number|ssn|social security|tax id|webauthn|passkey|captcha)\b/i.test(semantic);
+  const semantic = values.filter(Boolean).join(" ")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+  return /\b(password|passcode|passphrase|credential|pin|otp|one time code|verification code|authentication code|security code|recovery code|token|secret|api key|access key|private key|seed phrase|authorization|session cookie|credit card|debit card|card number|payment|cvv|cvc|bank account|routing number|ssn|social security|tax id|webauthn|passkey|captcha|file picker|file upload|attachment)\b/i.test(semantic);
+}
+
+export function hasProtectedInputSchema(schema: Record<string, unknown>): boolean {
+  const visit = (value: unknown, parentKey?: string): boolean => {
+    if (!value || typeof value !== "object") return false;
+    if (Array.isArray(value)) return value.some((entry) => visit(entry, parentKey));
+    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+      if (parentKey === "properties" && (isProtectedInputSemantic(key) || /^(?:file|attachment|blob)$/i.test(key))) return true;
+      if (["format", "contentEncoding", "contentMediaType"].includes(key) && typeof entry === "string"
+        && (isProtectedInputSemantic(entry) || /(?:file|attachment|octet-stream)/i.test(entry))) return true;
+      if (visit(entry, key)) return true;
+    }
+    return false;
+  };
+  return visit(schema);
 }

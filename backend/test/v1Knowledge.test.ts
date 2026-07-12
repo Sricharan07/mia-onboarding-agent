@@ -79,6 +79,25 @@ test("knowledge files are embedded, recordings become reviewed skills, and publi
     assert.equal((await repositories.knowledge.getRecording(recording.id)).status, "ready");
     const skillMatches = await repositories.knowledge.search({ query: "prepare a lead draft" });
     assert.ok(skillMatches.some((match) => match.kind === "skill"));
+
+    const map = await repositories.knowledge.createMapVersion({
+      id: "query_map",
+      routes: ["/accounts?view=mine"]
+    });
+    await repositories.knowledge.replaceMapElements(map.id, [{
+      id: "query_map_element",
+      elementKey: "account_filter",
+      route: "/accounts?view=mine",
+      role: "button",
+      name: "Account filter",
+      locators: [{ strategy: "role", role: "button", name: "Account filter" }],
+      fingerprint: "query-map-fingerprint",
+      actionPolicy: "guide_only"
+    }]);
+    await repositories.knowledge.updateMapVersion(map.id, { status: "ready" });
+    assert.equal((await repositories.knowledge.listMappedElements("/accounts"))[0]?.elementKey, "account_filter");
+    assert.equal((await repositories.knowledge.listMappedElements("/accounts?view=mine"))[0]?.elementKey, "account_filter");
+    assert.equal((await repositories.knowledge.listMappedElements("/accounts?view=team")).length, 0);
     await service.close();
   } finally {
     await database.close();

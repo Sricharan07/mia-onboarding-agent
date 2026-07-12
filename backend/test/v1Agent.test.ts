@@ -366,6 +366,31 @@ test("v1 agent keeps a goal across questions and blocks protected operations bef
     assert.equal(popup.actions[0]?.risk, "read");
     assert.equal(popup.actions[0]?.confirmation, undefined);
 
+    const guardedBatchSession = await agent.createSession("guarded-batch-user", runtime());
+    model.push(decision("actions", {
+      message: "Fill two fields",
+      actions: [
+        {
+          actionId: "first-fill", type: "fill", targetRef: "live:email", value: "first@example.com",
+          message: "Enter the first value", expectedOutcome: "The first value is present"
+        },
+        {
+          actionId: "second-fill", type: "fill", targetRef: "live:email", value: "second@example.com",
+          message: "Enter the second value", expectedOutcome: "The second value is present"
+        }
+      ]
+    }));
+    const guardedBatch = await agent.submitTurn({
+      sessionId: guardedBatchSession.sessionId,
+      userId: "guarded-batch-user",
+      revision: guardedBatchSession.revision,
+      utterance: "Fill both fields",
+      source: "text",
+      runtime: runtime(8)
+    });
+    assert.equal(guardedBatch.actions.length, 1, "a mutation must end the batch so Mia re-observes before another mutation");
+    assert.ok(guardedBatch.actions[0]?.confirmation);
+
     const hostRuntime = {
       ...runtime(8),
       actions: [{
@@ -466,6 +491,35 @@ test("v1 agent keeps a goal across questions and blocks protected operations bef
     assert.equal(dangerousHost?.status, "blocked");
     assert.equal(dangerousHost?.proposedRisk, "blocked");
     assert.equal(dangerousHost?.effect, "protected");
+
+    await agent.createSession("secret-host-user", {
+      ...runtime(8),
+      actions: [{
+        name: "update_credentials",
+        description: "Update a product setting",
+        inputSchema: {
+          type: "object",
+          properties: { apiKey: { type: "string" } },
+          required: ["apiKey"]
+        },
+        risk: "reversible_write",
+        effect: "reversible_change"
+      }]
+    });
+    const secretHost = (await repositories.agent.listHostActions()).find((action) => action.name === "update_credentials");
+    assert.equal(secretHost?.status, "blocked");
+    assert.equal(secretHost?.effect, "protected");
+
+    await assert.rejects(() => agent.createSession("invalid-schema-user", {
+      ...runtime(8),
+      actions: [{
+        name: "invalid_schema_action",
+        description: "Invalid schema",
+        inputSchema: { type: "definitely-not-a-json-schema-type" },
+        risk: "read",
+        effect: "read"
+      }]
+    }), /invalid JSON input schema/i);
   } finally {
     await database.close();
   }
@@ -512,7 +566,8 @@ test("v1 agent resumes confirmations and navigation without persisting mutation 
     const redirected = await agent.resumeSession("resume-user", {
       ...redirectedRuntime, sessionId: created.sessionId, resumeToken: created.resumeToken
     });
-    assert.equal(redirected.pending?.recovery, "replan", "a changed but unexpected route must never verify navigation");
+    assert.equal(redirected.pending?.recovery, "verify_navigation", "the browser must verify the exact destination rather than trusting a privacy-reduced observation");
+    assert.equal(redirected.pending?.expectedRoute, "/dashboard/crm/new");
     const navigatedRuntime = runtime(3);
     navigatedRuntime.observation.route = "/dashboard/crm/new";
     navigatedRuntime.observation.url = "http://localhost:3001/dashboard/crm/new";
@@ -542,6 +597,11 @@ test("v1 agent resumes confirmations and navigation without persisting mutation 
     assert.equal(fillResumed.status, "active");
     assert.equal(fillResumed.pending?.recovery, "replan");
     assert.equal(fillResumed.pending?.actions[0]?.value, undefined);
+    const expiredReloadConfirmation = await database.query<{ status: string }>(
+      "SELECT status FROM confirmations WHERE id = $1",
+      [fillIssued.actions[0]?.confirmation?.id]
+    );
+    assert.equal(expiredReloadConfirmation.rows[0]?.status, "expired");
 
     model.push(decision("actions", {
       message: "Enter the name after re-observing",
@@ -611,6 +671,53 @@ test("v1 agent resumes confirmations and navigation without persisting mutation 
       [fillSession.sessionId]
     );
     assert.deepEqual(storedAttempts.rows.map((row) => row.status), ["cancelled", "completed"]);
+
+    const cancelSession = await agent.createSession("cancel-user", runtime());
+    model.push(decision("actions", { message: "Save the draft", actions: [planned("click", "live:save", "Save the draft")] }));
+    const cancelIssued = await agent.submitTurn({
+      sessionId: cancelSession.sessionId,
+      userId: "cancel-user",
+      revision: cancelSession.revision,
+      utterance: "Save the draft",
+      source: "text",
+      runtime: runtime(4)
+    });
+    await agent.cancel(cancelSession.sessionId, "cancel-user", cancelIssued.revision);
+    const cancelledConfirmation = await database.query<{ status: string }>(
+      "SELECT status FROM confirmations WHERE id = $1",
+      [cancelIssued.actions[0]?.confirmation?.id]
+    );
+    assert.equal(cancelledConfirmation.rows[0]?.status, "expired");
+
+    const queryRouteSession = await agent.createSession("query-route-user", runtime());
+    const queryRuntime = runtime(5);
+    queryRuntime.observation.nodes[0]!.route = "/dashboard/crm?view=mine";
+    model.push(decision("actions", {
+      message: "Open my CRM view",
+      actions: [{
+        actionId: "query-route-model",
+        type: "navigate",
+        route: "/dashboard/crm?view=mine",
+        message: "Open my CRM view",
+        expectedOutcome: "The exact CRM view opens"
+      }]
+    }));
+    const queryIssued = await agent.submitTurn({
+      sessionId: queryRouteSession.sessionId,
+      userId: "query-route-user",
+      revision: queryRouteSession.revision,
+      utterance: "Open my CRM view",
+      source: "text",
+      runtime: queryRuntime
+    });
+    const queryResumed = await agent.resumeSession("query-route-user", {
+      ...runtime(6),
+      sessionId: queryRouteSession.sessionId,
+      resumeToken: queryRouteSession.resumeToken
+    });
+    assert.equal(queryIssued.actions[0]?.route, "/dashboard/crm?view=mine");
+    assert.equal(queryResumed.pending?.recovery, "verify_navigation");
+    assert.equal(queryResumed.pending?.expectedRoute, "/dashboard/crm?view=mine");
 
     const routeSession = await agent.createSession("route-user", runtime());
     model.push(decision("actions", {
