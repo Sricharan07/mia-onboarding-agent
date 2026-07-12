@@ -681,6 +681,109 @@ test("DOM actor enforces exact approved routes for targets and navigation", asyn
   }
 });
 
+test("DOM actor executes guidance, focus, page scrolling, waiting, and browser-back primitives", async () => {
+  const cleanup = installDom("<main><button id='guide-target'>Guide target</button></main>");
+  try {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: () => ({ matches: true })
+    });
+    const target = document.querySelector<HTMLButtonElement>("#guide-target")!;
+    let hoverEvents = 0;
+    target.addEventListener("mouseover", () => { hoverEvents += 1; });
+    const scrollCalls: Array<{ left?: number; top?: number; behavior?: ScrollBehavior }> = [];
+    Object.defineProperty(window, "scrollBy", {
+      configurable: true,
+      value: (options: ScrollToOptions) => scrollCalls.push(options)
+    });
+    const collector = new AgentObservationCollector(options());
+    const observation = collector.collect();
+    const node = observation.nodes.find((candidate) => candidate.role === "button" && candidate.name === "Guide target")!;
+    assert.equal(collector.resolveNode(node.nodeId), target);
+    target.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+    assert.equal(hoverEvents, 1, "the DOM test harness must observe hover events");
+    hoverEvents = 0;
+    const cursor = {
+      navigateTo: () => undefined,
+      isPointingAt: () => true,
+      returnToCursor: () => undefined
+    } as unknown as MiaShadowCursor;
+    const actor = new DomAgentActor({ collector, cursor, config: options() });
+    const targeted = (type: "highlight" | "hover" | "scroll_to" | "focus", index: number): ActionDirective => ({
+      actionId: `${type}_${index}`,
+      idempotencyKey: `${type}_${index}_key`,
+      type,
+      message: `${type} the guide target`,
+      expectedOutcome: "The guide target is visibly identified",
+      risk: "read",
+      target: {
+        ref: `live:${node.nodeId}`,
+        nodeId: node.nodeId,
+        label: node.name,
+        role: node.role,
+        locators: node.locators
+      }
+    });
+
+    const highlighted = await actor.executeBatch([targeted("highlight", 1)], observation, new AbortController().signal);
+    assert.equal(highlighted.receipts[0]?.status, "completed");
+    assert.ok(document.querySelector("[data-mia-sdk-root='highlight']"), "highlight must render a visible SDK overlay");
+
+    const hovered = await actor.executeBatch([targeted("hover", 2)], observation, new AbortController().signal);
+    assert.equal(hovered.receipts[0]?.status, "completed");
+    assert.equal(hoverEvents, 1);
+
+    const scrolledTo = await actor.executeBatch([targeted("scroll_to", 3)], observation, new AbortController().signal);
+    assert.equal(scrolledTo.receipts[0]?.status, "completed");
+    assert.equal(scrolledTo.receipts[0]?.evidence.targetVisible, true);
+
+    const focused = await actor.executeBatch([targeted("focus", 4)], observation, new AbortController().signal);
+    assert.equal(focused.receipts[0]?.status, "completed");
+    assert.equal(document.activeElement, target);
+
+    const scrolled = await actor.executeBatch([{
+      actionId: "scroll_page",
+      idempotencyKey: "scroll_page_key",
+      type: "scroll_by",
+      deltaX: 12,
+      deltaY: 240,
+      message: "Scroll the page",
+      expectedOutcome: "More of the page is visible",
+      risk: "read"
+    }], observation, new AbortController().signal);
+    assert.equal(scrolled.receipts[0]?.status, "completed");
+    assert.deepEqual(scrollCalls.at(-1), { left: 12, top: 240, behavior: "auto" });
+
+    const waited = await actor.executeBatch([{
+      actionId: "wait_for_state",
+      idempotencyKey: "wait_for_state_key",
+      type: "wait",
+      waitMs: 1,
+      message: "Wait for the page state",
+      expectedOutcome: "The page has time to settle",
+      risk: "read"
+    }], observation, new AbortController().signal);
+    assert.equal(waited.receipts[0]?.status, "completed");
+    assert.equal(waited.receipts[0]?.evidence.waitMs, 1);
+
+    history.pushState({}, "", "/dashboard/finance");
+    assert.match(location.pathname, /finance$/);
+    const wentBack = await actor.executeBatch([{
+      actionId: "go_back",
+      idempotencyKey: "go_back_key",
+      type: "go_back",
+      message: "Return to the previous page",
+      expectedOutcome: "The CRM page is restored",
+      risk: "navigate"
+    }], collector.collect(), new AbortController().signal);
+    assert.equal(wentBack.receipts[0]?.status, "completed", JSON.stringify(wentBack.receipts[0]));
+    assert.match(location.pathname, /\/dashboard\/crm$/);
+    collector.destroy();
+  } finally {
+    cleanup();
+  }
+});
+
 test("DOM actor verifies contenteditable fields and safe supported key actions", async () => {
   const cleanup = installDom(`<main>
     <div id="dialog">Open dialog</div>
