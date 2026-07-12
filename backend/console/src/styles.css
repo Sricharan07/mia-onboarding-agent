@@ -4,7 +4,7 @@
 :root{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#171b1d;background:#f4f6f5;font-synthesis:none;letter-spacing:0;--bg:#f4f6f5;--surface:#fff;--surface-2:#f8faf9;--line:#dce2df;--line-strong:#c8d0cc;--ink:#171b1d;--muted:#65706b;--faint:#65706b;--accent:#147a5a;--accent-strong:#0b6448;--accent-soft:#e7f4ef;--blue:#2f65c8;--blue-soft:#edf3ff;--amber:#9b6412;--amber-soft:#fff5df;--red:#b23943;--red-soft:#fff0f1;--sidebar:#1b1e20;--sidebar-line:#303538;--shadow:0 16px 42px rgba(18,28,23,.08)}
 *{box-sizing:border-box;letter-spacing:0}
 html,body,#root{min-height:100%;margin:0}
-body{min-width:320px;background:var(--bg);font-size:14px;line-height:1.45}
+body{background:var(--bg);font-size:14px;line-height:1.45}
 button,input,textarea,select{font:inherit;color:inherit;letter-spacing:0}
 button,a{touch-action:manipulation}
 button{cursor:pointer}
