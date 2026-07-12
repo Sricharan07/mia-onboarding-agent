@@ -85,6 +85,39 @@ test("v1 HTTP API supports secure setup, runtime tokens, agent turns, and SSE", 
     const integrationKey = keyResponse.json<{ key: string }>().key;
     assert.match(integrationKey, /^mia_key_/);
 
+    const otherAdminLogin = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/login",
+      payload: { email: "admin@example.com", password: "strong-test-password" }
+    });
+    assert.equal(otherAdminLogin.statusCode, 200, otherAdminLogin.body);
+    const otherAdminToken = otherAdminLogin.json<{ token: string }>().token;
+    const passwordChange = await app.inject({
+      method: "PUT",
+      url: "/api/v1/auth/password",
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { currentPassword: "strong-test-password", nextPassword: "new-strong-test-password" }
+    });
+    assert.equal(passwordChange.statusCode, 200, passwordChange.body);
+    const currentAdminStillValid = await app.inject({
+      method: "GET",
+      url: "/api/v1/product",
+      headers: { authorization: `Bearer ${adminToken}` }
+    });
+    assert.equal(currentAdminStillValid.statusCode, 200);
+    const otherAdminRevoked = await app.inject({
+      method: "GET",
+      url: "/api/v1/product",
+      headers: { authorization: `Bearer ${otherAdminToken}` }
+    });
+    assert.equal(otherAdminRevoked.statusCode, 401, "changing the password must revoke every other administrator session");
+    const oldPasswordRejected = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/login",
+      payload: { email: "admin@example.com", password: "strong-test-password" }
+    });
+    assert.equal(oldPasswordRejected.statusCode, 401);
+
     const boundary = "mia-http-test-boundary";
     const documentResponse = await app.inject({
       method: "POST",
@@ -156,6 +189,30 @@ test("v1 HTTP API supports secure setup, runtime tokens, agent turns, and SSE", 
     });
     assert.equal(sdkEvent.statusCode, 200, sdkEvent.body);
 
+    const otherRuntimeTokenResponse = await app.inject({
+      method: "POST",
+      url: "/api/v1/runtime/tokens",
+      headers: { "x-mia-key": integrationKey },
+      payload: { userId: "other-demo-user", origin: "http://localhost:3001" }
+    });
+    assert.equal(otherRuntimeTokenResponse.statusCode, 200, otherRuntimeTokenResponse.body);
+    const otherRuntimeToken = otherRuntimeTokenResponse.json<{ token: string }>().token;
+    const otherSessionResponse = await app.inject({
+      method: "POST",
+      url: "/api/v1/runtime/sessions",
+      headers: runtimeHeaders(otherRuntimeToken),
+      payload: runtimePayload(2)
+    });
+    assert.equal(otherSessionResponse.statusCode, 200, otherSessionResponse.body);
+    const otherSessionId = otherSessionResponse.json<{ sessionId: string }>().sessionId;
+    const crossUserEvent = await app.inject({
+      method: "POST",
+      url: "/api/v1/runtime/events",
+      headers: runtimeHeaders(runtimeToken),
+      payload: { sessionId: otherSessionId, eventType: "sdk_ready", payload: { route: "/dashboard/crm" } }
+    });
+    assert.equal(crossUserEvent.statusCode, 404, "runtime telemetry must never attach to another user's session");
+
     const checklist = await app.inject({
       method: "GET",
       url: "/api/v1/setup/checklist",
@@ -187,7 +244,7 @@ test("v1 HTTP API supports secure setup, runtime tokens, agent turns, and SSE", 
       headers: { authorization: `Bearer ${adminToken}` }
     });
     assert.equal(runList.statusCode, 200, runList.body);
-    assert.equal(runList.json<{ items: Array<{ id: string }> }>().items[0]?.id, session.sessionId);
+    assert.ok(runList.json<{ items: Array<{ id: string }> }>().items.some((item) => item.id === session.sessionId));
 
     await app.inject({
       method: "PATCH",

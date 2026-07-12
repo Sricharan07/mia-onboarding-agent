@@ -10,7 +10,7 @@ import { V1Database } from "../src/v1/db/database.js";
 import { V1Repositories } from "../src/v1/db/repositories.js";
 import { V1KnowledgeService, chunkText, extractHtml } from "../src/v1/knowledge.js";
 import { isPublicIp, resolvePublicHttpsUrl } from "../src/v1/network.js";
-import { actionPolicyForElement } from "../src/v1/scanner.js";
+import { actionPolicyForElement, hostResolverRules } from "../src/v1/scanner.js";
 import { V1UiScanner } from "../src/v1/scanner.js";
 import { V1SecretService } from "../src/v1/secrets.js";
 
@@ -105,6 +105,15 @@ test("document extraction, SSRF policy, and UI action policy preserve product se
   assert.equal(isPublicIp("2606:4700:4700::1111"), true);
   await assert.rejects(() => resolvePublicHttpsUrl("https://127.0.0.1/private"), /private or reserved/i);
   await assert.rejects(() => resolvePublicHttpsUrl("http://example.com"), /public HTTPS/i);
+  assert.equal(
+    hostResolverRules([
+      { hostname: "app.example.com", address: "8.8.8.8", family: 4 },
+      { hostname: "cdn.example.com", address: "2606:4700:4700::1111", family: 6 },
+      { hostname: "app.example.com", address: "1.1.1.1", family: 4 }
+    ]),
+    "MAP app.example.com 8.8.8.8, MAP cdn.example.com [2606:4700:4700::1111]",
+    "Chromium must remain pinned to the preflight DNS answers for the complete scan"
+  );
 
   assert.equal(actionPolicyForElement({ role: "button", name: "Create draft", tagName: "button" }), "reversible_write");
   assert.equal(actionPolicyForElement({ role: "button", name: "Delete account", tagName: "button" }), "blocked");

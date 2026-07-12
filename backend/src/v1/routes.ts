@@ -181,9 +181,9 @@ export async function registerV1Routes(app: FastifyInstance, dependencies: V1App
     return { ok: true };
   });
   app.put("/api/v1/auth/password", async (request) => {
-    await requireAdmin(request, dependencies);
+    const admin = await requireAdmin(request, dependencies);
     const body = parseWithSchema(passwordSchema, request.body);
-    return { user: await dependencies.auth.changePassword(body.currentPassword, body.nextPassword) };
+    return { user: await dependencies.auth.changePassword(body.currentPassword, body.nextPassword, admin.sessionId) };
   });
 
   app.get("/api/v1/product", async (request) => {
@@ -447,6 +447,12 @@ export async function registerV1Routes(app: FastifyInstance, dependencies: V1App
   app.post("/api/v1/runtime/events", async (request) => {
     const runtime = await requireRuntime(request, dependencies, "events:write");
     const event = parseWithSchema(eventSchema, request.body);
+    if (event.sessionId) {
+      const session = await dependencies.repositories.agent.getSession(event.sessionId);
+      if (session.userId !== runtime.userId) {
+        throw new AppError("SESSION_NOT_FOUND", "Agent session was not found.", 404);
+      }
+    }
     await dependencies.repositories.agent.addEvent({
       id: randomUUID(),
       sessionId: event.sessionId,

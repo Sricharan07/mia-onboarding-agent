@@ -143,10 +143,21 @@ test("DOM actor fills and verifies a live control and never executes a manual ac
     } as unknown as MiaShadowCursor;
     const actor = new DomAgentActor({ collector, cursor, config: options() });
     const fill = directive({ type: "fill", targetNode: input.nodeId, value: "Avery", risk: "reversible_write" });
+    let inputEvents = 0;
+    document.querySelector("input")!.addEventListener("input", () => { inputEvents += 1; });
     const filled = await actor.executeBatch([fill], observation, new AbortController().signal);
     assert.equal(filled.receipts[0]?.status, "completed");
     assert.equal((document.querySelector("input") as HTMLInputElement).value, "Avery");
+    assert.equal(inputEvents, 1);
     assert.deepEqual(cursorCalls, ["Lead name"]);
+
+    const replayed = await actor.executeBatch([
+      { ...fill, actionId: "action_replanned", message: "Verify Avery again" }
+    ], collector.collect(), new AbortController().signal);
+    assert.equal(replayed.receipts[0]?.status, "completed");
+    assert.equal(replayed.receipts[0]?.actionId, "action_replanned");
+    assert.equal(replayed.receipts[0]?.evidence.idempotentlyReplayed, true);
+    assert.equal(inputEvents, 1, "an idempotent replay must not dispatch a second mutation");
 
     const manual = directive({ type: "fill", targetNode: input.nodeId, value: "should-not-run", risk: "manual" });
     const protectedResult = await actor.executeBatch([manual], collector.collect(), new AbortController().signal);
@@ -328,6 +339,83 @@ test("DOM actor rejects no-op clicks, stale mapped targets, and immutable contro
     }], collector.collect(), new AbortController().signal);
     assert.equal(stale.receipts[0]?.status, "failed");
     assert.match(stale.receipts[0]?.message ?? "", /no longer matches/i);
+    collector.destroy();
+  } finally {
+    cleanup();
+  }
+});
+
+test("DOM actor enforces exact approved routes for targets and navigation", async () => {
+  const cleanup = installDom(`<main>
+    <a id="report" href="/dashboard/crm?view=summary#totals">Revenue report</a>
+    <a id="external" href="https://example.com/account">External account</a>
+  </main>`);
+  try {
+    const collector = new AgentObservationCollector(options());
+    const observation = collector.collect();
+    const report = observation.nodes.find((node) => node.name === "Revenue report")!;
+    const cursor = { navigateTo: () => undefined, returnToCursor: () => undefined } as unknown as MiaShadowCursor;
+    const actor = new DomAgentActor({
+      collector,
+      cursor,
+      config: {
+        ...options(),
+        navigate: async (route) => { history.pushState({}, "", route); }
+      }
+    });
+    const wrongPage = await actor.executeBatch([{
+      actionId: "wrong_query_target",
+      idempotencyKey: "wrong_query_target_key",
+      type: "point",
+      message: "Point to the report",
+      expectedOutcome: "The report is highlighted",
+      risk: "read",
+      target: {
+        ref: `live:${report.nodeId}`,
+        nodeId: report.nodeId,
+        label: report.name,
+        role: report.role,
+        pageRoute: "/dashboard/crm?view=other",
+        route: "/dashboard/crm?view=summary#totals",
+        locators: report.locators
+      }
+    }], observation, new AbortController().signal);
+    assert.equal(wrongPage.receipts[0]?.status, "failed");
+    assert.match(wrongPage.receipts[0]?.message ?? "", /different page/i);
+
+    const external = observation.nodes.find((node) => node.name === "External account")!;
+    assert.equal(external.route, undefined);
+    const externalClick = await actor.executeBatch([{
+      actionId: "external_navigation",
+      idempotencyKey: "external_navigation_key",
+      type: "click",
+      message: "Open the external account",
+      expectedOutcome: "The external site opens",
+      risk: "reversible_write",
+      target: {
+        ref: `live:${external.nodeId}`,
+        nodeId: external.nodeId,
+        label: external.name,
+        role: external.role,
+        pageRoute: "/dashboard/crm",
+        locators: external.locators
+      }
+    }], observation, new AbortController().signal);
+    assert.equal(externalClick.receipts[0]?.status, "failed");
+    assert.match(externalClick.receipts[0]?.message ?? "", /cross-origin link/i);
+
+    const navigated = await actor.executeBatch([{
+      actionId: "exact_navigation",
+      idempotencyKey: "exact_navigation_key",
+      type: "navigate",
+      route: "/dashboard/crm?view=summary#totals",
+      message: "Open the revenue summary",
+      expectedOutcome: "The exact approved report route opens",
+      risk: "navigate"
+    }], collector.collect(), new AbortController().signal);
+    assert.equal(navigated.receipts[0]?.status, "completed");
+    assert.equal(location.pathname + location.search + location.hash, "/dashboard/crm?view=summary#totals");
+    assert.equal(navigated.receipts[0]?.evidence.exactRouteMatch, true);
     collector.destroy();
   } finally {
     cleanup();

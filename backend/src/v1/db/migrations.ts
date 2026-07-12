@@ -344,6 +344,16 @@ const migrations: Migration[] = [{
 
     ALTER TABLE host_actions ALTER COLUMN effect SET NOT NULL;
   `
+}, {
+  id: 8,
+  name: "append_only_action_attempts",
+  sql: `
+    ALTER TABLE action_receipts DROP CONSTRAINT action_receipts_idempotency_key_key;
+    CREATE UNIQUE INDEX action_receipts_completed_idempotency_key
+      ON action_receipts (idempotency_key) WHERE status = 'completed';
+    CREATE INDEX action_receipts_idempotency_lookup
+      ON action_receipts (session_id, idempotency_key, created_at DESC);
+  `
 }];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {

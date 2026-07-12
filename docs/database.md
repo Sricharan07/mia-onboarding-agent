@@ -30,6 +30,7 @@ Migrations run automatically before the HTTP server starts. Applied IDs and name
 | 5 | `separate_host_action_risk_review` |
 | 6 | `constrain_mia_voice` |
 | 7 | `typed_host_action_effects` |
+| 8 | `append_only_action_attempts` |
 
 Migration 1 enables `vector`; the database role must be allowed to create that extension or an operator must install it before startup.
 

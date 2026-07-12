@@ -53,11 +53,22 @@ export class DomAgentActor {
     observation: Observation,
     signal: AbortSignal
   ): Promise<{ receipt: ActionReceipt; visualContext: MiaVisualContext[] }> {
-    const cached = this.idempotentReceipts.get(directive.idempotencyKey);
-    if (cached) return { receipt: cached, visualContext: [] };
     try {
       assertActive(signal);
       if (directive.risk === "blocked") return { receipt: receipt(directive, "failed", "This action is blocked by the product policy."), visualContext: [] };
+      const cached = directive.risk === "manual" ? undefined : this.idempotentReceipts.get(directive.idempotencyKey);
+      if (cached) {
+        if (cached.type !== directive.type || cached.targetRef !== directive.target?.ref) {
+          return { receipt: receipt(directive, "failed", "The idempotency key does not match this action."), visualContext: [] };
+        }
+        return { receipt: receipt(directive, "completed", cached.message, { ...cached.evidence, idempotentlyReplayed: true }), visualContext: [] };
+      }
+      if (directive.replay && directive.risk !== "manual") {
+        return {
+          receipt: receipt(directive, "completed", directive.replay.message, { ...directive.replay.evidence, idempotentlyReplayed: true }),
+          visualContext: []
+        };
+      }
       if (directive.type === "request_visual") return this.requestVisual(directive, observation, signal);
       if (directive.type === "host_action" && directive.risk === "manual") {
         return { receipt: receipt(directive, "manual", "This protected host action must be completed by the user."), visualContext: [] };
@@ -70,7 +81,7 @@ export class DomAgentActor {
 
       const target = await resolveTarget(directive, this.options.collector);
       if (!target.element) return { receipt: receipt(directive, "failed", target.error ?? "The target is no longer available."), visualContext: [] };
-      if (directive.target?.route && normalizeRoute(directive.target.route) !== normalizeRoute(location.pathname)) {
+      if (directive.target?.pageRoute && canonicalRoute(directive.target.pageRoute) !== currentRoute()) {
         return { receipt: receipt(directive, "failed", "The target belongs to a different page."), visualContext: [] };
       }
       await this.pointTo(target.element, directive.target?.label ?? directive.message, signal);
@@ -79,7 +90,7 @@ export class DomAgentActor {
         if (directive.risk === "manual") {
           return { receipt: receipt(directive, "manual", "This protected step must be completed by the user.", { targetVisible: true }), visualContext: [] };
         }
-        assertTargetCanExecute(target.element, directive.type, directive.key);
+        assertTargetCanExecute(target.element, directive.type, directive.key, directive.target?.route);
         if (["point", "highlight", "scroll_to"].includes(directive.type)) {
           const visibility = targetVisibility(target.element, topRect(target.element));
           return {
@@ -136,7 +147,7 @@ export class DomAgentActor {
         const verification = verify(directive, before, after, immediateScopedDomChanged);
         if (!["point", "highlight", "scroll_to", "hover"].includes(directive.type)) this.options.cursor.returnToCursor();
         const result = receipt(directive, verification.verified ? "completed" : "unverified", verification.message, verification.evidence);
-        this.idempotentReceipts.set(directive.idempotencyKey, result);
+        if (result.status === "completed") this.idempotentReceipts.set(directive.idempotencyKey, result);
         return { receipt: result, visualContext: [] };
       } finally {
         window.setTimeout(clearHighlight, 900);
@@ -189,7 +200,7 @@ export class DomAgentActor {
       idempotencyKey: directive.idempotencyKey
     });
     const actionReceipt = receipt(directive, result.status, result.message, result.evidence);
-    if (["completed", "manual"].includes(result.status)) this.idempotentReceipts.set(directive.idempotencyKey, actionReceipt);
+    if (result.status === "completed") this.idempotentReceipts.set(directive.idempotencyKey, actionReceipt);
     return { receipt: actionReceipt, visualContext: [] };
   }
 
@@ -221,8 +232,15 @@ export class DomAgentActor {
     const before = location.href;
     if (this.options.config.navigate) {
       await this.options.config.navigate(`${destination.pathname}${destination.search}${destination.hash}`);
-      await waitFor(() => location.href !== before || normalizeRoute(location.pathname) === normalizeRoute(destination.pathname), 5_000, signal);
-      return receipt(directive, "completed", "Mia navigated to the requested page.", { from: before, to: location.href, routeChanged: before !== location.href });
+      const expectedRoute = canonicalRoute(`${destination.pathname}${destination.search}${destination.hash}`);
+      await waitFor(() => currentRoute() === expectedRoute, 5_000, signal, "The product did not reach the exact approved route in time.");
+      return receipt(directive, "completed", "Mia navigated to the requested page.", {
+        from: before,
+        to: location.href,
+        routeChanged: before !== location.href,
+        expectedRoute,
+        exactRouteMatch: true
+      });
     }
     assertActive(signal);
     location.assign(destination.href);
@@ -587,7 +605,7 @@ function scannedAccessibleName(element: HTMLElement): string {
     || element.getAttribute("alt") || element.textContent || "";
 }
 
-function assertTargetCanExecute(element: HTMLElement, type: ActionDirective["type"], key?: string): void {
+function assertTargetCanExecute(element: HTMLElement, type: ActionDirective["type"], key?: string, destinationRoute?: string): void {
   const disabled = Boolean((element as HTMLButtonElement).disabled) || element.getAttribute("aria-disabled") === "true";
   if (disabled && ["focus", "click", "fill", "clear", "select", "toggle", "press_key"].includes(type)) {
     throw new Error("The target control is disabled.");
@@ -595,6 +613,12 @@ function assertTargetCanExecute(element: HTMLElement, type: ActionDirective["typ
   const readOnly = Boolean((element as HTMLInputElement).readOnly) || element.getAttribute("aria-readonly") === "true";
   if (readOnly && ["fill", "clear"].includes(type)) throw new Error("The target control is read-only.");
   if (["click", "toggle"].includes(type) && formSubmitter(element)) throw new Error("Mia cannot activate native form submission controls.");
+  if (["click", "toggle"].includes(type) && element.tagName.toLowerCase() === "a") {
+    const destination = new URL((element as HTMLAnchorElement).href, element.ownerDocument.baseURI);
+    if (destination.origin !== location.origin || !destinationRoute || canonicalRoute(destination.href) !== canonicalRoute(destinationRoute)) {
+      throw new Error("Mia cannot activate an unapproved or cross-origin link.");
+    }
+  }
   if (type === "press_key" && key?.toLowerCase() === "enter") throw new Error("Mia cannot press Enter because it may submit a form.");
 }
 
@@ -789,9 +813,14 @@ function assertActive(signal: AbortSignal): void {
   if (signal.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
 }
 
-function normalizeRoute(value: string): string {
-  const path = value.split(/[?#]/, 1)[0] || "/";
-  return path.length > 1 ? path.replace(/\/+$/, "") : path;
+function currentRoute(): string {
+  return canonicalRoute(`${location.pathname}${location.search}${location.hash}`);
+}
+
+function canonicalRoute(value: string): string {
+  const url = new URL(value, location.origin);
+  const path = url.pathname.length > 1 ? url.pathname.replace(/\/+$/, "") : url.pathname || "/";
+  return `${path}${url.search}${url.hash}`;
 }
 
 function normalize(value: string): string {

@@ -44,7 +44,8 @@ test("v1 PostgreSQL foundation migrates and enforces singleton setup plus sessio
       { id: 4, name: "stable_goal_run_identity" },
       { id: 5, name: "separate_host_action_risk_review" },
       { id: 6, name: "constrain_mia_voice" },
-      { id: 7, name: "typed_host_action_effects" }
+      { id: 7, name: "typed_host_action_effects" },
+      { id: 8, name: "append_only_action_attempts" }
     ]);
     assert.equal((await database.query<{ count: number }>(`
       SELECT COUNT(*)::int AS count FROM information_schema.tables WHERE table_schema = 'public'

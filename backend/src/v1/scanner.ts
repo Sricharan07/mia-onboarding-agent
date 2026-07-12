@@ -76,11 +76,15 @@ export class V1UiScanner {
     const scanConfig = product.scanConfig as ScanConfig;
     const reviewedPolicies = new Map((await this.repositories.knowledge.listReviewedElementPolicies())
       .map((element) => [element.elementKey, element] as const));
-    await validateScanOrigins(product.origin, scanConfig.allowedResourceOrigins ?? [], this.config.UI_SCAN_ALLOW_PRIVATE_NETWORKS);
+    const pinnedOrigins = await validateScanOrigins(product.origin, scanConfig.allowedResourceOrigins ?? [], this.config.UI_SCAN_ALLOW_PRIVATE_NETWORKS);
     await this.repositories.knowledge.updateMapVersion(id, { status: "scanning", error: null });
     let browser: Browser | undefined;
     try {
-      browser = await chromium.launch({ headless: this.config.UI_SCAN_HEADLESS });
+      const resolverRules = hostResolverRules(pinnedOrigins);
+      browser = await chromium.launch({
+        headless: this.config.UI_SCAN_HEADLESS,
+        args: resolverRules ? [`--host-resolver-rules=${resolverRules}`] : []
+      });
       const context = await browser.newContext({
         acceptDownloads: false,
         ignoreHTTPSErrors: false,
@@ -328,10 +332,23 @@ function guardBrowserRequest(route: Route, allowedOrigins: Set<string>): Promise
   return allowedOrigins.has(origin) ? route.continue() : route.abort("blockedbyclient");
 }
 
-async function validateScanOrigins(productOrigin: string, resourceOrigins: string[], allowPrivate: boolean): Promise<void> {
+export type PinnedScanOrigin = { hostname: string; address: string; family: 4 | 6 };
+
+async function validateScanOrigins(productOrigin: string, resourceOrigins: string[], allowPrivate: boolean): Promise<PinnedScanOrigin[]> {
   const origins = [productOrigin, ...resourceOrigins.map(normalizeOrigin)];
-  if (allowPrivate) return;
-  for (const origin of origins) await resolvePublicHttpsUrl(origin);
+  if (allowPrivate) return [];
+  const resolved = await Promise.all(origins.map((origin) => resolvePublicHttpsUrl(origin)));
+  return resolved.map(({ url, address, family }) => ({ hostname: url.hostname, address, family }));
+}
+
+export function hostResolverRules(origins: PinnedScanOrigin[]): string {
+  const addresses = new Map<string, string>();
+  for (const origin of origins) {
+    if (!addresses.has(origin.hostname)) {
+      addresses.set(origin.hostname, origin.family === 6 ? `[${origin.address}]` : origin.address);
+    }
+  }
+  return [...addresses].map(([hostname, address]) => `MAP ${hostname} ${address}`).join(", ");
 }
 
 function normalizeElement(element: BrowserElement, route: string, frameIndex: number, index: number): ScannedElement {

@@ -54,8 +54,8 @@ test("v1 agent persists an observe-act-verify run and enforces confirmations and
     });
     assert.equal(issued.status, "waiting_confirmation");
     assert.equal(issued.actions.length, 2);
-    assert.ok(issued.actions[0]?.confirmation);
-    assert.equal(issued.actions[1]?.confirmation, undefined);
+    assert.equal(issued.actions[0]?.confirmation, undefined);
+    assert.ok(issued.actions[1]?.confirmation);
 
     const receipts = issued.actions.map((action) => ({
       actionId: action.actionId,
@@ -75,7 +75,7 @@ test("v1 agent persists an observe-act-verify run and enforces confirmations and
       runtime: runtime(2)
     }), /approved before it can be completed/i);
 
-    const confirmation = issued.actions[0]!.confirmation!;
+    const confirmation = issued.actions[1]!.confirmation!;
     assert.match(confirmation.prompt, /^Approve (?:this|these) reversible change/);
     await assert.rejects(() => agent.resolveConfirmation({
       sessionId: created.sessionId,
@@ -125,7 +125,7 @@ test("v1 agent persists an observe-act-verify run and enforces confirmations and
     const run = await repositories.diagnostics.getRun(created.sessionId);
     const steps = run.steps as Array<{ directive: { actions: Array<{ confirmation?: Record<string, unknown> }> } }>;
     assert.equal(steps.length, 2);
-    assert.equal(steps[0]?.directive.actions[0]?.confirmation?.binding, undefined, "confirmation bindings must not be logged");
+    assert.equal(steps[0]?.directive.actions[1]?.confirmation?.binding, undefined, "confirmation bindings must not be logged");
     const acceptance = await repositories.diagnostics.acceptanceEvidence();
     assert.equal(acceptance.mutation.passed, true);
     assert.equal(acceptance.mutation.runId, created.sessionId);
@@ -170,7 +170,9 @@ test("v1 agent keeps a goal across questions and blocks protected operations bef
     });
     assert.equal(question.status, "waiting_user");
 
+    model.pushJudgment(false, "The lead draft has not been created.", ["A completed draft-creation receipt"]);
     model.push(decision("answer", { message: "I have the name Avery." }));
+    model.push(decision("unable", { message: "I have the name, but I cannot verify that the draft was created." }));
     const answered = await agent.submitTurn({
       sessionId: created.sessionId,
       userId: "user_2",
@@ -179,7 +181,9 @@ test("v1 agent keeps a goal across questions and blocks protected operations bef
       source: "voice",
       runtime: runtime(2)
     });
-    assert.equal(answered.status, "completed");
+    assert.equal(answered.status, "failed");
+    assert.equal(answered.type, "unable");
+    assert.equal(model.judgeCalls, 1, "answer decisions must pass the same independent completion judgment as complete decisions");
     assert.equal((await repositories.agent.getSession(created.sessionId)).goal, "Create a draft lead");
 
     let revision = answered.revision;
@@ -267,6 +271,22 @@ test("v1 agent keeps a goal across questions and blocks protected operations bef
     assert.equal(enterSubmit.type, "unable");
     assert.equal(enterSubmit.status, "failed");
     revision = enterSubmit.revision;
+
+    model.push(decision("actions", {
+      message: "Open the external account",
+      actions: [planned("click", "live:external", "Open the external account")]
+    }));
+    const externalLink = await agent.submitTurn({
+      sessionId: created.sessionId,
+      userId: "user_2",
+      revision,
+      utterance: "Open the external account",
+      source: "text",
+      runtime: runtime(5)
+    });
+    assert.equal(externalLink.type, "unable");
+    assert.equal(externalLink.status, "failed");
+    revision = externalLink.revision;
 
     const confirmationCount = await database.query<{ count: number }>("SELECT COUNT(*)::int AS count FROM confirmations");
     assert.equal(confirmationCount.rows[0]?.count, 0);
@@ -438,6 +458,69 @@ test("v1 agent resumes confirmations and navigation without persisting mutation 
     });
     assert.equal(replanned.actions[0]?.idempotencyKey, fillIssued.actions[0]?.idempotencyKey);
     assert.notEqual(replanned.actions[0]?.actionId, fillIssued.actions[0]?.actionId);
+    const retryConfirmation = replanned.actions[0]?.confirmation;
+    assert.ok(retryConfirmation);
+    const retryApproved = await agent.resolveConfirmation({
+      sessionId: fillSession.sessionId,
+      confirmationId: retryConfirmation.id,
+      userId: "fill-user",
+      revision: replanned.revision,
+      binding: retryConfirmation.binding,
+      approved: true,
+      source: "ui",
+      observation: observation(3)
+    });
+    model.push(decision("actions", {
+      message: "Check the same completed name entry",
+      actions: [{
+        actionId: "third-model-id", type: "fill", targetRef: "live:create", value: "Avery",
+        message: "Enter Avery", expectedOutcome: "The field contains Avery"
+      }]
+    }));
+    const replayed = await agent.continue({
+      sessionId: fillSession.sessionId,
+      userId: "fill-user",
+      revision: retryApproved.revision,
+      receipts: replanned.actions.map((action) => ({
+        actionId: action.actionId,
+        idempotencyKey: action.idempotencyKey,
+        type: action.type,
+        status: "completed" as const,
+        message: "The exact value was entered and verified.",
+        targetRef: action.target?.ref,
+        route: "/dashboard/crm",
+        evidence: { valueChanged: true, exactValueMatch: true }
+      })),
+      runtime: runtime(4)
+    });
+    assert.equal(replayed.status, "active");
+    assert.equal(replayed.actions[0]?.replay?.status, "completed");
+    assert.equal(replayed.actions[0]?.confirmation, undefined, "a completed idempotent action must not request approval again");
+    const storedAttempts = await database.query<{ status: string }>(
+      "SELECT status FROM action_receipts WHERE session_id = $1 ORDER BY created_at",
+      [fillSession.sessionId]
+    );
+    assert.deepEqual(storedAttempts.rows.map((row) => row.status), ["cancelled", "completed"]);
+
+    const routeSession = await agent.createSession("route-user", runtime());
+    model.push(decision("actions", {
+      message: "Open an unapproved query variant",
+      actions: [{
+        actionId: "route-model-id",
+        type: "navigate",
+        route: "/dashboard/crm/new?admin=true",
+        message: "Open the new lead page",
+        expectedOutcome: "The approved page opens"
+      }]
+    }));
+    await assert.rejects(() => agent.submitTurn({
+      sessionId: routeSession.sessionId,
+      userId: "route-user",
+      revision: routeSession.revision,
+      utterance: "Open the new lead page",
+      source: "text",
+      runtime: runtime(5)
+    }), /outside the supplied product routes/i);
   } finally {
     await database.close();
   }
@@ -594,6 +677,16 @@ function observation(revision = 1) {
         formSubmitter: true,
         locators: [{ strategy: "role" as const, role: "button", name: "Continue" }],
         bounds: { x: 420, y: 80, width: 120, height: 40 },
+        viewportVisible: true,
+        sensitive: false
+      },
+      {
+        nodeId: "external",
+        tagName: "a",
+        role: "link",
+        name: "External account",
+        locators: [{ strategy: "role" as const, role: "link", name: "External account" }],
+        bounds: { x: 880, y: 80, width: 140, height: 40 },
         viewportVisible: true,
         sensitive: false
       }

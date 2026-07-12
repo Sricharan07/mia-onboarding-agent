@@ -119,13 +119,16 @@ export class V1AuthService {
     if (parsed) await this.repositories.auth.revokeAdminSession(parsed.sessionId);
   }
 
-  async changePassword(currentPassword: string, nextPassword: string): Promise<SafeAdminUser> {
+  async changePassword(currentPassword: string, nextPassword: string, currentSessionId: string): Promise<SafeAdminUser> {
     assertPassword(nextPassword);
     const admin = await this.repositories.auth.getAdmin();
     if (!admin || !await verifyPassword(currentPassword, admin.passwordHash)) {
       throw new AppError("PASSWORD_INVALID", "Current password is incorrect.", 401);
     }
-    return safeAdmin(await this.repositories.auth.updateAdmin({ passwordHash: await hashPassword(nextPassword) }));
+    return safeAdmin(await this.repositories.auth.updatePasswordAndRevokeOtherSessions(
+      await hashPassword(nextPassword),
+      currentSessionId
+    ));
   }
 
   async createIntegrationKey(name: string): Promise<SafeIntegrationKey & { key: string }> {

@@ -233,20 +233,28 @@ export class Mia {
         }, controller.signal, "text");
         return;
       }
+      const observedRoute = `${location.pathname}${location.search}${location.hash}`;
+      const exactRouteMatch = pending.recovery === "verify_navigation"
+        && Boolean(pending.expectedRoute)
+        && canonicalRoute(observedRoute) === canonicalRoute(pending.expectedRoute!);
       const receipts = pending.actions.map((action) => ({
         actionId: action.actionId,
         idempotencyKey: action.idempotencyKey,
         type: action.type,
-        status: pending.recovery === "verify_navigation" ? "completed" as const : "cancelled" as const,
+        status: pending.recovery === "verify_navigation"
+          ? exactRouteMatch ? "completed" as const : "failed" as const
+          : "cancelled" as const,
         message: pending.recovery === "verify_navigation"
-          ? `The observed route exactly matches the expected destination ${pending.expectedRoute}.`
+          ? exactRouteMatch
+            ? `The observed route exactly matches the expected destination ${pending.expectedRoute}.`
+            : `The observed route ${observedRoute} does not match the expected destination ${pending.expectedRoute}.`
           : "The pending action was cancelled after reload so Mia can re-observe safely.",
         targetRef: action.target?.ref,
-        route: `${location.pathname}${location.search}`,
+        route: observedRoute,
         evidence: {
           recoveredAfterReload: true,
-          route: `${location.pathname}${location.search}`,
-          ...(pending.expectedRoute ? { expectedRoute: pending.expectedRoute, exactRouteMatch: true } : {})
+          route: observedRoute,
+          ...(pending.expectedRoute ? { expectedRoute: pending.expectedRoute, exactRouteMatch } : {})
         }
       }));
       const runtime = await this.runtime(controller.signal);
@@ -616,6 +624,12 @@ function hash(value: string): string {
     result = Math.imul(result, 0x01000193);
   }
   return (result >>> 0).toString(36);
+}
+
+function canonicalRoute(value: string): string {
+  const url = new URL(value, location.origin);
+  const path = url.pathname.length > 1 ? url.pathname.replace(/\/+$/, "") : url.pathname || "/";
+  return `${path}${url.search}${url.hash}`;
 }
 
 function assertActive(signal: AbortSignal): void {

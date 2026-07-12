@@ -135,6 +135,7 @@ export type AgentTarget = {
   formSubmitter?: boolean;
   label?: string;
   role?: string;
+  pageRoute?: string;
   route?: string;
   locators: TargetLocator[];
   bounds?: { x: number; y: number; width: number; height: number };
@@ -158,6 +159,7 @@ export type ActionDirective = {
   waitMs?: number;
   hostAction?: string;
   arguments?: Record<string, unknown>;
+  replay?: Pick<ActionReceipt, "status" | "message" | "route" | "evidence"> & { status: "completed" };
   confirmation?: ConfirmationRequest;
 };
 

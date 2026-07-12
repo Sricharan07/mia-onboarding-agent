@@ -124,8 +124,8 @@ export class V1AgentService {
       }
     } else if (session.status === "active") {
       const expectedRoute = expectedNavigationRoute(actions);
-      const routeChanged = normalizeRoute(input.observation.route) !== normalizeRoute(session.currentRoute ?? input.observation.route);
-      if (expectedRoute && routeChanged && normalizeRoute(input.observation.route) === normalizeRoute(expectedRoute)) {
+      const routeChanged = routePath(input.observation.route) !== routePath(session.currentRoute ?? input.observation.route);
+      if (expectedRoute && routeChanged && routePath(input.observation.route) === routePath(expectedRoute)) {
         recovery = "verify_navigation";
       }
     }
@@ -359,12 +359,12 @@ export class V1AgentService {
     });
     generated.decision.actions = generated.decision.actions.map((action) => ({ ...action, actionId: createId("action") }));
 
-    for (let attempt = 1; generated.decision.type === "complete"; attempt += 1) {
+    for (let attempt = 1; isSuccessfulFinalDecision(generated.decision.type); attempt += 1) {
       const judge = await this.model.judge({
         sessionId: session.id,
         goal: session.goal,
         proposedResult: generated.decision.message,
-        evidence: completionEvidence(runtime.observation, context.steps, context.receipts),
+        evidence: completionEvidence(runtime, context),
         signal
       });
       if (judge.satisfied) break;
@@ -465,10 +465,11 @@ export class V1AgentService {
       }
 
       const guarded = stopAtBarrier(directives);
-      const confirmation = guarded.some((directive) => directive.risk === "reversible_write")
-        ? await this.createBatchConfirmation(session, guarded)
+      const confirmationTarget = guarded.find((directive) => directive.risk === "reversible_write" && !directive.replay);
+      const confirmation = confirmationTarget
+        ? await this.createBatchConfirmation(session, guarded, confirmationTarget.actionId)
         : undefined;
-      if (confirmation) guarded[0]!.confirmation = confirmation;
+      if (confirmation) confirmationTarget!.confirmation = confirmation;
       const nextStatus = confirmation ? "waiting_confirmation" : "active";
       const pending = confirmation ? { confirmationId: confirmation.id, actionIds: guarded.map((directive) => directive.actionId) } : null;
       const updated = await this.repositories.agent.advanceSession({
@@ -584,7 +585,7 @@ export class V1AgentService {
         throw new AppError("HOST_ACTION_NOT_PUBLISHED", "Gemini selected a host action that is not reviewed and published.", 502);
       }
       if (host) validateHostArguments(host, action.arguments ?? {});
-      const risk = riskForAction(action, target?.node, target?.map, host);
+      const risk = riskForAction(action, target?.node, target?.map, host, target?.target.route);
       const idempotencyKey = hash(stableJson({
         sessionId: session.id,
         goalRunId: session.goalRunId,
@@ -595,6 +596,12 @@ export class V1AgentService {
         hostAction: action.hostAction ?? "",
         payload: action.arguments ?? action.value ?? ""
       }));
+      const previous = ["blocked", "manual"].includes(risk) ? undefined : await this.repositories.agent.findCompletedReceipt({
+        sessionId: session.id,
+        idempotencyKey,
+        type: action.type,
+        targetRef: target?.target.ref
+      });
       const directive: ActionDirective = {
         actionId: action.actionId,
         idempotencyKey,
@@ -610,7 +617,13 @@ export class V1AgentService {
         deltaY: action.deltaY,
         waitMs: action.waitMs,
         hostAction: action.hostAction,
-        arguments: risk === "manual" ? undefined : action.arguments
+        arguments: risk === "manual" ? undefined : action.arguments,
+        replay: previous ? {
+          status: "completed",
+          message: previous.message,
+          route: previous.route,
+          evidence: previous.evidence
+        } : undefined
       };
       directives.push(directive);
     }
@@ -619,14 +632,15 @@ export class V1AgentService {
 
   private async createBatchConfirmation(
     session: AgentSessionRecord,
-    directives: ActionDirective[]
+    directives: ActionDirective[],
+    actionId: string
   ): Promise<NonNullable<ActionDirective["confirmation"]>> {
     const binding = randomBytes(24).toString("base64url");
     const prompt = confirmationPrompt(directives);
     const confirmation = await this.repositories.agent.createConfirmation({
       id: createId("confirmation"),
       sessionId: session.id,
-      actionId: directives[0]!.actionId,
+      actionId,
       prompt,
       bindingHash: hash(binding),
       expiresAt: new Date(Date.now() + CONFIRMATION_TTL_MS).toISOString()
@@ -727,11 +741,7 @@ function buildPlannerPrompt(
     .map((entry) => `<context name="${entry.name}">${entry.description}\n${entry.content}</context>`).join("\n");
   const untrustedContext = runtime.context.filter((entry) => !entry.trusted)
     .map((entry) => `<context name="${entry.name}">${entry.description}\n${entry.content}</context>`).join("\n");
-  const allowedRoutes = new Set([
-    runtime.observation.route,
-    ...runtime.observation.nodes.map((node) => node.route).filter((route): route is string => Boolean(route)),
-    ...context.map.map((element) => element.route)
-  ]);
+  const allowedRoutes = new Set(routesAvailableToAgent(runtime.observation, context.map));
   return `User goal: ${session.goal}
 
 Conversation:
@@ -833,6 +843,7 @@ function resolveTarget(
         formSubmitter: node.formSubmitter,
         label: node.name ?? node.text,
         role: node.role,
+        pageRoute: observation.route,
         route: node.route,
         locators: node.locators,
         bounds: node.bounds
@@ -852,7 +863,8 @@ function resolveTarget(
         inputType: typeof map.metadata.type === "string" ? map.metadata.type : undefined,
         label: map.name ?? map.description ?? map.elementKey,
         role: map.role ?? undefined,
-        route: map.route,
+        pageRoute: map.route,
+        route: sameOriginRoute(map.metadata.href, observation.url),
         locators: map.locators as NonNullable<ActionDirective["target"]>["locators"]
       }
     };
@@ -864,7 +876,8 @@ function riskForAction(
   action: PlannedAction,
   node?: ObservationNode,
   map?: Awaited<ReturnType<V1Repositories["knowledge"]["listMappedElements"]>>[number],
-  host?: HostActionRecord
+  host?: HostActionRecord,
+  destinationRoute?: string
 ): RiskLevel {
   const readAction = ["point", "highlight", "hover", "scroll_to", "scroll_by", "focus", "wait", "request_visual"].includes(action.type);
   if (readAction) return "read";
@@ -873,11 +886,12 @@ function riskForAction(
   if (isProhibitedOperation(action.type, action.message, action.hostAction, node?.name, node?.text, node?.elementKey, map?.name, map?.description, map?.elementKey)) return "blocked";
   if (action.type === "click" && (node?.formSubmitter || isSubmitInputType(node?.inputType) || isSubmitInputType(mapInputType(map)))) return "blocked";
   if (action.type === "press_key" && isEnterKey(action.key)) return "blocked";
+  if (action.type === "click" && (node?.role === "link" || map?.role === "link")) return destinationRoute ? "navigate" : "blocked";
   if (host) return executableHostEffect(host.effect) ? host.effectiveRisk : "blocked";
   const policy = node?.actionPolicy ?? map?.actionPolicy;
   if (node?.sensitive || policy === "manual") return "manual";
   if (policy === "blocked" || policy === "read" || policy === "guide_only") return "blocked";
-  if (policy === "navigate") return action.type === "click" && Boolean(node?.route || map?.route) ? "navigate" : "blocked";
+  if (policy === "navigate") return action.type === "click" && Boolean(destinationRoute) ? "navigate" : "blocked";
   return "reversible_write";
 }
 
@@ -894,12 +908,8 @@ function validateActionArguments(
   if (action.type === "press_key" && !action.key) throw new AppError("ACTION_KEY_REQUIRED", "press_key requires a key.", 502);
   if (action.type === "navigate") {
     if (!action.route || !action.route.startsWith("/")) throw new AppError("ACTION_ROUTE_INVALID", "Navigation requires a relative approved route.", 502);
-    const allowed = new Set([
-      observation.route,
-      ...observation.nodes.map((node) => node.route).filter((route): route is string => Boolean(route)),
-      ...mapped.map((element) => element.route)
-    ].map(normalizeRoute));
-    if (!allowed.has(normalizeRoute(action.route))) throw new AppError("ACTION_ROUTE_INVALID", "Gemini selected a route outside the supplied product routes.", 502);
+    const allowed = new Set(routesAvailableToAgent(observation, mapped).map(canonicalRoute));
+    if (!allowed.has(canonicalRoute(action.route))) throw new AppError("ACTION_ROUTE_INVALID", "Gemini selected a route outside the supplied product routes.", 502);
   }
   if (action.type === "host_action" && !action.hostAction) throw new AppError("HOST_ACTION_REQUIRED", "host_action requires a registered action name.", 502);
 }
@@ -920,14 +930,14 @@ function stopAtBarrier(actions: ActionDirective[]): ActionDirective[] {
   const result: ActionDirective[] = [];
   for (const action of actions) {
     result.push(action);
-    if (action.confirmation || ["navigate", "go_back", "click", "host_action", "request_visual"].includes(action.type)) break;
+    if (!action.replay && (action.confirmation || ["navigate", "go_back", "click", "host_action", "request_visual"].includes(action.type))) break;
   }
   return result;
 }
 
 function confirmationPrompt(actions: ActionDirective[]): string {
   const descriptions = actions
-    .filter((action) => action.risk === "reversible_write")
+    .filter((action) => action.risk === "reversible_write" && !action.replay)
     .map((action) => {
       const target = action.target?.label ?? action.hostAction ?? "this item";
       if (action.type === "fill") return `enter the provided value in ${target}`;
@@ -938,8 +948,38 @@ function confirmationPrompt(actions: ActionDirective[]): string {
   return `Approve ${descriptions.length === 1 ? "this reversible change" : "these reversible changes"}: ${descriptions.join(", then ")}?`;
 }
 
-function completionEvidence(observation: Observation, steps: AgentStepRecord[], receipts: ActionReceipt[]): string {
-  return `Current route: ${observation.route}\nCurrent page text: ${short(observation.pageText ?? "", 8_000)}\nRecent progress: ${steps.map((step) => `${step.progress}=${step.status}`).join("; ")}\nReceipts: ${receipts.map((receipt) => `${receipt.type}:${receipt.status}:${receipt.message}:${JSON.stringify(receipt.evidence)}`).join("\n")}`;
+function completionEvidence(
+  runtime: RuntimeContext,
+  context: {
+    steps: AgentStepRecord[];
+    receipts: ActionReceipt[];
+    knowledge: KnowledgeMatch[];
+  }
+): string {
+  const trustedContext = runtime.context.filter((entry) => entry.trusted)
+    .map((entry) => `${entry.name}: ${short(entry.content, 2_000)}`).join("\n");
+  const untrustedContext = runtime.context.filter((entry) => !entry.trusted)
+    .map((entry) => `${entry.name}: ${short(entry.content, 2_000)}`).join("\n");
+  return `<validated_runtime_state>
+Current route: ${runtime.observation.route}
+Recent step statuses: ${context.steps.map((step) => `${step.status}`).join(", ") || "none"}
+Validated receipt statuses:
+${context.receipts.map((receipt) => `${receipt.type}:${receipt.status}:${receipt.targetRef ?? ""}`).join("\n") || "none"}
+</validated_runtime_state>
+
+<trusted_registered_context>
+${trustedContext || "none"}
+</trusted_registered_context>
+
+<untrusted_product_evidence>
+Page text: ${short(runtime.observation.pageText ?? "", 8_000)}
+Retrieved knowledge:
+${context.knowledge.map((match) => `${match.sourceName}: ${short(match.content, 2_000)}`).join("\n") || "none"}
+Registered context:
+${untrustedContext || "none"}
+Receipt messages and output:
+${context.receipts.map((receipt) => `${receipt.message}: ${short(JSON.stringify(receipt.evidence), 2_000)}`).join("\n") || "none"}
+</untrusted_product_evidence>`;
 }
 
 function sourceReference(match: KnowledgeMatch): Record<string, unknown> {
@@ -1054,9 +1094,45 @@ function short(value: string, limit = 500): string {
   return value.replace(/\s+/g, " ").trim().slice(0, limit);
 }
 
-function normalizeRoute(value: string): string {
-  const route = value.split(/[?#]/, 1)[0] || "/";
+function isSuccessfulFinalDecision(type: PlannerDecision["type"]): boolean {
+  return type === "answer" || type === "complete";
+}
+
+function routesAvailableToAgent(
+  observation: Observation,
+  mapped: Awaited<ReturnType<V1Repositories["knowledge"]["listMappedElements"]>>
+): string[] {
+  return [
+    observation.route,
+    ...observation.nodes.map((node) => node.route).filter((route): route is string => Boolean(route)),
+    ...mapped.map((element) => element.route),
+    ...mapped.map((element) => sameOriginRoute(element.metadata.href, observation.url))
+      .filter((route): route is string => Boolean(route))
+  ];
+}
+
+function sameOriginRoute(value: unknown, currentUrl: string): string | undefined {
+  if (typeof value !== "string") return undefined;
+  try {
+    const current = new URL(currentUrl);
+    const destination = new URL(value, current);
+    return destination.origin === current.origin
+      ? `${destination.pathname}${destination.search}${destination.hash}`
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function routePath(value: string): string {
+  const route = new URL(value, "https://mia.invalid").pathname || "/";
   return route.length > 1 ? route.replace(/\/+$/, "") : route;
+}
+
+function canonicalRoute(value: string): string {
+  const url = new URL(value, "https://mia.invalid");
+  const path = url.pathname.length > 1 ? url.pathname.replace(/\/+$/, "") : url.pathname || "/";
+  return `${path}${url.search}${url.hash}`;
 }
 
 function stableJson(value: unknown): string {

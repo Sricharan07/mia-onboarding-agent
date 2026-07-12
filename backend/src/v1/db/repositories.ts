@@ -364,6 +364,21 @@ export class AuthRepository {
     return (await this.getAdmin())!;
   }
 
+  async updatePasswordAndRevokeOtherSessions(passwordHash: string, currentSessionId: string): Promise<AdminUserRecord> {
+    return this.database.transaction(async (client) => {
+      const updated = await client.query(`
+        UPDATE admin_user SET password_hash = $1, updated_at = NOW()
+        WHERE singleton = TRUE
+      `, [passwordHash]);
+      if (updated.rowCount !== 1) throw new NotFoundError("Administrator has not been configured.");
+      await client.query(`
+        UPDATE admin_sessions SET revoked_at = COALESCE(revoked_at, NOW())
+        WHERE id <> $1 AND revoked_at IS NULL
+      `, [currentSessionId]);
+      return adminWithClient(client);
+    });
+  }
+
   async createAdminSession(input: { id: string; tokenHash: string; expiresAt: string }): Promise<AdminSessionRecord> {
     const result = await this.database.query<AdminSessionRecord>(`
       INSERT INTO admin_sessions (id, token_hash, expires_at)
@@ -634,7 +649,7 @@ export class AgentRepository {
       INSERT INTO action_receipts (
         action_id, session_id, step_id, idempotency_key, action_type, target_ref, status, message, evidence
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
-      ON CONFLICT (idempotency_key) DO NOTHING
+      ON CONFLICT DO NOTHING
       RETURNING action_id AS "actionId", idempotency_key AS "idempotencyKey", action_type AS type,
         status, message, target_ref AS "targetRef", evidence
     `, [
@@ -645,11 +660,17 @@ export class AgentRepository {
     const existing = await this.database.query<ActionReceipt & { sessionId: string }>(`
       SELECT action_id AS "actionId", session_id AS "sessionId", idempotency_key AS "idempotencyKey",
              action_type AS type, status, message, target_ref AS "targetRef", evidence
-      FROM action_receipts WHERE idempotency_key = $1
-    `, [input.idempotencyKey]);
+      FROM action_receipts
+      WHERE action_id = $1 OR (idempotency_key = $2 AND status = 'completed')
+      ORDER BY (action_id = $1) DESC, created_at DESC
+      LIMIT 1
+    `, [input.actionId, input.idempotencyKey]);
     const receipt = existing.rows[0];
     if (!receipt || receipt.sessionId !== input.sessionId || receipt.type !== input.type || (receipt.targetRef ?? null) !== (input.targetRef ?? null)) {
       throw new AppError("IDEMPOTENCY_CONFLICT", "The idempotency key belongs to a different action.", 409);
+    }
+    if (receipt.actionId === input.actionId && receipt.status !== input.status) {
+      throw new AppError("RECEIPT_CONFLICT", "This action attempt already has a different receipt.", 409);
     }
     return { ...receipt, route: input.route };
   }
@@ -661,6 +682,18 @@ export class AgentRepository {
       FROM action_receipts WHERE session_id = $1 ORDER BY created_at DESC LIMIT $2
     `, [sessionId, limit]);
     return result.rows.reverse();
+  }
+
+  async findCompletedReceipt(input: { sessionId: string; idempotencyKey: string; type: ActionReceipt["type"]; targetRef?: string }): Promise<ActionReceipt | undefined> {
+    const result = await this.database.query<ActionReceipt>(`
+      SELECT action_id AS "actionId", idempotency_key AS "idempotencyKey", action_type AS type,
+             status, message, target_ref AS "targetRef", evidence
+      FROM action_receipts
+      WHERE session_id = $1 AND idempotency_key = $2 AND action_type = $3
+        AND target_ref IS NOT DISTINCT FROM $4 AND status = 'completed'
+      LIMIT 1
+    `, [input.sessionId, input.idempotencyKey, input.type, input.targetRef ?? null]);
+    return result.rows[0];
   }
 
   async createConfirmation(input: {
@@ -1492,8 +1525,9 @@ function vector(values: number[]): string {
 }
 
 export function safeDirectiveJson(actions: ActionDirective[]): Json {
-  return actions.map(({ value: _value, arguments: _arguments, confirmation, ...action }) => ({
+  return actions.map(({ value: _value, arguments: _arguments, confirmation, replay, ...action }) => ({
     ...action,
+    replay: replay ? { status: replay.status, message: "[redacted]", evidence: {} } : undefined,
     confirmation: confirmation
       ? { id: confirmation.id, prompt: confirmation.prompt, expiresAt: confirmation.expiresAt }
       : undefined

@@ -134,6 +134,7 @@ export const agentTargetSchema = z.object({
   formSubmitter: z.boolean().optional(),
   label: z.string().max(500).optional(),
   role: z.string().max(100).optional(),
+  pageRoute: z.string().max(2_000).optional(),
   route: z.string().max(2_000).optional(),
   locators: z.array(targetLocatorSchema).max(12).default([]),
   bounds: boxSchema.optional()
@@ -173,6 +174,12 @@ export const actionDirectiveSchema = z.object({
   waitMs: z.number().optional(),
   hostAction: z.string().optional(),
   arguments: z.record(z.string(), z.unknown()).optional(),
+  replay: z.object({
+    status: z.literal("completed"),
+    message: z.string(),
+    route: z.string().optional(),
+    evidence: z.record(z.string(), z.unknown()).default({})
+  }).optional(),
   confirmation: z.object({
     id: z.string(),
     prompt: z.string(),
