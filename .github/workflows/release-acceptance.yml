@@ -38,7 +38,6 @@ jobs:
     env:
       DATABASE_URL: postgres://mia:mia-release-runner-database@127.0.0.1:5432/mia_acceptance
       MIA_TEST_DATABASE_URL: postgres://mia:mia-release-runner-database@127.0.0.1:5432/mia_acceptance
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       MIA_ACCEPTANCE_BACKEND_URL: http://127.0.0.1:4000
       MIA_ACCEPTANCE_CONSOLE_URL: http://127.0.0.1:4000
       MIA_ACCEPTANCE_DEMO_URL: http://127.0.0.1:3001/dashboard/crm
@@ -47,7 +46,6 @@ jobs:
       MIA_ACCEPTANCE_EVIDENCE_DIR: /tmp/mia-release-evidence
       MIA_ACCEPTANCE_REQUIRE_FRESH: "true"
       MIA_ACCEPTANCE_REQUIRE_GEMINI: "true"
-      MIA_ACCEPTANCE_AGENT: "true"
       MIA_BENCHMARK_DEMO_URL: http://127.0.0.1:3001/dashboard/crm
       MIA_BENCHMARK_ITERATIONS: "3"
       MIA_BENCHMARK_THRESHOLD: "1"
@@ -82,9 +80,6 @@ jobs:
           mkdir -p "$RUNNER_TEMP/mia-release-logs" "$MIA_ACCEPTANCE_EVIDENCE_DIR"
           printf 'Release acceptance started for %s\n' "$GITHUB_SHA" > "$MIA_ACCEPTANCE_EVIDENCE_DIR/preflight.txt"
 
-      - name: Require the release Gemini credential
-        run: test -n "$GEMINI_API_KEY"
-
       - name: Install release browsers
         run: npx playwright install --with-deps chromium firefox webkit chrome msedge
 
@@ -110,6 +105,8 @@ jobs:
           echo "MIA_SECRET_ENCRYPTION_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
 
       - name: Start the current backend artifact
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           nohup env \
             NODE_ENV=production \
@@ -119,11 +116,12 @@ jobs:
             UI_SCAN_ALLOW_PRIVATE_NETWORKS=true \
             LOCAL_UPLOAD_DIR="$RUNNER_TEMP/mia-release-uploads" \
             CONSOLE_DIST_DIR="$GITHUB_WORKSPACE/backend/console/dist" \
+            GEMINI_API_KEY="$GEMINI_API_KEY" \
             node backend/dist/server.js > "$RUNNER_TEMP/mia-release-logs/backend.log" 2>&1 &
           echo $! > "$RUNNER_TEMP/mia-backend.pid"
 
       - name: Complete secure first-run setup
-        run: npm run acceptance:setup
+        run: env MIA_ACCEPTANCE_REQUIRE_GEMINI=false npm run acceptance:setup
 
       - name: Start the current SDK demo artifact
         run: |
@@ -136,11 +134,18 @@ jobs:
           cat "$RUNNER_TEMP/mia-release-logs/demo.log"
           exit 1
 
+      - name: Verify Chrome, Edge, Firefox, and WebKit with WCAG checks
+        run: env MIA_ACCEPTANCE_AGENT=false npm run acceptance:browsers
+
+      - name: Require the release Gemini credential
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          test -n "$GEMINI_API_KEY"
+          curl -fsS "$MIA_ACCEPTANCE_BACKEND_URL/api/v1/ready" | grep -q '"geminiConfigured":true'
+
       - name: Index the demo and review its typed actions
         run: npm run acceptance:prepare-product
-
-      - name: Verify Chrome, Edge, Firefox, and WebKit with WCAG checks
-        run: npm run acceptance:browsers
 
       - name: Run repeated intelligent-agent and safety benchmark
         run: npm run benchmark:agent
