@@ -142,7 +142,7 @@ jobs:
 
       - name: Upload acceptance evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mia-linux-release-evidence-${{ github.sha }}
           path: |
@@ -250,7 +250,7 @@ jobs:
 
       - name: Upload Safari evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mia-safari-release-evidence-${{ github.sha }}
           path: |
@@ -314,7 +314,7 @@ jobs:
 
       - name: Upload backup proof
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mia-docker-backup-proof-${{ github.sha }}
           path: ${{ runner.temp }}/mia-release-backup.sql
