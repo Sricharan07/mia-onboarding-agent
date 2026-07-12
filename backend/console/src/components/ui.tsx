@@ -1,5 +1,5 @@
 import { AlertTriangle, Check, Copy, Inbox, LoaderCircle, X } from "lucide-react";
-import { cloneElement, isValidElement, useId, useState, type ButtonHTMLAttributes, type HTMLAttributes, type ReactElement, type ReactNode } from "react";
+import { cloneElement, forwardRef, isValidElement, useId, useState, type ButtonHTMLAttributes, type HTMLAttributes, type ReactElement, type ReactNode } from "react";
 
 export function Button({ className = "", variant = "primary", size = "md", children, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: "primary" | "secondary" | "danger" | "quiet";
@@ -8,9 +8,12 @@ export function Button({ className = "", variant = "primary", size = "md", child
   return <button className={`button button-${variant} button-${size} ${className}`} {...props}>{children}</button>;
 }
 
-export function IconButton({ label, children, className = "", ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { label: string }) {
-  return <button type="button" className={`icon-button ${className}`} aria-label={label} title={label} {...props}>{children}</button>;
-}
+export const IconButton = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLButtonElement> & { label: string }>(function IconButton(
+  { label, children, className = "", ...props },
+  ref
+) {
+  return <button ref={ref} type="button" className={`icon-button ${className}`} aria-label={label} title={label} {...props}>{children}</button>;
+});
 
 export function Field({ label, hint, error, children, className = "" }: {
   label: string;
@@ -94,9 +97,9 @@ export function Segmented<T extends string>({ value, options, onChange, label }:
   label: string;
 }) {
   return (
-    <div className="segmented" role="tablist" aria-label={label}>
+    <div className="segmented" role="group" aria-label={label}>
       {options.map((option) => (
-        <button key={option.value} type="button" role="tab" aria-selected={value === option.value} onClick={() => onChange(option.value)}>
+        <button key={option.value} type="button" aria-pressed={value === option.value} onClick={() => onChange(option.value)}>
           {option.label}{option.count !== undefined ? <span>{option.count}</span> : null}
         </button>
       ))}

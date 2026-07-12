@@ -18,6 +18,8 @@ import { errorMessage } from "./utils/format";
 const configuredBackendUrl = (import.meta.env.VITE_MIA_BACKEND_URL as string | undefined)?.trim();
 const backendUrl = import.meta.env.DEV && configuredBackendUrl ? configuredBackendUrl : window.location.origin;
 const TOKEN_KEY = "mia:v1:admin-session";
+const MOBILE_NAVIGATION_QUERY = "(max-width: 900px)";
+const FOCUSABLE = "a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex='-1'])";
 
 export default function App() {
   const [token, setToken] = useState(() => sessionStorage.getItem(TOKEN_KEY) ?? "");
@@ -28,9 +30,20 @@ export default function App() {
   const [bootError, setBootError] = useState("");
   const [route, setRoute] = useState<RouteId>(() => routeFromPath(window.location.pathname));
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [mobileNavigation, setMobileNavigation] = useState(() => window.matchMedia(MOBILE_NAVIGATION_QUERY).matches);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [toast, setToast] = useState("");
   const toastTimer = useRef<number | undefined>(undefined);
+  const sidebarRef = useRef<HTMLElement>(null);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+
+  const focusHeading = useCallback(() => window.requestAnimationFrame(() => headingRef.current?.focus({ preventScroll: true })), []);
+  const openNavigation = useCallback(() => setSidebarOpen(true), []);
+  const closeNavigation = useCallback(() => {
+    setSidebarOpen(false);
+    if (mobileNavigation) window.requestAnimationFrame(() => menuButtonRef.current?.focus({ preventScroll: true }));
+  }, [mobileNavigation]);
 
   const clearSession = useCallback(() => {
     sessionStorage.removeItem(TOKEN_KEY);
@@ -57,15 +70,39 @@ export default function App() {
   }, [api, token, clearSession]);
 
   useEffect(() => {
-    const pop = () => { setRoute(routeFromPath(window.location.pathname)); setSidebarOpen(false); };
+    const pop = () => { setRoute(routeFromPath(window.location.pathname)); setSidebarOpen(false); focusHeading(); };
     window.addEventListener("popstate", pop);
     return () => window.removeEventListener("popstate", pop);
+  }, [focusHeading]);
+  useEffect(() => {
+    const media = window.matchMedia(MOBILE_NAVIGATION_QUERY);
+    const changed = (event: MediaQueryListEvent) => { setMobileNavigation(event.matches); if (!event.matches) setSidebarOpen(false); };
+    media.addEventListener("change", changed);
+    return () => media.removeEventListener("change", changed);
   }, []);
   useEffect(() => {
-    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") setSidebarOpen(false); };
-    window.addEventListener("keydown", escape);
-    return () => window.removeEventListener("keydown", escape);
-  }, []);
+    if (!mobileNavigation || !sidebarOpen) return;
+    const sidebar = sidebarRef.current;
+    if (!sidebar) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    sidebar.querySelector<HTMLButtonElement>(".sidebar-close")?.focus({ preventScroll: true });
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); closeNavigation(); return; }
+      if (event.key !== "Tab") return;
+      const focusable = [...sidebar.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((element) => !element.hasAttribute("disabled"));
+      if (!focusable.length) { event.preventDefault(); return; }
+      const first = focusable[0]!;
+      const last = focusable.at(-1)!;
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    document.addEventListener("keydown", keydown);
+    return () => {
+      document.removeEventListener("keydown", keydown);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [closeNavigation, mobileNavigation, sidebarOpen]);
   useEffect(() => {
     document.title = user ? `${routeMeta(route).label} | Mia Console` : setupRequired ? "Set up Mia" : "Mia Console";
   }, [route, user, setupRequired]);
@@ -73,8 +110,8 @@ export default function App() {
 
   const navigate = useCallback((next: RouteId) => {
     if (route !== next || window.location.pathname !== routePath[next]) window.history.pushState({}, "", routePath[next]);
-    setRoute(next); setSidebarOpen(false); window.scrollTo({ top: 0, behavior: "auto" });
-  }, [route]);
+    setRoute(next); setSidebarOpen(false); window.scrollTo({ top: 0, behavior: "auto" }); focusHeading();
+  }, [focusHeading, route]);
 
   const acceptAuth = (response: { token: string; user: AdminUser; product?: Product }, destination: RouteId) => {
     sessionStorage.setItem(TOKEN_KEY, response.token);
@@ -94,15 +131,15 @@ export default function App() {
 
   return (
     <div className="console-shell">
-      <aside className="sidebar" data-open={sidebarOpen} aria-label="Mia Console navigation">
-        <header className="sidebar-brand"><div className="brand-mark"><span>M</span></div><div><strong>Mia</strong><span>Product Agent</span></div><IconButton label="Close navigation" className="sidebar-close" onClick={() => setSidebarOpen(false)}><X /></IconButton></header>
+      <aside ref={sidebarRef} className="sidebar" data-open={sidebarOpen} aria-label="Mia Console navigation" aria-hidden={mobileNavigation && !sidebarOpen} inert={mobileNavigation && !sidebarOpen}>
+        <header className="sidebar-brand"><div className="brand-mark"><span>M</span></div><div><strong>Mia</strong><span>Product Agent</span></div><IconButton label="Close navigation" className="sidebar-close" onClick={closeNavigation}><X /></IconButton></header>
         <div className="product-lockup"><span>Production product</span><strong>{product?.name ?? "Mia"}</strong><code>{product?.origin ?? ""}</code></div>
         <nav>{navItems.map((item) => { const Icon = item.icon; return <button type="button" key={item.id} data-active={route === item.id} onClick={() => navigate(item.id)}><Icon aria-hidden="true" /><span><strong>{item.label}</strong><small>{item.description}</small></span></button>; })}</nav>
         <footer><div className="admin-summary"><span>{user.name.slice(0, 1).toUpperCase()}</span><div><strong>{user.name}</strong><small>{user.email}</small></div></div><IconButton label="Sign out" onClick={() => void logout()}><LogOut /></IconButton></footer>
       </aside>
-      {sidebarOpen ? <button className="sidebar-backdrop" aria-label="Dismiss navigation overlay" onClick={() => setSidebarOpen(false)} /> : null}
-      <main className="main-shell">
-        <header className="topbar"><div className="topbar-title"><IconButton label="Open navigation" className="menu-button" onClick={() => setSidebarOpen(true)}><Menu /></IconButton><div><span>{product?.name}</span><h1 tabIndex={-1}>{meta.label}</h1><p>{meta.description}</p></div></div><IconButton label="Refresh page data" onClick={() => setRefreshNonce((value) => value + 1)}><RefreshCw /></IconButton></header>
+      {sidebarOpen && mobileNavigation ? <button className="sidebar-backdrop" tabIndex={-1} aria-label="Dismiss navigation overlay" onClick={closeNavigation} /> : null}
+      <main className="main-shell" inert={mobileNavigation && sidebarOpen} aria-hidden={mobileNavigation && sidebarOpen}>
+        <header className="topbar"><div className="topbar-title"><IconButton ref={menuButtonRef} label="Open navigation" className="menu-button" aria-expanded={sidebarOpen} onClick={openNavigation}><Menu /></IconButton><div><span>{product?.name}</span><h1 ref={headingRef} tabIndex={-1}>{meta.label}</h1><p>{meta.description}</p></div></div><IconButton label="Refresh page data" onClick={() => setRefreshNonce((value) => value + 1)}><RefreshCw /></IconButton></header>
         <div className="page-content">
           {route === "setup" ? <SetupPage {...pageProps} onNavigate={navigate} /> : null}
           {route === "overview" ? <OverviewPage api={api} refreshNonce={refreshNonce} onNavigate={navigate} /> : null}
