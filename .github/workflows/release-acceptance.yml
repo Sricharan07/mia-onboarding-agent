@@ -72,12 +72,19 @@ jobs:
           npm ci --prefix backend/console
           npm ci --prefix example/demo-crm+sdk
 
+      - name: Prepare release evidence
+        run: |
+          mkdir -p "$RUNNER_TEMP/mia-release-logs" "$MIA_ACCEPTANCE_EVIDENCE_DIR"
+          printf 'Release acceptance started for %s\n' "$GITHUB_SHA" > "$MIA_ACCEPTANCE_EVIDENCE_DIR/preflight.txt"
+
+      - name: Require the release Gemini credential
+        run: test -n "$GEMINI_API_KEY"
+
       - name: Install release browsers
         run: npx playwright install --with-deps chromium firefox webkit chrome msedge
 
       - name: Run deterministic release verification
         run: |
-          test -n "$GEMINI_API_KEY"
           npm run verify
           npm run audit:all
           git diff --check
@@ -99,7 +106,6 @@ jobs:
 
       - name: Start the current backend artifact
         run: |
-          mkdir -p "$RUNNER_TEMP/mia-release-logs" "$MIA_ACCEPTANCE_EVIDENCE_DIR"
           nohup env \
             NODE_ENV=production \
             BACKEND_HOST=127.0.0.1 \
