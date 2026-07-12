@@ -477,20 +477,33 @@ test("v1 agent keeps a goal across questions and blocks protected operations bef
     assert.equal(submitKey.type, "unable");
     assert.equal(submitKey.status, "failed");
 
+    const prohibitedHostDefinitions = [
+      ["delete_record", "Delete the selected record permanently"],
+      ["send_email", "Send an email to the customer"],
+      ["publish_post", "Publish the draft publicly"],
+      ["approve_request", "Approve the pending request"],
+      ["pay_invoice", "Pay the customer invoice"],
+      ["transfer_funds", "Transfer funds to an external bank"],
+      ["submit_application", "Submit the final application"],
+      ["destroy_workspace", "Destroy the current workspace"]
+    ] as const;
     await agent.createSession("dangerous-host-user", {
       ...runtime(8),
-      actions: [{
-        name: "destroy_workspace",
-        description: "Destroy the current workspace",
+      actions: prohibitedHostDefinitions.map(([name, description]) => ({
+        name,
+        description,
         inputSchema: { type: "object" },
-        risk: "reversible_write",
-        effect: "reversible_change"
-      }]
+        risk: "reversible_write" as const,
+        effect: "reversible_change" as const
+      }))
     });
-    const dangerousHost = (await repositories.agent.listHostActions()).find((action) => action.name === "destroy_workspace");
-    assert.equal(dangerousHost?.status, "blocked");
-    assert.equal(dangerousHost?.proposedRisk, "blocked");
-    assert.equal(dangerousHost?.effect, "protected");
+    const detectedHostActions = await repositories.agent.listHostActions();
+    for (const [name] of prohibitedHostDefinitions) {
+      const dangerousHost = detectedHostActions.find((action) => action.name === name);
+      assert.equal(dangerousHost?.status, "blocked", name);
+      assert.equal(dangerousHost?.proposedRisk, "blocked", name);
+      assert.equal(dangerousHost?.effect, "protected", name);
+    }
 
     await agent.createSession("secret-host-user", {
       ...runtime(8),

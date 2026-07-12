@@ -60,6 +60,37 @@ test("knowledge files are embedded, recordings become reviewed skills, and publi
     const matches = await repositories.knowledge.search({ query: "Quick Create lead draft" });
     assert.equal(matches[0]?.sourceName, "CRM guide");
 
+    const textContent = "The plain-text support guide says the escalation owner is the revenue operations team.";
+    const textPath = join(directory, "support.txt");
+    writeFileSync(textPath, textContent);
+    const textSource = await service.createDocumentFileSource({
+      name: "Plain-text support guide",
+      filePath: textPath,
+      originalName: "support.txt",
+      mimeType: "text/plain",
+      size: Buffer.byteLength(textContent)
+    });
+    await service.waitForJob(textSource.id);
+    assert.equal((await repositories.knowledge.getSource(textSource.id)).status, "ready");
+    assert.ok((await repositories.knowledge.search({ query: "escalation owner revenue operations" }))
+      .some((match) => match.sourceName === "Plain-text support guide"));
+
+    const pdf = minimalPdf("The PDF onboarding handbook defines the lighthouse qualification checkpoint.");
+    const pdfPath = join(directory, "onboarding.pdf");
+    writeFileSync(pdfPath, pdf);
+    const pdfSource = await service.createDocumentFileSource({
+      name: "PDF onboarding handbook",
+      filePath: pdfPath,
+      originalName: "onboarding.pdf",
+      mimeType: "application/pdf",
+      size: pdf.length
+    });
+    await service.waitForJob(pdfSource.id);
+    const indexedPdf = await repositories.knowledge.getSource(pdfSource.id);
+    assert.equal(indexedPdf.status, "ready", indexedPdf.error ?? undefined);
+    assert.ok((await repositories.knowledge.search({ query: "lighthouse qualification checkpoint" }))
+      .some((match) => match.sourceName === "PDF onboarding handbook"));
+
     const recording = await service.createRecording({
       name: "Create lead walkthrough",
       filePath: join(directory, "walkthrough.mp4"),
@@ -274,6 +305,29 @@ class FakeKnowledgeModel {
       expectedOutcomes: ["A reversible lead draft is ready for review"]
     };
   }
+}
+
+function minimalPdf(text: string): Buffer {
+  const escaped = text.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
+  const stream = `BT\n/F1 12 Tf\n72 720 Td\n(${escaped}) Tj\nET\n`;
+  const objects = [
+    "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+    "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+    "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>\nendobj\n",
+    `4 0 obj\n<< /Length ${Buffer.byteLength(stream, "ascii")} >>\nstream\n${stream}endstream\nendobj\n`,
+    "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n"
+  ];
+  let body = "%PDF-1.4\n";
+  const offsets: number[] = [];
+  for (const object of objects) {
+    offsets.push(Buffer.byteLength(body, "ascii"));
+    body += object;
+  }
+  const xref = Buffer.byteLength(body, "ascii");
+  body += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  body += offsets.map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`).join("");
+  body += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(body, "ascii");
 }
 
 function config(url: string, directory: string): V1Config {
