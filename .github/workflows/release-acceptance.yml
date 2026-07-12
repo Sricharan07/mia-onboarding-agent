@@ -105,8 +105,6 @@ jobs:
           echo "MIA_SECRET_ENCRYPTION_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
 
       - name: Start the current backend artifact
-        env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           nohup env \
             NODE_ENV=production \
@@ -116,7 +114,6 @@ jobs:
             UI_SCAN_ALLOW_PRIVATE_NETWORKS=true \
             LOCAL_UPLOAD_DIR="$RUNNER_TEMP/mia-release-uploads" \
             CONSOLE_DIST_DIR="$GITHUB_WORKSPACE/backend/console/dist" \
-            GEMINI_API_KEY="$GEMINI_API_KEY" \
             node backend/dist/server.js > "$RUNNER_TEMP/mia-release-logs/backend.log" 2>&1 &
           echo $! > "$RUNNER_TEMP/mia-backend.pid"
 
@@ -137,12 +134,36 @@ jobs:
       - name: Verify Chrome, Edge, Firefox, and WebKit with WCAG checks
         run: env MIA_ACCEPTANCE_AGENT=false npm run acceptance:browsers
 
-      - name: Require the release Gemini credential
+      - name: Restart the backend with the release Gemini credential
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           test -n "$GEMINI_API_KEY"
-          curl -fsS "$MIA_ACCEPTANCE_BACKEND_URL/api/v1/ready" | grep -q '"geminiConfigured":true'
+          previous_pid="$(cat "$RUNNER_TEMP/mia-backend.pid")"
+          kill "$previous_pid"
+          for attempt in $(seq 1 60); do
+            if ! kill -0 "$previous_pid" 2>/dev/null; then break; fi
+            sleep 1
+          done
+          if kill -0 "$previous_pid" 2>/dev/null; then exit 1; fi
+          printf '\nRestarting with the release Gemini credential.\n' >> "$RUNNER_TEMP/mia-release-logs/backend.log"
+          nohup env \
+            NODE_ENV=production \
+            BACKEND_HOST=127.0.0.1 \
+            BACKEND_PORT=4000 \
+            CORS_ORIGIN=http://127.0.0.1:4000,http://127.0.0.1:3001 \
+            UI_SCAN_ALLOW_PRIVATE_NETWORKS=true \
+            LOCAL_UPLOAD_DIR="$RUNNER_TEMP/mia-release-uploads" \
+            CONSOLE_DIST_DIR="$GITHUB_WORKSPACE/backend/console/dist" \
+            GEMINI_API_KEY="$GEMINI_API_KEY" \
+            node backend/dist/server.js >> "$RUNNER_TEMP/mia-release-logs/backend.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/mia-backend.pid"
+          for attempt in $(seq 1 60); do
+            if curl -fsS "$MIA_ACCEPTANCE_BACKEND_URL/api/v1/ready" | grep -q '"geminiConfigured":true'; then exit 0; fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/mia-release-logs/backend.log"
+          exit 1
 
       - name: Index the demo and review its typed actions
         run: npm run acceptance:prepare-product

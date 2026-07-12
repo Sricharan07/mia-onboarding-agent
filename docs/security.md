@@ -39,7 +39,7 @@ Protect:
 
 Administrator passwords use scrypt with a unique salt. Administrator sessions, integration keys, runtime tokens, and resume tokens are stored as one-way hashes. A password change updates the hash and revokes every other administrator session in one database transaction. Gemini and scanner secrets stored through the console are encrypted with authenticated encryption derived from `MIA_SECRET_ENCRYPTION_KEY`.
 
-The application does not encrypt all PostgreSQL rows or uploaded files. Use encrypted disks, encrypted backups, access-controlled object/block storage, and TLS to an external database as required by the deployment's data classification. Release automation scopes the Gemini secret to the backend launch and explicit credential check; package installation, builds, and model-independent browser tests do not receive it.
+The application does not encrypt all PostgreSQL rows or uploaded files. Use encrypted disks, encrypted backups, access-controlled object/block storage, and TLS to an external database as required by the deployment's data classification. Release automation runs installation, builds, and model-independent browser tests against a backend with no Gemini secret, then scopes the credential only to the guarded backend restart used for agent and voice acceptance.
 
 Treat backups as production secrets even when they contain only hashes or encrypted fields. Release CI restores its disposable backup in-run, uploads only non-sensitive checksum and restore-result evidence, and destroys the dump before the runner exits.
 
