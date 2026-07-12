@@ -145,7 +145,10 @@ async function registerConsole(app: FastifyInstance, config: V1Config): Promise<
 
 function registerErrorHandler(app: FastifyInstance): void {
   app.setErrorHandler((error, request, reply) => {
-    request.log.error(safeErrorLogPayload(error), safeErrorLogMessage(error));
+    const logPayload = safeErrorLogPayload(error);
+    const logMessage = safeErrorLogMessage(error);
+    if (requestErrorLogLevel(error) === "error") request.log.error(logPayload, logMessage);
+    else request.log.warn(logPayload, logMessage);
     if (error instanceof AppError) {
       if (error.statusCode === 429 && retryDetails(error.details)) {
         reply.header("retry-after", String(Math.max(1, Math.ceil(error.details.retryAfterMs / 1_000))));
@@ -169,6 +172,13 @@ function registerErrorHandler(app: FastifyInstance): void {
       }
     });
   });
+}
+
+export function requestErrorLogLevel(error: unknown): "warn" | "error" {
+  if (error instanceof AppError) return error.statusCode >= 500 ? "error" : "warn";
+  if (error instanceof ZodError) return "warn";
+  const statusCode = (error as { statusCode?: unknown } | null)?.statusCode;
+  return typeof statusCode === "number" && statusCode >= 400 && statusCode < 500 ? "warn" : "error";
 }
 
 export function safeErrorLogPayload(error: unknown): { err: Record<string, unknown> } {
