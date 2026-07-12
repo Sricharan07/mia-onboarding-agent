@@ -39,7 +39,7 @@ export function PipelineActivity({ pipelineSeries }: { pipelineSeries: CrmPipeli
           <CardTitle>Qualified Lead Flow</CardTitle>
           <CardAction>
             <Select value={range} onValueChange={(value) => setRange(value as typeof range)}>
-              <SelectTrigger size="sm" className="min-w-40">
+              <SelectTrigger size="sm" className="min-w-40" aria-label="Qualified lead flow date range">
                 <SelectValue placeholder="Select range" />
               </SelectTrigger>
               <SelectContent>
@@ -129,6 +129,7 @@ export function PipelineActivity({ pipelineSeries }: { pipelineSeries: CrmPipeli
                 <div className="flex flex-col gap-2 pt-0.5">
                   <Progress
                     value={discoveryProgress}
+                    aria-label="Discovery calls booked percentage"
                     className="h-2.5 bg-chart-2/12 *:data-[slot='progress-indicator']:bg-chart-2"
                   />
                   <div className="flex items-center justify-between text-xs">

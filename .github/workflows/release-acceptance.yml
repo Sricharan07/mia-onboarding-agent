@@ -13,40 +13,49 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  live-acceptance:
-    name: Browsers, Agent, and Voice
+  artifact-acceptance:
+    name: Current Artifact, Browsers, Agent, and Voice
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     environment: release-acceptance
     services:
       postgres:
         image: pgvector/pgvector:pg17@sha256:d2ef61f42ef767baa5a1475393303cc235bcd92febd9d7014eddb48b41f3bad0
         env:
           POSTGRES_USER: mia
-          POSTGRES_PASSWORD: mia-release-database-password
-          POSTGRES_DB: mia_test
+          POSTGRES_PASSWORD: mia-release-runner-database
+          POSTGRES_DB: mia_acceptance
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U mia -d mia_test"
+          --health-cmd "pg_isready -U mia -d mia_acceptance"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 12
     env:
-      MIA_TEST_DATABASE_URL: postgres://mia:mia-release-database-password@127.0.0.1:5432/mia_test
-      MIA_ACCEPTANCE_CONSOLE_URL: ${{ vars.MIA_ACCEPTANCE_CONSOLE_URL }}
-      MIA_ACCEPTANCE_CONSOLE_EMAIL: ${{ secrets.MIA_ACCEPTANCE_CONSOLE_EMAIL }}
-      MIA_ACCEPTANCE_CONSOLE_PASSWORD: ${{ secrets.MIA_ACCEPTANCE_CONSOLE_PASSWORD }}
-      MIA_ACCEPTANCE_DEMO_URL: ${{ vars.MIA_ACCEPTANCE_DEMO_URL }}
+      DATABASE_URL: postgres://mia:mia-release-runner-database@127.0.0.1:5432/mia_acceptance
+      MIA_TEST_DATABASE_URL: postgres://mia:mia-release-runner-database@127.0.0.1:5432/mia_acceptance
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      MIA_ACCEPTANCE_BACKEND_URL: http://127.0.0.1:4000
+      MIA_ACCEPTANCE_CONSOLE_URL: http://127.0.0.1:4000
+      MIA_ACCEPTANCE_DEMO_URL: http://127.0.0.1:3001/dashboard/crm
+      MIA_ACCEPTANCE_PRODUCT_ORIGIN: http://127.0.0.1:3001
+      MIA_ACCEPTANCE_STATE_FILE: ${{ runner.temp }}/mia-release-state.json
+      MIA_ACCEPTANCE_EVIDENCE_DIR: ${{ runner.temp }}/mia-release-evidence
+      MIA_ACCEPTANCE_REQUIRE_FRESH: "true"
+      MIA_ACCEPTANCE_REQUIRE_GEMINI: "true"
       MIA_ACCEPTANCE_AGENT: "true"
-      MIA_EDGE_EXECUTABLE: /usr/bin/microsoft-edge
-      MIA_BENCHMARK_DEMO_URL: ${{ vars.MIA_ACCEPTANCE_DEMO_URL }}
+      MIA_BENCHMARK_DEMO_URL: http://127.0.0.1:3001/dashboard/crm
       MIA_BENCHMARK_ITERATIONS: "3"
       MIA_BENCHMARK_THRESHOLD: "1"
-      MIA_VOICE_BACKEND_URL: ${{ vars.MIA_ACCEPTANCE_BACKEND_URL }}
-      MIA_VOICE_ORIGIN: ${{ vars.MIA_ACCEPTANCE_PRODUCT_ORIGIN }}
-      MIA_VOICE_INTEGRATION_KEY: ${{ secrets.MIA_VOICE_INTEGRATION_KEY }}
+      MIA_VOICE_BACKEND_URL: http://127.0.0.1:4000
+      MIA_VOICE_ORIGIN: http://127.0.0.1:3001
       MIA_VOICE_ACCEPTANCE_ITERATIONS: "3"
+      NEXT_PUBLIC_MIA_BACKEND_URL: http://127.0.0.1:4000
+      NEXT_PUBLIC_MIA_ENABLE_VOICE: "true"
+      MIA_BACKEND_URL: http://127.0.0.1:4000
+      MIA_DEMO_ORIGIN: http://127.0.0.1:3001
+      MIA_DEMO_USER_ID: release-demo-user
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -57,25 +66,260 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Install console and demo dependencies
+      - name: Install repository dependencies
         run: |
+          npm ci
           npm ci --prefix backend/console
           npm ci --prefix example/demo-crm+sdk
 
       - name: Install release browsers
-        run: npx playwright install --with-deps chromium firefox webkit msedge
+        run: npx playwright install --with-deps chromium firefox webkit chrome msedge
 
       - name: Run deterministic release verification
-        run: npm run verify
+        run: |
+          test -n "$GEMINI_API_KEY"
+          npm run verify
+          npm run audit:all
+          git diff --check
 
-      - name: Verify Chrome, Edge, Firefox, and WebKit
+      - name: Reset the live acceptance database
+        run: >-
+          node --input-type=module -e
+          "import pg from 'pg';
+          const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
+          await client.connect();
+          await client.query('DROP SCHEMA public CASCADE');
+          await client.query('CREATE SCHEMA public');
+          await client.end();"
+
+      - name: Generate one-run deployment secrets
+        run: |
+          echo "SETUP_TOKEN=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "MIA_SECRET_ENCRYPTION_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+
+      - name: Start the current backend artifact
+        run: |
+          mkdir -p "$RUNNER_TEMP/mia-release-logs" "$MIA_ACCEPTANCE_EVIDENCE_DIR"
+          nohup env \
+            NODE_ENV=production \
+            BACKEND_HOST=127.0.0.1 \
+            BACKEND_PORT=4000 \
+            CORS_ORIGIN=http://127.0.0.1:4000,http://127.0.0.1:3001 \
+            UI_SCAN_ALLOW_PRIVATE_NETWORKS=true \
+            LOCAL_UPLOAD_DIR="$RUNNER_TEMP/mia-release-uploads" \
+            CONSOLE_DIST_DIR="$GITHUB_WORKSPACE/backend/console/dist" \
+            node backend/dist/server.js > "$RUNNER_TEMP/mia-release-logs/backend.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/mia-backend.pid"
+
+      - name: Complete secure first-run setup
+        run: npm run acceptance:setup
+
+      - name: Start the current SDK demo artifact
+        run: |
+          nohup npm --prefix example/demo-crm+sdk run start -- -p 3001 > "$RUNNER_TEMP/mia-release-logs/demo.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/mia-demo.pid"
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3001/dashboard/crm > /dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/mia-release-logs/demo.log"
+          exit 1
+
+      - name: Index the demo and review its typed actions
+        run: npm run acceptance:prepare-product
+
+      - name: Verify Chrome, Edge, Firefox, and WebKit with WCAG checks
         run: npm run acceptance:browsers
 
-      - name: Run repeated intelligent-agent benchmark
+      - name: Run repeated intelligent-agent and safety benchmark
         run: npm run benchmark:agent
 
-      - name: Verify repeated Gemini Live voice parity and trusted speech
+      - name: Verify real SDK microphone, Gemini Live, backend, cursor, and text parity
         run: npm run acceptance:voice:repeat
+
+      - name: Require complete first-run and Test Mia evidence
+        run: npm run acceptance:assert-ready
+
+      - name: Upload acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mia-linux-release-evidence-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/mia-release-evidence
+            ${{ runner.temp }}/mia-release-logs
+          if-no-files-found: error
+
+      - name: Stop live acceptance services
+        if: always()
+        run: |
+          test ! -f "$RUNNER_TEMP/mia-demo.pid" || kill "$(cat "$RUNNER_TEMP/mia-demo.pid")" 2>/dev/null || true
+          test ! -f "$RUNNER_TEMP/mia-backend.pid" || kill "$(cat "$RUNNER_TEMP/mia-backend.pid")" 2>/dev/null || true
+
+  safari-acceptance:
+    name: Real Safari Desktop and Mobile Layouts
+    runs-on: macos-14
+    timeout-minutes: 45
+    env:
+      MIA_ACCEPTANCE_BACKEND_URL: http://127.0.0.1:4400
+      MIA_ACCEPTANCE_CONSOLE_URL: http://127.0.0.1:4400
+      MIA_ACCEPTANCE_DEMO_URL: http://127.0.0.1:3201/dashboard/crm
+      MIA_ACCEPTANCE_PRODUCT_ORIGIN: http://127.0.0.1:3201
+      MIA_ACCEPTANCE_STATE_FILE: ${{ runner.temp }}/mia-safari-state.json
+      MIA_ACCEPTANCE_EVIDENCE_DIR: ${{ runner.temp }}/mia-safari-evidence
+      MIA_ACCEPTANCE_REQUIRE_FRESH: "true"
+      NEXT_PUBLIC_MIA_BACKEND_URL: http://127.0.0.1:4400
+      NEXT_PUBLIC_MIA_ENABLE_VOICE: "true"
+      MIA_BACKEND_URL: http://127.0.0.1:4400
+      MIA_DEMO_ORIGIN: http://127.0.0.1:3201
+      MIA_DEMO_USER_ID: safari-demo-user
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install repository dependencies
+        run: |
+          npm ci
+          npm ci --prefix backend/console
+          npm ci --prefix example/demo-crm+sdk
+
+      - name: Install PostgreSQL with pgvector
+        run: |
+          brew list postgresql@17 >/dev/null 2>&1 || brew install postgresql@17
+          brew list pgvector >/dev/null 2>&1 || brew install pgvector
+          echo "$(brew --prefix postgresql@17)/bin" >> "$GITHUB_PATH"
+          brew services start postgresql@17
+          for attempt in $(seq 1 60); do
+            if "$(brew --prefix postgresql@17)/bin/pg_isready"; then exit 0; fi
+            sleep 1
+          done
+          exit 1
+
+      - name: Create the fresh Safari database and one-run secrets
+        run: |
+          createdb mia_safari_acceptance
+          psql mia_safari_acceptance -c 'CREATE EXTENSION IF NOT EXISTS vector'
+          echo "DATABASE_URL=postgresql://127.0.0.1/mia_safari_acceptance" >> "$GITHUB_ENV"
+          echo "SETUP_TOKEN=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "MIA_SECRET_ENCRYPTION_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+
+      - name: Build current backend, console, SDK, and demo artifacts
+        run: |
+          npm run build
+          npm run build:console
+          npm run build:demo
+
+      - name: Start current Safari acceptance artifacts
+        run: |
+          mkdir -p "$RUNNER_TEMP/mia-safari-logs" "$MIA_ACCEPTANCE_EVIDENCE_DIR"
+          nohup env \
+            NODE_ENV=production \
+            BACKEND_HOST=127.0.0.1 \
+            BACKEND_PORT=4400 \
+            CORS_ORIGIN=http://127.0.0.1:4400,http://127.0.0.1:3201 \
+            LOCAL_UPLOAD_DIR="$RUNNER_TEMP/mia-safari-uploads" \
+            CONSOLE_DIST_DIR="$GITHUB_WORKSPACE/backend/console/dist" \
+            node backend/dist/server.js > "$RUNNER_TEMP/mia-safari-logs/backend.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/mia-safari-backend.pid"
+
+      - name: Complete fresh Safari setup
+        run: npm run acceptance:setup
+
+      - name: Start current demo artifact
+        run: |
+          nohup npm --prefix example/demo-crm+sdk run start -- -p 3201 > "$RUNNER_TEMP/mia-safari-logs/demo.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/mia-safari-demo.pid"
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3201/dashboard/crm > /dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/mia-safari-logs/demo.log"
+          exit 1
+
+      - name: Enable Safari automation
+        run: sudo safaridriver --enable
+
+      - name: Verify real Safari with WCAG checks
+        run: npm run acceptance:safari
+
+      - name: Upload Safari evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mia-safari-release-evidence-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/mia-safari-evidence
+            ${{ runner.temp }}/mia-safari-logs
+          if-no-files-found: error
+
+      - name: Stop Safari acceptance services
+        if: always()
+        run: |
+          test ! -f "$RUNNER_TEMP/mia-safari-demo.pid" || kill "$(cat "$RUNNER_TEMP/mia-safari-demo.pid")" 2>/dev/null || true
+          test ! -f "$RUNNER_TEMP/mia-safari-backend.pid" || kill "$(cat "$RUNNER_TEMP/mia-safari-backend.pid")" 2>/dev/null || true
+          brew services stop postgresql@17 || true
+
+  docker-artifact:
+    name: Empty Docker Artifact, Persistence, and Backup
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      COMPOSE_PROJECT_NAME: mia-release-${{ github.run_id }}
+      POSTGRES_PASSWORD: mia-release-runner-database
+      CORS_ORIGIN: http://127.0.0.1:4000,http://127.0.0.1:3001
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Generate one-run deployment secrets
+        run: |
+          echo "SETUP_TOKEN=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "MIA_SECRET_ENCRYPTION_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "MIA_DOCKER_ADMIN_PASSWORD=Mia-$(openssl rand -hex 24)" >> "$GITHUB_ENV"
+
+      - name: Build and start from empty volumes
+        run: docker compose up --build --detach
+
+      - name: Verify readiness and complete secure first-run setup
+        run: |
+          for attempt in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:4000/api/v1/ready > /dev/null; then break; fi
+            sleep 2
+          done
+          node --input-type=module -e \
+            "const response = await fetch('http://127.0.0.1:4000/api/v1/setup', {
+              method: 'POST', headers: {'content-type':'application/json'},
+              body: JSON.stringify({setupToken:process.env.SETUP_TOKEN,productName:'Docker Release Product',origin:'http://127.0.0.1:3001',adminEmail:'release@example.invalid',adminName:'Release Admin',password:process.env.MIA_DOCKER_ADMIN_PASSWORD})
+            }); if (!response.ok) throw new Error(await response.text());"
+
+      - name: Verify persistence, backup, clean logs, and graceful shutdown
+        run: |
+          docker compose restart postgres mia-backend
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:4000/api/v1/setup/status | grep -q '"setupRequired":false'; then break; fi
+            sleep 2
+          done
+          docker compose exec -T postgres pg_dump -U mia -d mia > "$RUNNER_TEMP/mia-release-backup.sql"
+          test -s "$RUNNER_TEMP/mia-release-backup.sql"
+          ! docker compose logs | grep -F "$SETUP_TOKEN"
+          ! docker compose logs | grep -F "$MIA_DOCKER_ADMIN_PASSWORD"
+          docker compose stop --timeout 30 mia-backend
+          test "$(docker inspect -f '{{.State.ExitCode}}' "${COMPOSE_PROJECT_NAME}-mia-backend-1")" = "0"
+
+      - name: Upload backup proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mia-docker-backup-proof-${{ github.sha }}
+          path: ${{ runner.temp }}/mia-release-backup.sql
+          if-no-files-found: warn
+
+      - name: Remove Docker deployment and volumes
+        if: always()
+        run: docker compose down --volumes --remove-orphans

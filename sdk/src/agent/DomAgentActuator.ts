@@ -120,7 +120,7 @@ export class DomAgentActor {
               target.element.focus({ preventScroll: true });
               break;
             case "click":
-              target.element.click();
+              activateElement(target.element);
               break;
             case "fill":
               if (directive.value === undefined) throw new Error("The fill action did not include a value.");
@@ -134,7 +134,7 @@ export class DomAgentActor {
               selectValue(target.element, directive.value);
               break;
             case "toggle":
-              target.element.click();
+              activateElement(target.element);
               break;
             case "press_key":
               pressKey(target.element, directive.key);
@@ -343,6 +343,7 @@ type ElementSnapshot = {
   pressed?: string | null;
   open?: boolean;
   targetState: string;
+  transientLayerState: string;
   revision: number;
 };
 
@@ -359,6 +360,7 @@ function snapshot(element: HTMLElement, revision: number): ElementSnapshot {
     pressed: element.getAttribute("aria-pressed"),
     open: typeof control.open === "boolean" ? control.open : undefined,
     targetState: targetState(element),
+    transientLayerState: transientLayerState(element.ownerDocument),
     revision
   };
 }
@@ -380,18 +382,19 @@ function verify(
     pressedChanged: before.pressed !== after.pressed,
     openChanged: before.open !== after.open,
     targetChanged: before.targetState !== after.targetState,
+    transientLayerChanged: before.transientLayerState !== after.transientLayerState,
     immediateScopedDomChanged,
     domChanged: after.revision !== before.revision
   };
   const interactionChanged = evidence.routeChanged || evidence.activeElementChanged || evidence.valueChanged || evidence.checkedChanged
     || evidence.selectedIndexChanged || evidence.expandedChanged || evidence.pressedChanged
-    || evidence.openChanged || evidence.targetChanged || evidence.immediateScopedDomChanged;
+    || evidence.openChanged || evidence.targetChanged || evidence.transientLayerChanged || evidence.immediateScopedDomChanged;
   const exact = directive.type === "focus" ? after.focused
     : directive.type === "fill" ? after.value === directive.value
       : directive.type === "clear" ? after.value === ""
         : directive.type === "select" ? after.value === directive.value
           : directive.type === "toggle" ? evidence.checkedChanged || evidence.pressedChanged
-            : directive.type === "click" ? evidence.routeChanged || evidence.targetChanged || evidence.immediateScopedDomChanged
+            : directive.type === "click" ? evidence.routeChanged || evidence.targetChanged || evidence.transientLayerChanged || evidence.immediateScopedDomChanged
               : directive.type === "press_key" && (!directive.target || directive.target.implicit) ? interactionChanged || evidence.domChanged
               : interactionChanged;
   return {
@@ -413,8 +416,39 @@ function targetState(element: HTMLElement): string {
     expanded: element.getAttribute("aria-expanded"),
     pressed: element.getAttribute("aria-pressed"),
     selected: element.getAttribute("aria-selected"),
-    busy: element.getAttribute("aria-busy")
+    busy: element.getAttribute("aria-busy"),
+    dataState: [...element.attributes]
+      .filter((attribute) => attribute.name.startsWith("data-") && attribute.name !== "data-mia-key")
+      .map((attribute) => [attribute.name, attribute.value])
+      .sort(([left], [right]) => left.localeCompare(right))
   });
+}
+
+function transientLayerState(document_: Document): string {
+  const selector = [
+    "[role='dialog']",
+    "[role='menu']",
+    "[role='listbox']",
+    "[role='tree']",
+    "[role='grid']",
+    "[role='menuitem']",
+    "[role='menuitemcheckbox']",
+    "[role='menuitemradio']",
+    "[role='option']"
+  ].join(",");
+  const layers = [...document_.querySelectorAll(selector)].filter((element) => {
+    if (!isHtmlElement(element) || element.hidden || element.getAttribute("aria-hidden") === "true") return false;
+    const view = element.ownerDocument.defaultView;
+    if (!view) return false;
+    const style = view.getComputedStyle(element);
+    return style.display !== "none" && style.visibility !== "hidden" && style.visibility !== "collapse";
+  }).map((element) => ({
+    role: element.getAttribute("role"),
+    name: normalize(element.getAttribute("aria-label") || element.textContent || "").slice(0, 300),
+    checked: element.getAttribute("aria-checked"),
+    selected: element.getAttribute("aria-selected")
+  }));
+  return JSON.stringify(layers);
 }
 
 function trackImmediateMutations(element: HTMLElement): { takeImmediate: () => boolean; disconnect: () => void } {
@@ -481,8 +515,32 @@ function pressKey(element: HTMLElement, key: string | undefined): void {
   const type = tag === "input" ? (element as HTMLInputElement).type.toLowerCase() : "";
   if (accepted && (normalized === "Enter" || normalized === " ")
     && (["button", "a"].includes(tag) || tag === "input" && ["checkbox", "radio"].includes(type))) {
-    element.click();
+    activateElement(element);
   }
+}
+
+function activateElement(element: HTMLElement): void {
+  const view = element.ownerDocument.defaultView ?? window;
+  const rect = element.getBoundingClientRect();
+  const pointer = {
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+    button: 0,
+    clientX: rect.left + rect.width / 2,
+    clientY: rect.top + rect.height / 2
+  };
+  const Pointer = (view as typeof window).PointerEvent;
+  if (Pointer) {
+    element.dispatchEvent(new Pointer("pointerdown", { ...pointer, buttons: 1, pointerId: 1, pointerType: "mouse", isPrimary: true }));
+  }
+  element.dispatchEvent(new view.MouseEvent("mousedown", { ...pointer, buttons: 1 }));
+  element.focus({ preventScroll: true });
+  if (Pointer) {
+    element.dispatchEvent(new Pointer("pointerup", { ...pointer, buttons: 0, pointerId: 1, pointerType: "mouse", isPrimary: true }));
+  }
+  element.dispatchEvent(new view.MouseEvent("mouseup", { ...pointer, buttons: 0 }));
+  element.click();
 }
 
 function normalizeSupportedKey(key: string | undefined): string | undefined {

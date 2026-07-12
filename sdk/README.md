@@ -89,6 +89,8 @@ Effects are `read`, `navigate`, `draft_create`, `draft_update`, `reversible_chan
 
 Use the supplied idempotency key for every host mutation. Return evidence that lets Mia verify the resulting product state.
 
+Use accessible names and stable `data-mia-key` values for important DOM controls. `data-mia-policy="read"` marks view-only interactions such as filters; `guide_only`, `manual`, and `blocked` restrict execution. Mia verifies transient portaled menus as well as target-local state, so component-library dropdowns can be operated without weakening receipt validation.
+
 ## Privacy
 
 The observer reads accessibility semantics and visible product text, not arbitrary JavaScript state. It traverses open shadow roots and same-origin frames. Passwords, authentication codes, payment fields, token-like values, configured private regions, and Mia's own UI are redacted before observations leave the browser. Administrator selectors are loaded before every observation and merged with SDK selectors; URL queries and page titles remain off unless explicitly enabled.
@@ -103,7 +105,7 @@ For nonce-based Content Security Policy, pass the response nonce as `ui.styleNon
 
 Gemini Live is used as a microphone and speech transport. Every user utterance is submitted to the same persisted agent used by text. The Live model is constrained to speak the backend agent's exact response and cannot independently plan or execute product actions.
 
-`Aoede` is the default voice. The administrator's configured `Aoede`, `Kore`, or `Leda` voice is authoritative over an SDK preference. Open mic and hold `Control+Space` push-to-talk can be enabled together. When `openMic` is `false`, holding the shortcut starts voice if needed, enables the microphone for the hold, and pauses it on release. Mia submits the provider's exact input transcription to the shared planner rather than trusting a paraphrased voice-tool argument.
+`Aoede` is the default voice. The administrator's configured `Aoede`, `Kore`, or `Leda` voice is authoritative over an SDK preference. Open mic and hold `Control+Space` push-to-talk can be enabled together. When `openMic` is `false`, holding the shortcut starts voice if needed, enables the microphone for the hold, and pauses it on release. Mia submits the provider's exact input transcription to the shared planner rather than trusting a paraphrased voice-tool argument. Pending text or resumed confirmations are announced to Live so a spoken approval resolves the same bound backend action.
 
 ## Lifecycle
 

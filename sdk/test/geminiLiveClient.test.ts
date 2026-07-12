@@ -17,7 +17,7 @@ type VoiceTransportHarness = {
     microphoneInitiallyEnabled: boolean;
     onTurn: (utterance: string) => Promise<{ spokenMessage: string; state: "answer" }>;
     onConfirmation: (approved: boolean) => Promise<{ spokenMessage: string; state: "completed" }>;
-    onEvent: () => void;
+    onEvent: (event: { type: string; error?: Error }) => void;
   };
   handleContent: (content: Record<string, unknown>) => void;
   handleCalls: (calls: Array<{ id: string; name: string; args: Record<string, unknown> }>) => Promise<void>;
@@ -76,6 +76,7 @@ test("Gemini Live always submits the authoritative audio transcription instead o
   try {
     const messages: Array<Record<string, unknown>> = [];
     const submitted: string[] = [];
+    const errors: Error[] = [];
     const voice = new GeminiLiveClient({} as BackendClient) as unknown as VoiceTransportHarness;
     voice.socket = { readyState: 1, send: (message) => messages.push(JSON.parse(message) as Record<string, unknown>) };
     voice.handlers = {
@@ -86,7 +87,9 @@ test("Gemini Live always submits the authoritative audio transcription instead o
         return { spokenMessage: "Acceptance complete.", state: "answer" };
       },
       onConfirmation: async () => ({ spokenMessage: "Confirmed.", state: "completed" }),
-      onEvent: () => undefined
+      onEvent: (event: { type: string; error?: Error }) => {
+        if (event.type === "error" && event.error) errors.push(event.error);
+      }
     };
 
     const tool = voice.handleCalls([{
@@ -94,17 +97,22 @@ test("Gemini Live always submits the authoritative audio transcription instead o
       name: "submit_mia_turn",
       args: { utterance: "run the acceptance check" }
     }]);
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    // Real Gemini Live sessions can send the tool call well before the final
+    // transcription frame. This delay guards against regressing to the former
+    // 1.5-second race.
+    await new Promise((resolve) => setTimeout(resolve, 1_800));
     voice.handleContent({
       inputTranscription: { text: "run the mia voice acceptance check" },
-      turnComplete: true
+      turnComplete: false
     });
     await tool;
     await new Promise((resolve) => setTimeout(resolve, 450));
 
     assert.deepEqual(submitted, ["run the mia voice acceptance check"]);
+    assert.deepEqual(errors, []);
     const response = messages.find((message) => "toolResponse" in message) as { toolResponse?: { functionResponses?: Array<{ response?: { spokenMessage?: string } }> } } | undefined;
     assert.equal(response?.toolResponse?.functionResponses?.[0]?.response?.spokenMessage, "Acceptance complete.");
+    assert.equal(messages.some((message) => "clientContent" in message), false, "A real tool response must not race the fallback speaker.");
   } finally {
     if (previousWebSocket) Object.defineProperty(globalThis, "WebSocket", previousWebSocket);
     else delete (globalThis as Record<string, unknown>).WebSocket;

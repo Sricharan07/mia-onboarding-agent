@@ -123,7 +123,7 @@ export function CopyButton({ value, label = "Copy" }: { value: string; label?: s
 }
 
 export function CodeBlock({ value, label = "Code" }: { value: string; label?: string }) {
-  return <div className="code-block"><div><span>{label}</span><CopyButton value={value} /></div><pre>{value}</pre></div>;
+  return <div className="code-block"><div><span>{label}</span><CopyButton value={value} /></div><pre tabIndex={0} aria-label={label}>{value}</pre></div>;
 }
 
 export function SkeletonRows({ count = 4 }: { count?: number }) {

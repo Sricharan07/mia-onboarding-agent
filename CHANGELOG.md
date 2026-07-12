@@ -11,6 +11,10 @@ All notable changes to Mia are documented here. The project follows [Keep a Chan
 - Revoked other administrator sessions on password change, bound runtime events to their host user, and pinned UI scans against DNS rebinding.
 - Synchronized administrator redaction selectors into every SDK observation, kept page titles private by default, and excluded document-head text.
 - Corrected contenteditable verification, safe Space/Escape handling, cursor hotspot geometry, mobile assistant controls, and audio walkthrough uploads.
+- Fixed Gemini Live transcription/tool-call ordering so Mia no longer emits a false inability response before routing the authoritative voice turn.
+- Added bound voice approval after text or resumed confirmations, exact argument-derived confirmation prompts, and real Aoede microphone acceptance.
+- Added full pointer activation and transient portal verification for custom menus, plus explicit read-only view policy for filter controls.
+- Expanded artifact-bound release acceptance with WCAG 2.2 AA checks, real Safari, draft edit/fill/filter/reload scenarios, loop/step limits, and current-commit Docker evidence.
 
 ## 1.0.0 - 2026-07-10
 

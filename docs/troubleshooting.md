@@ -93,7 +93,7 @@ The UI map helps retrieval and policy, but Mia will not point at a stale target 
 
 - Check **Actions & Safety**. A host action must be detected, reviewed, and published after its latest manifest hash.
 - Check the UI map policy. `guide_only`, `manual`, or `blocked` controls cannot be mutated automatically.
-- A click/fill/select/toggle is a reversible write and waits for exact approval. Approve or decline the visible pending confirmation before starting another turn.
+- Fill, select, toggle, and product-changing clicks are reversible writes and wait for an exact approval naming the target and values. Popup triggers and host-marked `data-mia-policy="read"` view controls can execute without approval because they change only the current view.
 - Protected targets such as passwords, payment fields, file inputs, CAPTCHA, and WebAuthn remain manual.
 - Delete, send, publish, approve, pay, transfer, external communication, and irreversible submit requests are intentionally blocked.
 - Inspect the action receipt. `unverified` means the SDK could not prove the expected focus/value/state/route/DOM change; fix product semantics or the host receipt rather than bypassing verification.
@@ -135,7 +135,7 @@ For push-to-talk, hold `Control+Space`. Releasing either key, switching tabs, or
 - Check WebSocket proxies, idle timeouts, and provider reachability.
 - Do not cache a voice token across sessions. The SDK requests a new ephemeral token when connecting.
 - Emergency stop intentionally ends speech and active transport.
-- Run `npm run acceptance:voice` against the deployment to distinguish microphone/UI problems from ephemeral-token, tool-routing, or trusted-speech failures.
+- Run `npm run acceptance:voice` against the built demo to distinguish microphone/UI problems from ephemeral-token, authoritative-transcription, tool-routing, trusted-speech, or voice-confirmation failures. The test fixtures provide only spoken input; Gemini, the SDK, backend planner, cursor, action execution, and persisted evidence remain live.
 
 ## Knowledge URL Fails
 

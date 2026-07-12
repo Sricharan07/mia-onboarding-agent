@@ -228,6 +228,13 @@ test("v1 HTTP API supports secure setup, runtime tokens, agent turns, and SSE", 
     });
     assert.equal(crossUserEvent.statusCode, 404, "runtime telemetry must never attach to another user's session");
 
+    const evidenceDatabase = new V1Database({ DATABASE_URL: databaseUrl, DATABASE_POOL_MAX: 1 });
+    await evidenceDatabase.query(`
+      INSERT INTO ai_requests (id, session_id, purpose, model, latency_ms)
+      VALUES ('http_acceptance_judge', $1, 'agent_judge', 'fake-model', 1)
+    `, [session.sessionId]);
+    await evidenceDatabase.close();
+
     const checklist = await app.inject({
       method: "GET",
       url: "/api/v1/setup/checklist",

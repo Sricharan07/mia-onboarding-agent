@@ -6,7 +6,11 @@ const CONNECT_TIMEOUT_MS = 15_000;
 const INPUT_RATE = 16_000;
 const OUTPUT_RATE = 24_000;
 const TOOL_GRACE_MS = 400;
-const TRANSCRIPT_WAIT_MS = 1_500;
+// Gemini can deliver a tool call before the final transcription frame for the
+// same audio turn. Keep the call pending long enough for that authoritative
+// transcript instead of treating normal provider reordering as a voice error.
+const TRANSCRIPT_WAIT_MS = 10_000;
+const TRANSCRIPT_SETTLE_MS = 250;
 const AUDIO_PROCESSOR = "mia-pcm-capture";
 const RESULT_PREFIX = "[MIA_AGENT_RESULT]";
 
@@ -66,6 +70,7 @@ export class GeminiLiveClient {
 
   private inputTranscript = "";
   private fallbackTimer?: number;
+  private transcriptSettleTimer?: number;
   private finalizedInput?: FinalizedVoiceInput;
   private readonly transcriptWaiters = new Set<TranscriptWaiter>();
   private activeUtterance?: string;
@@ -102,6 +107,7 @@ export class GeminiLiveClient {
     this.lifecycle += 1;
     this.connected = false;
     this.clearFallback();
+    this.clearTranscriptSettle();
     this.rejectTranscriptWaiters(new Error("Mia voice was stopped."));
     this.finalizedInput = undefined;
     this.inputTranscript = "";
@@ -146,6 +152,15 @@ export class GeminiLiveClient {
         turnComplete: true
       }
     });
+  }
+
+  announceConfirmation(message: string): void {
+    this.awaitingConfirmation = true;
+    this.speak(message);
+  }
+
+  clearConfirmation(): void {
+    this.awaitingConfirmation = false;
   }
 
   private async openSocket(lifecycle: number): Promise<void> {
@@ -291,6 +306,7 @@ export class GeminiLiveClient {
     if (inputText && !inputText.startsWith(RESULT_PREFIX)) {
       if (!this.inputTranscript) this.interruptOutput();
       this.inputTranscript = mergeTranscript(this.inputTranscript, inputText);
+      this.scheduleTranscriptFinalization();
     }
     const output = object(content.outputTranscription) ?? object(content.output_transcription);
     const outputText = string(output?.text);
@@ -310,19 +326,25 @@ export class GeminiLiveClient {
   }
 
   private finishInputTurn(): void {
+    this.finalizeInputTurn();
+  }
+
+  private finalizeInputTurn(): FinalizedVoiceInput | undefined {
+    this.clearTranscriptSettle();
     const utterance = this.inputTranscript.trim();
     this.inputTranscript = "";
-    if (!utterance || utterance.startsWith(RESULT_PREFIX)) return;
+    if (!utterance || utterance.startsWith(RESULT_PREFIX)) return undefined;
     const input: FinalizedVoiceInput = { utterance, consumedByTool: false };
     this.finalizedInput = input;
     this.handlers?.onEvent({ type: "user_transcript", text: utterance });
     this.resolveTranscriptWaiter(input);
     this.clearFallback();
-    if (this.awaitingConfirmation) return;
+    if (this.awaitingConfirmation || input.consumedByTool) return input;
     this.fallbackTimer = window.setTimeout(() => {
       this.fallbackTimer = undefined;
       void this.executeFinalizedInput(input).then((result) => this.deliverResult(result)).catch((error) => this.report(error));
     }, TOOL_GRACE_MS);
+    return input;
   }
 
   private finishOutputTurn(): void {
@@ -423,7 +445,22 @@ export class GeminiLiveClient {
         }, TRANSCRIPT_WAIT_MS)
       };
       this.transcriptWaiters.add(waiter);
+      this.scheduleTranscriptFinalization();
     });
+  }
+
+  private scheduleTranscriptFinalization(): void {
+    if (!this.transcriptWaiters.size || !this.inputTranscript.trim()) return;
+    this.clearTranscriptSettle();
+    this.transcriptSettleTimer = window.setTimeout(() => {
+      this.transcriptSettleTimer = undefined;
+      this.finalizeInputTurn();
+    }, TRANSCRIPT_SETTLE_MS);
+  }
+
+  private clearTranscriptSettle(): void {
+    if (this.transcriptSettleTimer) window.clearTimeout(this.transcriptSettleTimer);
+    this.transcriptSettleTimer = undefined;
   }
 
   private takeFinalizedInput(): FinalizedVoiceInput | undefined {
@@ -443,6 +480,7 @@ export class GeminiLiveClient {
   }
 
   private rejectTranscriptWaiters(error: Error): void {
+    this.clearTranscriptSettle();
     for (const waiter of this.transcriptWaiters) {
       window.clearTimeout(waiter.timer);
       waiter.reject(error);

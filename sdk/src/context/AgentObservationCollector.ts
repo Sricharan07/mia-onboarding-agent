@@ -152,6 +152,7 @@ export class AgentObservationCollector {
       checked: checkedState(element),
       selected: booleanProperty(element, "selected", "aria-selected"),
       expanded: ariaBoolean(element, "aria-expanded"),
+      hasPopup: element.getAttribute("aria-haspopup")?.slice(0, 50) || undefined,
       pressed: ariaBoolean(element, "aria-pressed"),
       required: booleanProperty(element, "required", "aria-required"),
       readOnly: booleanProperty(element, "readOnly", "aria-readonly"),
@@ -486,9 +487,11 @@ function ariaBoolean(element: Element, attribute: string): boolean | undefined {
   return value === "true" ? true : value === "false" ? false : undefined;
 }
 
-function readActionPolicy(element: HTMLElement): RiskLevel | undefined {
+function readActionPolicy(element: HTMLElement): RiskLevel | "guide_only" | undefined {
   const value = element.dataset.miaPolicy;
-  return ["read", "navigate", "reversible_write", "manual", "blocked"].includes(value ?? "") ? value as RiskLevel : undefined;
+  return ["read", "navigate", "reversible_write", "manual", "blocked", "guide_only"].includes(value ?? "")
+    ? value as RiskLevel | "guide_only"
+    : undefined;
 }
 
 function routeForElement(element: HTMLElement): string | undefined {

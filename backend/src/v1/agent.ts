@@ -799,6 +799,7 @@ ${runtime.observation.pageText ?? ""}
 </untrusted_page_content>
 
 Action rules:
+- The live observation is runtime truth. When a matching live reference exists, use it instead of a mapped reference; mapped references are semantic memory for controls absent from the live observation and may be stale.
 - point, highlight, hover, scroll_to, focus, click, fill, clear, select, and toggle require targetRef.
 - navigate requires an exact route from Allowed routes.
 - fill and select require a value supplied by the user or trusted product context.
@@ -818,6 +819,7 @@ function formatLiveNode(node: ObservationNode): string {
     node.checked !== undefined ? `checked=${node.checked}` : undefined,
     node.selected !== undefined ? `selected=${node.selected}` : undefined,
     node.expanded !== undefined ? `expanded=${node.expanded}` : undefined,
+    node.hasPopup ? `popup=${node.hasPopup}` : undefined,
     node.sensitive ? "sensitive" : undefined,
     node.actionPolicy ? `policy=${node.actionPolicy}` : undefined,
     node.route ? `route=${node.route}` : undefined
@@ -898,8 +900,10 @@ function riskForAction(
   if (host) return executableHostEffect(host.effect) ? host.effectiveRisk : "blocked";
   const policy = node?.actionPolicy ?? map?.actionPolicy;
   if (node?.sensitive || policy === "manual") return "manual";
-  if (policy === "blocked" || policy === "read" || policy === "guide_only") return "blocked";
+  if (policy === "blocked" || policy === "guide_only") return "blocked";
+  if (policy === "read") return ["click", "toggle", "press_key"].includes(action.type) ? "read" : "blocked";
   if (policy === "navigate") return activatesLink && Boolean(destinationRoute) ? "navigate" : "blocked";
+  if (action.type === "click" && node?.hasPopup) return "read";
   return "reversible_write";
 }
 
@@ -951,12 +955,42 @@ function confirmationPrompt(actions: ActionDirective[]): string {
     .filter((action) => action.risk === "reversible_write" && !action.replay)
     .map((action) => {
       const target = action.target?.label ?? action.hostAction ?? "this item";
-      if (action.type === "fill") return `enter the provided value in ${target}`;
-      if (action.type === "select") return `change the selection in ${target}`;
-      if (action.type === "host_action") return `${action.message.replace(/[.?!]+$/, "")} (action: ${target.replace(/_/g, " ")})`;
+      if (action.type === "fill") return `enter ${confirmationValue(action.value)} in ${target}`;
+      if (action.type === "select") return `set ${target} to ${confirmationValue(action.value)}`;
+      if (action.type === "host_action") return hostActionConfirmation(action);
       return `${action.type.replace("_", " ")} ${target}`;
     });
   return `Approve ${descriptions.length === 1 ? "this reversible change" : "these reversible changes"}: ${descriptions.join(", then ")}?`;
+}
+
+function hostActionConfirmation(action: ActionDirective): string {
+  const name = (action.hostAction ?? "product action").replace(/_/g, " ");
+  const arguments_ = action.arguments ?? {};
+  const targetEntry = ["account", "name", "title", "label", "contactName", "id"]
+    .map((key) => [key, arguments_[key]] as const)
+    .find(([, value]) => typeof value === "string" && value.trim());
+  const target = targetEntry ? ` for ${confirmationValue(targetEntry[1])}` : "";
+  const changes = argumentChanges(arguments_, new Set(targetEntry ? [targetEntry[0]] : []));
+  return `${name}${target}${changes.length ? `: ${changes.join(", ")}` : ""}`;
+}
+
+function argumentChanges(value: Record<string, unknown>, omitted: Set<string>): string[] {
+  const patch = value.patch && typeof value.patch === "object" && !Array.isArray(value.patch)
+    ? value.patch as Record<string, unknown>
+    : undefined;
+  const source = patch ?? value;
+  return Object.entries(source)
+    .filter(([key, entry]) => !omitted.has(key) && entry !== undefined && entry !== null && typeof entry !== "object")
+    .slice(0, 6)
+    .map(([key, entry]) => `${key.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/_/g, " ")} ${confirmationValue(entry, key)}`);
+}
+
+function confirmationValue(value: unknown, key?: string): string {
+  if (typeof value === "number" && /amount|price|value/i.test(key ?? "")) {
+    return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(value);
+  }
+  const rendered = typeof value === "string" ? value : JSON.stringify(value);
+  return `"${short(rendered ?? String(value), 200).replace(/["\\]/g, "\\$&")}"`;
 }
 
 function completionEvidence(

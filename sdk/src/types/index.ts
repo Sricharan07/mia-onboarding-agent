@@ -55,11 +55,12 @@ export type ObservationNode = {
   checked?: boolean;
   selected?: boolean;
   expanded?: boolean;
+  hasPopup?: string;
   pressed?: boolean;
   required?: boolean;
   readOnly?: boolean;
   sensitive: boolean;
-  actionPolicy?: RiskLevel;
+  actionPolicy?: RiskLevel | "guide_only";
 };
 
 export type Observation = {

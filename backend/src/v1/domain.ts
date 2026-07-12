@@ -43,11 +43,12 @@ export const observationNodeSchema = z.object({
   checked: z.boolean().optional(),
   selected: z.boolean().optional(),
   expanded: z.boolean().optional(),
+  hasPopup: z.string().max(50).optional(),
   pressed: z.boolean().optional(),
   required: z.boolean().optional(),
   readOnly: z.boolean().optional(),
   sensitive: z.boolean().default(false),
-  actionPolicy: riskLevelSchema.optional()
+  actionPolicy: z.union([riskLevelSchema, z.literal("guide_only")]).optional()
 });
 export type ObservationNode = z.infer<typeof observationNodeSchema>;
 

@@ -1297,35 +1297,57 @@ export class DiagnosticsRepository {
 
   async acceptanceEvidence(): Promise<Record<"answer" | "point" | "navigate" | "mutation" | "voice", { passed: boolean; runId: string | null; at: string | null }>> {
     const result = await this.database.query<{ scenario: "answer" | "point" | "navigate" | "mutation" | "voice"; runId: string; at: string }>(`
-      WITH evidence AS (
+      WITH completed_runs AS (
+        SELECT sessions.id
+        FROM agent_sessions sessions
+        WHERE sessions.status = 'completed'
+          AND EXISTS (
+            SELECT 1 FROM agent_turns turns
+            WHERE turns.session_id = sessions.id AND turns.role = 'assistant'
+          )
+          AND EXISTS (
+            SELECT 1 FROM ai_requests requests
+            WHERE requests.session_id = sessions.id
+              AND requests.purpose = 'agent_judge'
+              AND requests.error IS NULL
+          )
+      ), evidence AS (
         SELECT 'answer'::text AS scenario, turns.session_id AS "runId", turns.created_at AS at
         FROM agent_turns turns
-        JOIN agent_sessions sessions ON sessions.id = turns.session_id
-        WHERE sessions.status = 'completed' AND turns.role = 'assistant'
+        JOIN completed_runs runs ON runs.id = turns.session_id
+        WHERE turns.role = 'assistant'
         UNION ALL
         SELECT 'point', receipts.session_id, receipts.created_at
         FROM action_receipts receipts
-        JOIN agent_sessions sessions ON sessions.id = receipts.session_id
-        WHERE sessions.status = 'completed' AND receipts.status = 'completed'
+        JOIN completed_runs runs ON runs.id = receipts.session_id
+        WHERE receipts.status = 'completed'
           AND receipts.action_type IN ('point', 'highlight', 'hover', 'scroll_to')
         UNION ALL
         SELECT 'navigate', receipts.session_id, receipts.created_at
         FROM action_receipts receipts
-        JOIN agent_sessions sessions ON sessions.id = receipts.session_id
-        WHERE sessions.status = 'completed' AND receipts.status = 'completed'
+        JOIN completed_runs runs ON runs.id = receipts.session_id
+        WHERE receipts.status = 'completed'
           AND receipts.action_type IN ('navigate', 'go_back')
         UNION ALL
         SELECT 'mutation', receipts.session_id, receipts.created_at
         FROM action_receipts receipts
-        JOIN agent_sessions sessions ON sessions.id = receipts.session_id
-        WHERE sessions.status = 'completed' AND receipts.status = 'completed'
+        JOIN completed_runs runs ON runs.id = receipts.session_id
+        WHERE receipts.status = 'completed'
           AND receipts.action_type IN ('click', 'fill', 'clear', 'select', 'toggle', 'host_action')
-          AND EXISTS (SELECT 1 FROM confirmations WHERE confirmations.session_id = receipts.session_id AND confirmations.status = 'approved')
+          AND EXISTS (
+            SELECT 1 FROM confirmations
+            WHERE confirmations.session_id = receipts.session_id
+              AND confirmations.action_id = receipts.action_id
+              AND confirmations.status = 'approved'
+          )
         UNION ALL
-        SELECT 'voice', turns.session_id, turns.created_at
-        FROM agent_turns turns
-        JOIN agent_sessions sessions ON sessions.id = turns.session_id
-        WHERE sessions.status = 'completed' AND turns.role = 'user' AND turns.source = 'voice'
+        SELECT 'voice', voice_turns.session_id, GREATEST(voice_turns.created_at, point_receipts.created_at)
+        FROM agent_turns voice_turns
+        JOIN completed_runs runs ON runs.id = voice_turns.session_id
+        JOIN action_receipts point_receipts ON point_receipts.session_id = voice_turns.session_id
+        WHERE voice_turns.role = 'user' AND voice_turns.source = 'voice'
+          AND point_receipts.status = 'completed'
+          AND point_receipts.action_type IN ('point', 'highlight', 'hover', 'scroll_to')
       )
       SELECT DISTINCT ON (scenario) scenario, "runId", at::text
       FROM evidence ORDER BY scenario, at DESC

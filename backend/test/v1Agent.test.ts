@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { PlannerDecision } from "../src/v1/domain.js";
+import type { ActionDirective, ActionReceipt, PlannerDecision } from "../src/v1/domain.js";
 import type { V1Config } from "../src/v1/config.js";
 import { V1AgentService } from "../src/v1/agent.js";
 import { V1Database } from "../src/v1/db/database.js";
@@ -77,6 +77,7 @@ test("v1 agent persists an observe-act-verify run and enforces confirmations and
 
     const confirmation = issued.actions[1]!.confirmation!;
     assert.match(confirmation.prompt, /^Approve (?:this|these) reversible change/);
+    assert.match(confirmation.prompt, /Create draft lead/);
     await assert.rejects(() => agent.resolveConfirmation({
       sessionId: created.sessionId,
       confirmationId: confirmation.id,
@@ -121,14 +122,26 @@ test("v1 agent persists an observe-act-verify run and enforces confirmations and
     assert.equal(completed.status, "completed");
     assert.equal(completed.type, "complete");
     assert.equal(model.judgeCalls, 2);
+    await repositories.diagnostics.logAiRequest({
+      id: "acceptance_judge",
+      sessionId: created.sessionId,
+      purpose: "agent_judge",
+      model: "fake-agent-model",
+      latencyMs: 1
+    });
 
     const run = await repositories.diagnostics.getRun(created.sessionId);
     const steps = run.steps as Array<{ directive: { actions: Array<{ confirmation?: Record<string, unknown> }> } }>;
     assert.equal(steps.length, 2);
     assert.equal(steps[0]?.directive.actions[1]?.confirmation?.binding, undefined, "confirmation bindings must not be logged");
+    await database.query("UPDATE confirmations SET action_id = 'unrelated_action' WHERE id = $1", [confirmation.id]);
+    const mismatched = await repositories.diagnostics.acceptanceEvidence();
+    assert.equal(mismatched.mutation.passed, false, "an unrelated approval must not satisfy mutation acceptance");
+    await database.query("UPDATE confirmations SET action_id = $2 WHERE id = $1", [confirmation.id, issued.actions[1]!.actionId]);
     const acceptance = await repositories.diagnostics.acceptanceEvidence();
     assert.equal(acceptance.mutation.passed, true);
     assert.equal(acceptance.mutation.runId, created.sessionId);
+    assert.equal(acceptance.voice.passed, false, "a text run must not satisfy voice parity");
   } finally {
     await database.close();
   }
@@ -341,6 +354,57 @@ test("v1 agent keeps a goal across questions and blocks protected operations bef
     });
     assert.equal(guideOnly.type, "unable");
     assert.equal(guideOnly.status, "failed");
+
+    const popupSession = await agent.createSession("popup-user", runtime());
+    model.push(decision("actions", { message: "Open the Stage menu", actions: [planned("click", "live:popup", "Open the Stage menu")] }));
+    const popup = await agent.submitTurn({
+      sessionId: popupSession.sessionId, userId: "popup-user", revision: popupSession.revision,
+      utterance: "Open the Stage filter", source: "text", runtime: runtime(8)
+    });
+    assert.equal(popup.type, "actions");
+    assert.equal(popup.status, "active");
+    assert.equal(popup.actions[0]?.risk, "read");
+    assert.equal(popup.actions[0]?.confirmation, undefined);
+
+    const hostRuntime = {
+      ...runtime(8),
+      actions: [{
+        name: "update_opportunity",
+        description: "Update reversible opportunity fields",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            id: { type: "string" },
+            patch: { type: "object", properties: { stage: { type: "string" } }, required: ["stage"] }
+          },
+          required: ["id", "patch"]
+        },
+        risk: "reversible_write" as const,
+        effect: "draft_update" as const
+      }]
+    };
+    const hostSession = await agent.createSession("host-user", hostRuntime);
+    await repositories.agent.reviewHostAction("update_opportunity", { status: "published", risk: "reversible_write" });
+    model.push(decision("actions", {
+      message: "Update the opportunity",
+      actions: [{
+        actionId: "host-model",
+        type: "host_action",
+        hostAction: "update_opportunity",
+        arguments: { id: "DRAFT-AVERY", patch: { stage: "Discovery" } },
+        message: "Update the opportunity stage",
+        expectedOutcome: "The opportunity stage is Discovery"
+      }]
+    }));
+    const hostIssued = await agent.submitTurn({
+      sessionId: hostSession.sessionId, userId: "host-user", revision: hostSession.revision,
+      utterance: "Change the Avery draft to Discovery", source: "text", runtime: hostRuntime
+    });
+    const hostConfirmation = hostIssued.actions[0]?.confirmation;
+    assert.ok(hostConfirmation);
+    assert.match(hostConfirmation.prompt, /DRAFT-AVERY/);
+    assert.match(hostConfirmation.prompt, /stage.*Discovery/i);
 
     const safeKeySession = await agent.createSession("safe-key-user", runtime());
     model.push(decision("actions", {
@@ -572,6 +636,85 @@ test("v1 agent resumes confirmations and navigation without persisting mutation 
   }
 });
 
+test("v1 agent stops after three failures, repeated loops, and the 24-step ceiling", {
+  skip: databaseUrl ? false : "Set MIA_TEST_DATABASE_URL to run PostgreSQL integration tests."
+}, async () => {
+  assert.ok(databaseUrl);
+  const database = new V1Database({ DATABASE_URL: databaseUrl, DATABASE_POOL_MAX: 3 });
+  try {
+    await database.query("DROP SCHEMA public CASCADE");
+    await database.query("CREATE SCHEMA public");
+    await database.connect();
+    const repositories = new V1Repositories(database);
+    await repositories.product.setup({
+      product: { name: "Limit Test", origin: "http://localhost:3001", documentationOrigins: [], redactedSelectors: [], transcriptMode: "full", transcriptRetentionDays: 30 },
+      admin: { id: "admin", email: "admin@example.com", name: "Admin", passwordHash: "hash" }
+    });
+    const model = new FakeAgentModel();
+    const agent = new V1AgentService(config(databaseUrl), repositories, model);
+
+    const failedSession = await agent.createSession("failure-user", runtime());
+    model.push(decision("actions", { message: "Point to the control", actions: [planned("point", "live:create", "Point to the control")] }));
+    let failed = await agent.submitTurn({
+      sessionId: failedSession.sessionId, userId: "failure-user", revision: failedSession.revision,
+      utterance: "Point to the control", source: "text", runtime: runtime()
+    });
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      if (attempt < 3) model.push(decision("actions", { message: "Try the control again", actions: [planned("point", "live:create", "Try the control again")] }));
+      failed = await agent.continue({
+        sessionId: failedSession.sessionId,
+        userId: "failure-user",
+        revision: failed.revision,
+        receipts: receiptsFor(failed.actions, "failed", { targetVisible: false }),
+        runtime: runtime(attempt + 1)
+      });
+    }
+    assert.equal(failed.type, "unable");
+    assert.equal(failed.status, "failed");
+    assert.match(failed.message, /three unsuccessful attempts/i);
+
+    const loopSession = await agent.createSession("loop-user", runtime());
+    model.push(decision("actions", { message: "Point to the control", actions: [planned("point", "live:create", "Point to the control")] }));
+    let looped = await agent.submitTurn({
+      sessionId: loopSession.sessionId, userId: "loop-user", revision: loopSession.revision,
+      utterance: "Keep pointing to the same control", source: "text", runtime: runtime()
+    });
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      if (attempt < 3) model.push(decision("actions", { message: "Repeat the same point", actions: [planned("point", "live:create", "Repeat the same point")] }));
+      looped = await agent.continue({
+        sessionId: loopSession.sessionId,
+        userId: "loop-user",
+        revision: looped.revision,
+        receipts: receiptsFor(looped.actions, "completed", { targetVisible: true }),
+        runtime: runtime(1)
+      });
+    }
+    assert.equal(looped.type, "unable");
+    assert.equal(looped.status, "failed");
+    assert.match(looped.message, /same action was repeating/i);
+
+    const ceilingSession = await agent.createSession("ceiling-user", runtime());
+    model.push(decision("actions", { message: "Point to the control", actions: [planned("point", "live:create", "Point to the control")] }));
+    const ceilingIssued = await agent.submitTurn({
+      sessionId: ceilingSession.sessionId, userId: "ceiling-user", revision: ceilingSession.revision,
+      utterance: "Run a long task", source: "text", runtime: runtime()
+    });
+    await database.query("UPDATE agent_sessions SET step_count = 24 WHERE id = $1", [ceilingSession.sessionId]);
+    const ceiling = await agent.continue({
+      sessionId: ceilingSession.sessionId,
+      userId: "ceiling-user",
+      revision: ceilingIssued.revision,
+      receipts: receiptsFor(ceilingIssued.actions, "completed", { targetVisible: true }),
+      runtime: runtime(2)
+    });
+    assert.equal(ceiling.type, "unable");
+    assert.equal(ceiling.status, "failed");
+    assert.match(ceiling.message, /24-step safety limit/i);
+  } finally {
+    await database.close();
+  }
+});
+
 class FakeAgentModel {
   readonly decisions: PlannerDecision[] = [];
   readonly judgments: Array<{ satisfied: boolean; summary: string; missingEvidence: string[] }> = [];
@@ -707,7 +850,7 @@ function observation(revision = 1) {
         tagName: "button",
         role: "button",
         name: "Guide-only control",
-        actionPolicy: "read" as const,
+        actionPolicy: "guide_only" as const,
         locators: [{ strategy: "role" as const, role: "button", name: "Guide-only control" }],
         bounds: { x: 720, y: 80, width: 140, height: 40 },
         viewportVisible: true,
@@ -747,6 +890,19 @@ function observation(revision = 1) {
         bounds: { x: 1040, y: 80, width: 120, height: 40 },
         viewportVisible: true,
         sensitive: false
+      },
+      {
+        nodeId: "popup",
+        tagName: "button",
+        role: "button",
+        name: "Stage",
+        hasPopup: "menu",
+        formAssociated: false,
+        formSubmitter: false,
+        locators: [{ strategy: "role" as const, role: "button", name: "Stage" }],
+        bounds: { x: 1180, y: 80, width: 100, height: 40 },
+        viewportVisible: true,
+        sensitive: false
       }
     ]
   };
@@ -758,6 +914,19 @@ function runtime(revision = 1) {
 
 function planned(type: "point" | "click", targetRef: string, message: string) {
   return { actionId: "from_model", type, targetRef, message, expectedOutcome: "The control responds as expected." };
+}
+
+function receiptsFor(actions: ActionDirective[], status: ActionReceipt["status"], evidence: Record<string, unknown>): ActionReceipt[] {
+  return actions.map((action) => ({
+    actionId: action.actionId,
+    idempotencyKey: action.idempotencyKey,
+    type: action.type,
+    status,
+    message: status === "completed" ? "The action completed." : "The action failed verification.",
+    targetRef: action.target?.ref,
+    route: "/dashboard/crm",
+    evidence
+  }));
 }
 
 function decision(

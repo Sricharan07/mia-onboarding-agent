@@ -142,6 +142,12 @@ The backend detects manifests automatically. An administrator must review and pu
 
 Use the supplied idempotency key for every mutation and return evidence that proves the resulting product state. Never define a reversible action that can delete, send, publish, approve, pay, externally communicate, or irreversibly submit through an indirect flag.
 
+## DOM Semantics And Policy
+
+Give important controls stable accessible names. Add `data-mia-key` when a control can rerender or has repeated labels. The live observation remains authoritative; UI-map locators are fallback memory, never permission to act on a stale element.
+
+Mia treats product-changing clicks and values as reversible writes by default. Mark controls that only change the current view, such as filter choices or display tabs, with `data-mia-policy="read"`; popup triggers with `aria-haspopup` are also read-only interactions. Use `data-mia-policy="guide_only"`, `manual`, or `blocked` when Mia may only point, must leave the action to the user, or must not offer the action. Host annotations cannot override the global protected-operation policy.
+
 ## Product Context
 
 Context providers add product state that the DOM cannot express cleanly:
@@ -212,7 +218,7 @@ Gemini Live carries microphone input and speaks the backend agent's exact respon
 
 Input audio transcription is authoritative for agent turns. If Gemini's transport tool paraphrases a request, the SDK submits the exact transcription instead, so voice and text reach the same persisted planner input.
 
-The browser requires a secure context and microphone permission. Voice confirmation is supported for every permitted reversible mutation and must resolve the same exact backend binding as the UI.
+The browser requires a secure context and microphone permission. Voice confirmation is supported for every permitted reversible mutation and must resolve the same exact backend binding as the UI. Starting voice while a text or resumed confirmation is pending makes Mia speak that exact prompt before accepting an approval or decline.
 
 ## Lifecycle And Custom UI
 

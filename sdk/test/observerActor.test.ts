@@ -556,6 +556,83 @@ test("DOM actor verifies contenteditable fields and safe supported key actions",
   }
 });
 
+test("DOM actor selects exact options and verifies checkbox toggles", async () => {
+  const cleanup = installDom(`<main>
+    <button id="stage-menu" type="button" aria-haspopup="menu">Open Stage</button>
+    <label for="stage">Stage</label>
+    <select id="stage"><option value="qualified">Qualified</option><option value="discovery">Discovery</option></select>
+    <label><input id="notifications" type="checkbox"> Notify owner</label>
+  </main>`);
+  try {
+    document.querySelector("#stage-menu")!.addEventListener("click", () => {
+      const menu = document.createElement("div");
+      menu.setAttribute("role", "menu");
+      menu.innerHTML = `<button role="menuitemradio" aria-checked="false">Discovery</button>`;
+      document.body.append(menu);
+    }, { once: true });
+    const collector = new AgentObservationCollector(options());
+    const observation = collector.collect();
+    const node = (id: string) => observation.nodes.find((candidate) =>
+      candidate.locators.some((locator) => locator.strategy === "css" && locator.selector === `#${id}`))!;
+    const cursor = { navigateTo: () => undefined, returnToCursor: () => undefined } as unknown as MiaShadowCursor;
+    const actor = new DomAgentActor({ collector, cursor, config: options() });
+
+    const stageMenu = node("stage-menu");
+    assert.equal(stageMenu.hasPopup, "menu");
+    const opened = await actor.executeBatch([{
+      actionId: "open_stage_menu",
+      idempotencyKey: "open_stage_menu_key",
+      type: "click",
+      message: "Open the Stage menu",
+      expectedOutcome: "The Stage options are visible",
+      risk: "read",
+      target: { ref: `live:${stageMenu.nodeId}`, nodeId: stageMenu.nodeId, label: stageMenu.name, role: stageMenu.role, locators: stageMenu.locators }
+    }], observation, new AbortController().signal);
+    assert.equal(opened.receipts[0]?.status, "completed");
+    assert.equal(opened.receipts[0]?.evidence.transientLayerChanged, true);
+
+    const stage = node("stage");
+    const selected = await actor.executeBatch([{
+      actionId: "select_stage",
+      idempotencyKey: "select_stage_key",
+      type: "select",
+      value: "discovery",
+      message: "Select Discovery",
+      expectedOutcome: "The Stage value is Discovery",
+      risk: "reversible_write",
+      target: { ref: `live:${stage.nodeId}`, nodeId: stage.nodeId, label: stage.name, role: stage.role, locators: stage.locators }
+    }], observation, new AbortController().signal);
+    assert.equal(selected.receipts[0]?.status, "completed");
+    assert.equal((document.querySelector("#stage") as HTMLSelectElement).value, "discovery");
+    assert.equal(selected.receipts[0]?.evidence.selectedIndexChanged, true);
+
+    const refreshed = collector.collect();
+    const notifications = refreshed.nodes.find((candidate) =>
+      candidate.locators.some((locator) => locator.strategy === "css" && locator.selector === "#notifications"))!;
+    const toggled = await actor.executeBatch([{
+      actionId: "toggle_notifications",
+      idempotencyKey: "toggle_notifications_key",
+      type: "toggle",
+      message: "Turn on owner notifications",
+      expectedOutcome: "Owner notifications are enabled",
+      risk: "reversible_write",
+      target: {
+        ref: `live:${notifications.nodeId}`,
+        nodeId: notifications.nodeId,
+        label: notifications.name,
+        role: notifications.role,
+        locators: notifications.locators
+      }
+    }], refreshed, new AbortController().signal);
+    assert.equal(toggled.receipts[0]?.status, "completed");
+    assert.equal((document.querySelector("#notifications") as HTMLInputElement).checked, true);
+    assert.equal(toggled.receipts[0]?.evidence.checkedChanged, true);
+    collector.destroy();
+  } finally {
+    cleanup();
+  }
+});
+
 test("DOM actor waits for normal-motion scrolling before positioning Mia's cursor", async () => {
   const cleanup = installDom(`<main><button id="moving-target">Stage filter</button></main>`);
   try {

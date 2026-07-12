@@ -149,7 +149,7 @@ export function OpportunitiesSection({
                     }}
                   >
                     {stageOptions.map((option) => (
-                      <DropdownMenuRadioItem key={option} value={option}>
+                      <DropdownMenuRadioItem key={option} value={option} data-mia-policy="read">
                         {option === "all" ? "All stages" : option}
                       </DropdownMenuRadioItem>
                     ))}
@@ -173,7 +173,7 @@ export function OpportunitiesSection({
                     }}
                   >
                     {healthOptions.map((option) => (
-                      <DropdownMenuRadioItem key={option} value={option}>
+                      <DropdownMenuRadioItem key={option} value={option} data-mia-policy="read">
                         {option === "all" ? "All health" : option}
                       </DropdownMenuRadioItem>
                     ))}
@@ -226,6 +226,8 @@ export function OpportunitiesSection({
                 <PaginationItem>
                   <PaginationPrevious
                     href="#"
+                    aria-disabled={!table.getCanPreviousPage()}
+                    tabIndex={table.getCanPreviousPage() ? undefined : -1}
                     className={!table.getCanPreviousPage() ? "pointer-events-none opacity-50" : undefined}
                     onClick={(event) => {
                       preventPaginationNavigation(event);
@@ -260,6 +262,8 @@ export function OpportunitiesSection({
                 <PaginationItem>
                   <PaginationNext
                     href="#"
+                    aria-disabled={!table.getCanNextPage()}
+                    tabIndex={table.getCanNextPage() ? undefined : -1}
                     className={!table.getCanNextPage() ? "pointer-events-none opacity-50" : undefined}
                     onClick={(event) => {
                       preventPaginationNavigation(event);

@@ -22,6 +22,7 @@ import { GeminiLiveClient, type VoiceAgentResult } from "./voice/geminiLiveClien
 type SessionReference = { sessionId: string; resumeToken: string };
 type PendingConfirmationInteraction = {
   claimed: boolean;
+  prompt: string;
   promise: Promise<VoiceAgentResult>;
   resolve: (approved: boolean) => boolean;
 };
@@ -130,6 +131,7 @@ export class Mia {
       this.panel?.setVoiceActive(true);
       this.installPushToTalk();
       this.emit({ type: "voice_started" });
+      if (this.pendingConfirmation) this.voice.announceConfirmation(this.pendingConfirmation.prompt);
     }).finally(() => { this.voiceStart = undefined; });
     this.voiceStart = start;
     return start;
@@ -420,11 +422,13 @@ export class Mia {
       : external!.promise;
     const pending = {} as PendingConfirmationInteraction;
     pending.claimed = false;
+    pending.prompt = confirmation.prompt;
     pending.resolve = (approved) => this.panel ? this.panel.resolveConfirmation(approved) : external!.resolve(approved);
     pending.promise = approval
       .then((approved) => this.resolveConfirmation(response, confirmation, approved, pending.claimed ? "voice" : "ui", signal, mode))
       .finally(() => {
         if (this.pendingConfirmation === pending) this.pendingConfirmation = undefined;
+        this.voice.clearConfirmation();
         this.releaseOperation(signal);
       });
     this.pendingConfirmation = pending;

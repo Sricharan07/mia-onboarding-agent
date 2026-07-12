@@ -65,7 +65,7 @@ MIA_BENCHMARK_THRESHOLD=1 \
 npm run benchmark:agent
 ```
 
-It creates fresh sessions for grounded Q&A, pointing, navigation, a uniquely named confirmed draft, and a combined delete/send refusal. The default threshold is 100%, and any protected-request action is an unconditional failure.
+It creates fresh sessions for grounded Q&A, pointing, navigation, uniquely named draft creation and editing, confirmed live-field filling, custom filter selection, pending-confirmation reload recovery, and a combined delete/send refusal. The default threshold is 100%, and any protected-request action is an unconditional failure.
 
 ## 4. Browser And Accessibility Gate
 
@@ -96,7 +96,7 @@ npm run acceptance:browsers
 
 The script requires real Chrome, Edge, Firefox, and WebKit. It checks all eight console routes, closed-drawer inertness, mobile focus trapping/restoration, desktop/mobile containment, normal-motion cursor-to-target pixel alignment, target occlusion, reduced motion, keyboard panel opening, SDK readiness, and an optional real point-and-answer turn. Keep credentials in the process environment or a secret runner, not shell history.
 
-Verify the real Gemini Live transport separately. This mints a one-use runtime and ephemeral Live token, synthesizes the acceptance phrase, feeds the PCM back as microphone input, requires an exact authoritative input transcription plus `submit_mia_turn`, returns a trusted tool result, and fails unless Live produces exact trusted speech:
+Verify the real Gemini Live transport separately. This mints one-use runtime and ephemeral Live tokens, feeds checked-in English PCM speech through Chromium's microphone capture, requires authoritative input transcription and Mia tool routing, compares text and voice plans/receipts/cursor geometry, and fails unless Live produces exact trusted speech. A second spoken fixture must approve the exact pending draft action; the gate verifies the confirmation source, action binding, host receipt, persisted CRM record, amount, and draft state:
 
 ```bash
 MIA_VOICE_BACKEND_URL=https://mia.example.com \
@@ -106,9 +106,9 @@ MIA_VOICE_ACCEPTANCE_ITERATIONS=3 \
 npm run acceptance:voice:repeat
 ```
 
-Before tagging, run `npm run verify:release`, then require the `Release Acceptance` GitHub workflow in the protected `release-acceptance` environment. Configure its documented repository variables and secrets for the production-like acceptance deployment. The workflow runs on every `main` push and release tag, executes deterministic verification, the four-browser suite with the real agent enabled, three repeated benchmark iterations at a 100% threshold, and three spoken-input Gemini Live parity checks. A missing credential or failed scenario fails the gate; release tags run the same workflow again.
+Before tagging, run `npm run verify:release`, then require the `Release Acceptance` workflow in the protected `release-acceptance` environment. The workflow runs on every `main` push and release tag. It uses only the checked-out commit: a fresh PostgreSQL database, freshly built backend/console/SDK/demo artifacts, generated setup/admin/runtime secrets, a real documentation embedding, a current UI scan, and currently detected and reviewed host actions. It executes deterministic verification, Chrome/Edge/Firefox/WebKit plus real Safari, three benchmark iterations at a 100% threshold, and three spoken-input Gemini Live parity and approval checks. A missing credential, stale artifact, incomplete setup item, or failed scenario fails the gate.
 
-Configure these environment variables: `MIA_ACCEPTANCE_CONSOLE_URL`, `MIA_ACCEPTANCE_DEMO_URL`, `MIA_ACCEPTANCE_BACKEND_URL`, and `MIA_ACCEPTANCE_PRODUCT_ORIGIN`. Configure these environment secrets: `MIA_ACCEPTANCE_CONSOLE_EMAIL`, `MIA_ACCEPTANCE_CONSOLE_PASSWORD`, and a dedicated revocable `MIA_VOICE_INTEGRATION_KEY`.
+The protected environment needs only a `GEMINI_API_KEY` secret. Acceptance URLs, administrator credentials, encryption/setup secrets, integration keys, database state, and evidence paths are generated inside each workflow run. Never point the release gate at a long-lived external deployment.
 
 ## 5. Empty Deployment Gate
 
