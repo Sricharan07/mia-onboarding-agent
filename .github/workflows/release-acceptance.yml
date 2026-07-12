@@ -40,8 +40,8 @@ jobs:
       MIA_ACCEPTANCE_CONSOLE_URL: http://127.0.0.1:4000
       MIA_ACCEPTANCE_DEMO_URL: http://127.0.0.1:3001/dashboard/crm
       MIA_ACCEPTANCE_PRODUCT_ORIGIN: http://127.0.0.1:3001
-      MIA_ACCEPTANCE_STATE_FILE: ${{ runner.temp }}/mia-release-state.json
-      MIA_ACCEPTANCE_EVIDENCE_DIR: ${{ runner.temp }}/mia-release-evidence
+      MIA_ACCEPTANCE_STATE_FILE: /tmp/mia-release-state.json
+      MIA_ACCEPTANCE_EVIDENCE_DIR: /tmp/mia-release-evidence
       MIA_ACCEPTANCE_REQUIRE_FRESH: "true"
       MIA_ACCEPTANCE_REQUIRE_GEMINI: "true"
       MIA_ACCEPTANCE_AGENT: "true"
@@ -165,8 +165,8 @@ jobs:
       MIA_ACCEPTANCE_CONSOLE_URL: http://127.0.0.1:4400
       MIA_ACCEPTANCE_DEMO_URL: http://127.0.0.1:3201/dashboard/crm
       MIA_ACCEPTANCE_PRODUCT_ORIGIN: http://127.0.0.1:3201
-      MIA_ACCEPTANCE_STATE_FILE: ${{ runner.temp }}/mia-safari-state.json
-      MIA_ACCEPTANCE_EVIDENCE_DIR: ${{ runner.temp }}/mia-safari-evidence
+      MIA_ACCEPTANCE_STATE_FILE: /tmp/mia-safari-state.json
+      MIA_ACCEPTANCE_EVIDENCE_DIR: /tmp/mia-safari-evidence
       MIA_ACCEPTANCE_REQUIRE_FRESH: "true"
       NEXT_PUBLIC_MIA_BACKEND_URL: http://127.0.0.1:4400
       NEXT_PUBLIC_MIA_ENABLE_VOICE: "true"
