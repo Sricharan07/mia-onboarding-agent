@@ -313,6 +313,18 @@ jobs:
           done
           docker compose exec -T postgres pg_dump -U mia -d mia > "$RUNNER_TEMP/mia-release-backup.sql"
           test -s "$RUNNER_TEMP/mia-release-backup.sql"
+          ! grep -F "$SETUP_TOKEN" "$RUNNER_TEMP/mia-release-backup.sql"
+          ! grep -F "$MIA_DOCKER_ADMIN_PASSWORD" "$RUNNER_TEMP/mia-release-backup.sql"
+          docker compose exec -T postgres createdb -U mia mia_restore_check
+          docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U mia -d mia_restore_check < "$RUNNER_TEMP/mia-release-backup.sql"
+          test "$(docker compose exec -T postgres psql -At -U mia -d mia_restore_check -c 'SELECT COUNT(*) FROM admin_user')" = "1"
+          test "$(docker compose exec -T postgres psql -At -U mia -d mia_restore_check -c 'SELECT COUNT(*) FROM product')" = "1"
+          printf 'commit=%s\nsha256=%s\nbytes=%s\nrestore_admins=1\nrestore_products=1\n' \
+            "$GITHUB_SHA" \
+            "$(sha256sum "$RUNNER_TEMP/mia-release-backup.sql" | cut -d ' ' -f 1)" \
+            "$(wc -c < "$RUNNER_TEMP/mia-release-backup.sql" | tr -d ' ')" \
+            > "$RUNNER_TEMP/mia-release-backup-proof.txt"
+          docker compose exec -T postgres dropdb -U mia mia_restore_check
           ! docker compose logs | grep -F "$SETUP_TOKEN"
           ! docker compose logs | grep -F "$MIA_DOCKER_ADMIN_PASSWORD"
           docker compose stop --timeout 30 mia-backend
@@ -323,7 +335,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: mia-docker-backup-proof-${{ github.sha }}
-          path: ${{ runner.temp }}/mia-release-backup.sql
+          path: ${{ runner.temp }}/mia-release-backup-proof.txt
           if-no-files-found: warn
 
       - name: Remove Docker deployment and volumes
