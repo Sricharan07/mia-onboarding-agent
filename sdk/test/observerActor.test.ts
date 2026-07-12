@@ -4,6 +4,7 @@ import { createHash, webcrypto } from "node:crypto";
 import { JSDOM } from "jsdom";
 import { AgentObservationCollector, redact } from "../src/context/AgentObservationCollector.js";
 import { DomAgentActor } from "../src/agent/DomAgentActuator.js";
+import { Mia } from "../src/index.js";
 import type { MiaShadowCursor } from "../src/cursor/MiaShadowCursor.js";
 import type { ActionDirective, MiaOptions } from "../src/types/index.js";
 import { MiaAssistantPanel } from "../src/ui/MiaAssistantPanel.js";
@@ -49,6 +50,160 @@ test("assistant panel preserves its controls across status and voice updates", (
     root.querySelector("[data-composer]")?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     assert.equal(root.querySelector("[data-panel]")?.hasAttribute("hidden"), true);
     panel.destroy();
+  } finally {
+    cleanup();
+  }
+});
+
+test("Control+Space push-to-talk and emergency stop control every active SDK surface", async () => {
+  const cleanup = installDom("");
+  try {
+    const microphoneStates: boolean[] = [];
+    const hotkey = Object.create(Mia.prototype) as {
+      options: MiaOptions;
+      voiceActive: boolean;
+      pushToTalkHeld: boolean;
+      removeHotkeys?: () => void;
+      voice: { setMicrophoneEnabled: (enabled: boolean) => void };
+      installPushToTalk: () => void;
+    };
+    Object.assign(hotkey, {
+      options: { ...options(), voice: { enabled: true, openMic: false, pushToTalk: true } },
+      voiceActive: true,
+      pushToTalkHeld: false,
+      voice: { setMicrophoneEnabled: (enabled: boolean) => microphoneStates.push(enabled) }
+    });
+    hotkey.installPushToTalk();
+
+    const keydown = new KeyboardEvent("keydown", { code: "Space", ctrlKey: true, bubbles: true, cancelable: true });
+    window.dispatchEvent(keydown);
+    assert.equal(keydown.defaultPrevented, true);
+    assert.equal(hotkey.pushToTalkHeld, true);
+    assert.deepEqual(microphoneStates, [true]);
+
+    const keyup = new KeyboardEvent("keyup", { code: "Space", bubbles: true, cancelable: true });
+    window.dispatchEvent(keyup);
+    assert.equal(keyup.defaultPrevented, true);
+    assert.equal(hotkey.pushToTalkHeld, false);
+    assert.deepEqual(microphoneStates, [true, false]);
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "Space", ctrlKey: true, bubbles: true }));
+    window.dispatchEvent(new Event("blur"));
+    assert.equal(hotkey.pushToTalkHeld, false);
+    assert.deepEqual(microphoneStates, [true, false, true, false]);
+    hotkey.removeHotkeys?.();
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "Space", ctrlKey: true, bubbles: true }));
+    assert.deepEqual(microphoneStates, [true, false, true, false], "destroyed hotkeys must not keep controlling the microphone");
+
+    const operation = new AbortController();
+    const stopped: string[] = [];
+    const emitted: string[] = [];
+    const emergency = Object.create(Mia.prototype) as {
+      operation?: AbortController;
+      pendingConfirmation?: unknown;
+      pendingInput?: unknown;
+      voice: { interrupt: () => void };
+      cursor: { cancelNavigation: () => void; resetBubble: () => void };
+      session: { sessionId: string };
+      backend: { cancel: (sessionId: string) => Promise<{ revision: number }> };
+      revision: number;
+      setStatus: (status: string) => void;
+      emit: (event: { type: string }) => void;
+      stop: () => Promise<void>;
+    };
+    Object.assign(emergency, {
+      operation,
+      pendingConfirmation: {},
+      pendingInput: {},
+      voice: { interrupt: () => stopped.push("speech") },
+      cursor: {
+        cancelNavigation: () => stopped.push("navigation"),
+        resetBubble: () => stopped.push("bubble")
+      },
+      session: { sessionId: "session_stop" },
+      backend: {
+        cancel: async (sessionId: string) => {
+          assert.equal(sessionId, "session_stop");
+          stopped.push("backend");
+          return { revision: 9 };
+        }
+      },
+      revision: 2,
+      setStatus: (status: string) => stopped.push(`status:${status}`),
+      emit: (event: { type: string }) => emitted.push(event.type)
+    });
+    await emergency.stop();
+    assert.equal(operation.signal.aborted, true, "stop must abort an in-flight model or action operation");
+    assert.equal(emergency.operation, undefined);
+    assert.equal(emergency.pendingConfirmation, undefined);
+    assert.equal(emergency.pendingInput, undefined);
+    assert.equal(emergency.revision, 9);
+    assert.deepEqual(stopped, ["speech", "navigation", "bubble", "backend", "status:idle"]);
+    assert.deepEqual(emitted, ["cancelled"]);
+  } finally {
+    cleanup();
+  }
+});
+
+test("visual context is optional, permission-bound, size-limited, and transformed before return", async () => {
+  const cleanup = installDom("<main><canvas aria-label='Revenue chart'></canvas></main>");
+  try {
+    const collector = new AgentObservationCollector(options());
+    const observation = collector.collect();
+    let providerReason = "";
+    const actor = new DomAgentActor({
+      collector,
+      cursor: { returnToCursor: () => undefined } as unknown as MiaShadowCursor,
+      config: {
+        ...options(),
+        visualContextProvider: ({ reason, observation: supplied }) => {
+          providerReason = reason;
+          assert.equal(supplied.id, observation.id);
+          return Array.from({ length: 6 }, (_value, index) => ({
+            name: `chart-${index + 1}`,
+            description: `private chart description ${index + 1}`
+          }));
+        },
+        privacy: {
+          ...options().privacy,
+          transformVisualContext: (context) => context.map((entry) => ({ ...entry, description: entry.description.replace("private", "redacted") }))
+        }
+      }
+    });
+    const request: ActionDirective = {
+      actionId: "visual_request",
+      idempotencyKey: "visual_request_key",
+      type: "request_visual",
+      message: "Inspect the visual-only revenue chart",
+      expectedOutcome: "The chart context is available for a fresh reasoning step",
+      risk: "read"
+    };
+    const result = await actor.executeBatch([request], observation, new AbortController().signal);
+    assert.equal(providerReason, request.message);
+    assert.equal(result.receipts[0]?.status, "completed");
+    assert.equal(result.receipts[0]?.evidence.contextCount, 5);
+    assert.equal(result.visualContext.length, 5, "visual context must be capped before crossing the runtime boundary");
+    assert.equal(result.visualContext.every((entry) => entry.description.startsWith("redacted")), true);
+    assert.equal(result.visualContext.some((entry) => entry.description.includes("private")), false);
+
+    const unavailable = new DomAgentActor({
+      collector,
+      cursor: { returnToCursor: () => undefined } as unknown as MiaShadowCursor,
+      config: options()
+    });
+    const unavailableResult = await unavailable.executeBatch([{ ...request, actionId: "visual_unavailable", idempotencyKey: "visual_unavailable_key" }], observation, new AbortController().signal);
+    assert.equal(unavailableResult.receipts[0]?.status, "failed");
+    assert.match(unavailableResult.receipts[0]?.message ?? "", /no visual context provider/i);
+
+    const denied = new DomAgentActor({
+      collector,
+      cursor: { returnToCursor: () => undefined } as unknown as MiaShadowCursor,
+      config: { ...options(), visualContextProvider: () => null }
+    });
+    const deniedResult = await denied.executeBatch([{ ...request, actionId: "visual_denied", idempotencyKey: "visual_denied_key" }], observation, new AbortController().signal);
+    assert.equal(deniedResult.receipts[0]?.status, "cancelled");
+    assert.match(deniedResult.receipts[0]?.message ?? "", /permission was not granted/i);
+    collector.destroy();
   } finally {
     cleanup();
   }

@@ -136,6 +136,7 @@ test("push-to-talk gates the microphone and unexpected voice termination release
     const messages: Array<Record<string, unknown>> = [];
     const events: Array<{ type: string; reconnectable?: boolean }> = [];
     let stopped = 0;
+    let interrupted = 0;
     const track = { enabled: true, stop: () => { stopped += 1; } };
     const voice = new GeminiLiveClient({} as BackendClient) as unknown as {
       socket: { readyState: number; send: (message: string) => void; close: () => void };
@@ -143,7 +144,11 @@ test("push-to-talk gates the microphone and unexpected voice termination release
       micStream: { getAudioTracks: () => Array<typeof track>; getTracks: () => Array<typeof track> };
       microphoneEnabled: boolean;
       connected: boolean;
+      outputSources: Set<{ stop: () => void }>;
+      pendingAudio: Array<{ data: string }>;
+      expectedSpeech?: string;
       setMicrophoneEnabled: (enabled: boolean) => void;
+      interrupt: () => void;
       endUnexpectedly: (error: Error, reconnectable: boolean) => Promise<void>;
     };
     voice.socket = { readyState: 1, send: (message) => messages.push(JSON.parse(message) as Record<string, unknown>), close: () => undefined };
@@ -151,6 +156,15 @@ test("push-to-talk gates the microphone and unexpected voice termination release
     voice.micStream = { getAudioTracks: () => [track], getTracks: () => [track] };
     voice.microphoneEnabled = true;
     voice.connected = true;
+    voice.outputSources = new Set([{ stop: () => { interrupted += 1; } }]);
+    voice.pendingAudio = [{ data: "queued-speech" }];
+    voice.expectedSpeech = "Queued speech";
+
+    voice.interrupt();
+    assert.equal(interrupted, 1, "interruption must stop queued speech immediately");
+    assert.deepEqual(voice.pendingAudio, []);
+    assert.equal(voice.expectedSpeech, undefined);
+    assert.equal(messages.some((message) => Boolean((message.realtimeInput as { activityEnd?: unknown } | undefined)?.activityEnd)), true);
 
     voice.setMicrophoneEnabled(false);
     assert.equal(track.enabled, false);
@@ -166,6 +180,53 @@ test("push-to-talk gates the microphone and unexpected voice termination release
   } finally {
     if (previousWebSocket) Object.defineProperty(globalThis, "WebSocket", previousWebSocket);
     else delete (globalThis as Record<string, unknown>).WebSocket;
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+    else delete (globalThis as Record<string, unknown>).window;
+  }
+});
+
+test("Gemini Live reconnects an unexpected transport close and restores the microphone state", async () => {
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      setTimeout: (callback: () => void) => setTimeout(callback, 0),
+      clearTimeout
+    }
+  });
+  try {
+    const events: string[] = [];
+    let attempts = 0;
+    const voice = new GeminiLiveClient({} as BackendClient) as unknown as {
+      handlers: { onEvent: (event: { type: string }) => void };
+      lifecycle: number;
+      intentionalClose: boolean;
+      microphoneEnabled: boolean;
+      connected: boolean;
+      reconnecting?: Promise<void>;
+      openSocket: (lifecycle: number) => Promise<void>;
+      refreshConnection: (cause: Error) => void;
+    };
+    voice.handlers = { onEvent: (event) => events.push(event.type) };
+    voice.lifecycle = 7;
+    voice.intentionalClose = false;
+    voice.microphoneEnabled = true;
+    voice.connected = false;
+    voice.openSocket = async (lifecycle) => {
+      assert.equal(lifecycle, 7);
+      attempts += 1;
+      if (attempts === 1) throw new Error("Transient Live disconnect");
+      voice.connected = true;
+    };
+
+    voice.refreshConnection(new Error("Socket closed unexpectedly"));
+    const reconnecting = voice.reconnecting;
+    assert.ok(reconnecting, "an unexpected close must start reconnection");
+    await reconnecting;
+    assert.equal(attempts, 2, "Live transport must retry a transient reconnect failure");
+    assert.equal(voice.connected, true);
+    assert.deepEqual(events, ["listening"], "reconnection must restore the effective open-microphone state");
+  } finally {
     if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
     else delete (globalThis as Record<string, unknown>).window;
   }
