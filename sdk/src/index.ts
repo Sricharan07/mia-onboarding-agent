@@ -598,10 +598,15 @@ function validateAction<TInput extends Record<string, unknown>>(action: MiaActio
   if (!action.description.trim()) throw new Error(`Mia action ${action.name} requires a description.`);
   if (!action.inputSchema || typeof action.inputSchema !== "object") throw new Error(`Mia action ${action.name} requires a JSON input schema.`);
   if (!["read", "navigate", "reversible_write", "manual", "blocked"].includes(action.risk)) throw new Error(`Mia action ${action.name} has an invalid risk classification.`);
+  const effectMatchesRisk = action.risk === "read" ? action.effect === "read"
+    : action.risk === "navigate" ? action.effect === "navigate"
+      : action.risk === "reversible_write" ? ["draft_create", "draft_update", "reversible_change"].includes(action.effect)
+        : action.effect === "protected";
+  if (!effectMatchesRisk) throw new Error(`Mia action ${action.name} effect ${action.effect} is incompatible with risk ${action.risk}.`);
 }
 
 function actionManifests(actions: MiaActionDefinition[]): MiaActionManifest[] {
-  return actions.map(({ name, description, inputSchema, risk }) => ({ name, description, inputSchema, risk }));
+  return actions.map(({ name, description, inputSchema, risk, effect }) => ({ name, description, inputSchema, risk, effect }));
 }
 
 function hash(value: string): string {
@@ -652,6 +657,7 @@ export type {
   ActionDirective,
   AgentResponse,
   MiaActionDefinition,
+  MiaActionEffect,
   MiaActionReceiptResult,
   MiaContextEntry,
   MiaContextProvider,

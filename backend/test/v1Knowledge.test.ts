@@ -109,9 +109,14 @@ test("document extraction, SSRF policy, and UI action policy preserve product se
   assert.equal(actionPolicyForElement({ role: "button", name: "Create draft", tagName: "button" }), "reversible_write");
   assert.equal(actionPolicyForElement({ role: "button", name: "Delete account", tagName: "button" }), "blocked");
   assert.equal(actionPolicyForElement({ role: "button", name: "Submit the final application", tagName: "button" }), "blocked");
+  for (const name of ["Erase account", "Destroy workspace", "Charge card", "Dispatch email", "Finalize order"]) {
+    assert.equal(actionPolicyForElement({ role: "button", name, tagName: "button" }), "blocked", name);
+  }
   assert.equal(actionPolicyForElement({ role: "textbox", name: "Email address", tagName: "input", type: "email" }), "reversible_write");
   assert.equal(actionPolicyForElement({ role: "button", name: "Choose attachment", tagName: "input", type: "file" }), "manual");
   assert.equal(actionPolicyForElement({ role: "textbox", name: "Password", tagName: "input", type: "password" }), "manual");
+  assert.equal(actionPolicyForElement({ role: "textbox", name: "Verification code", tagName: "input", type: "text" }), "manual");
+  assert.equal(actionPolicyForElement({ role: "textbox", name: "Bank routing number", tagName: "input", type: "text" }), "manual");
   assert.equal(actionPolicyForElement({ role: "link", name: "Pipeline", tagName: "a" }), "navigate");
 });
 
@@ -181,6 +186,13 @@ test("Playwright scanner discovers routes, redacts private regions, and auto-ind
     assert.equal(secondPage.items.length, 1);
     assert.notEqual(firstPage.items[0]?.elementKey, secondPage.items[0]?.elementKey);
     assert.ok(firstPage.routes.includes("/"));
+    await repositories.knowledge.updateMappedElementPolicy("create-draft", "blocked");
+    const replacement = await scanner.start({ routes: ["/"], discover: true });
+    await scanner.wait(replacement.id);
+    const rescanned = await repositories.knowledge.listMappedElements("/");
+    const preserved = rescanned.find((element) => element.elementKey === "create-draft");
+    assert.equal(preserved?.actionPolicy, "blocked");
+    assert.equal(preserved?.metadata.policySource, "admin");
     const mapSource = (await repositories.knowledge.listSources()).find((source) => source.kind === "ui_map");
     assert.equal(mapSource?.status, "ready");
     await scanner.close();

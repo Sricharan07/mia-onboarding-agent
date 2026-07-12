@@ -715,11 +715,12 @@ export class AgentRepository {
     await this.database.transaction(async (client) => {
       for (const manifest of manifests) {
         await client.query(`
-          INSERT INTO host_actions (name, description, input_schema, proposed_risk, effective_risk, status, manifest_hash)
-          VALUES ($1, $2, $3::jsonb, $4, $4, $5, $6)
+          INSERT INTO host_actions (name, description, input_schema, effect, proposed_risk, effective_risk, status, manifest_hash)
+          VALUES ($1, $2, $3::jsonb, $4, $5, $5, $6, $7)
           ON CONFLICT (name) DO UPDATE SET
             description = EXCLUDED.description,
             input_schema = EXCLUDED.input_schema,
+            effect = EXCLUDED.effect,
             proposed_risk = EXCLUDED.proposed_risk,
             status = CASE
               WHEN EXCLUDED.proposed_risk = 'blocked' THEN 'blocked'
@@ -733,6 +734,7 @@ export class AgentRepository {
           manifest.name,
           manifest.description,
           JSON.stringify(manifest.inputSchema),
+          manifest.effect,
           manifest.risk,
           manifest.risk === "blocked" ? "blocked" : "needs_review",
           manifest.manifestHash
@@ -1121,12 +1123,24 @@ export class KnowledgeRepository {
 
   async updateMappedElementPolicy(elementKey: string, actionPolicy: UiActionPolicy): Promise<void> {
     const result = await this.database.query(`
-      UPDATE ui_elements SET action_policy = $2
+      UPDATE ui_elements SET action_policy = $2,
+        metadata = metadata || jsonb_build_object('policySource', 'admin', 'policyReviewedAt', NOW()::text)
       WHERE element_key = $1 AND map_version_id = (
         SELECT id FROM ui_map_versions WHERE status = 'ready' ORDER BY completed_at DESC LIMIT 1
       )
     `, [elementKey, actionPolicy]);
     if (!result.rowCount) throw new NotFoundError(`Mapped element not found: ${elementKey}`);
+  }
+
+  async listReviewedElementPolicies(): Promise<Array<{ elementKey: string; actionPolicy: UiActionPolicy; metadata: Record<string, unknown> }>> {
+    const result = await this.database.query(`
+      SELECT element_key AS "elementKey", action_policy AS "actionPolicy", metadata
+      FROM ui_elements
+      WHERE map_version_id = (
+        SELECT id FROM ui_map_versions WHERE status = 'ready' ORDER BY completed_at DESC LIMIT 1
+      ) AND metadata->>'policySource' = 'admin'
+    `);
+    return result.rows as Array<{ elementKey: string; actionPolicy: UiActionPolicy; metadata: Record<string, unknown> }>;
   }
 
   async createRecording(input: { id: string; name: string; description?: string; filePath: string }): Promise<RecordingRecord> {
@@ -1433,7 +1447,7 @@ function confirmationColumns(): string {
 }
 
 function hostActionColumns(): string {
-  return `name, description, input_schema AS "inputSchema", proposed_risk AS "proposedRisk",
+  return `name, description, input_schema AS "inputSchema", effect, proposed_risk AS "proposedRisk",
     effective_risk AS "effectiveRisk", status, manifest_hash AS "manifestHash",
     first_seen_at::text AS "firstSeenAt", last_seen_at::text AS "lastSeenAt", reviewed_at::text AS "reviewedAt"`;
 }

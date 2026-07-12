@@ -147,6 +147,7 @@ const createDraftLead = defineMiaAction({
     required: ["name"]
   },
   risk: "reversible_write",
+  effect: "draft_create",
   async execute(input, { signal, idempotencyKey }) {
     const response = await fetch("/api/leads/drafts", {
       method: "POST",

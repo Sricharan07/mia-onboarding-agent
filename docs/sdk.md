@@ -112,6 +112,7 @@ const createDraftOpportunity = defineMiaAction({
     required: ["account"]
   },
   risk: "reversible_write",
+  effect: "draft_create",
   async execute(input, { signal, observation, idempotencyKey }) {
     const response = await fetch("/api/opportunities/drafts", {
       method: "POST",

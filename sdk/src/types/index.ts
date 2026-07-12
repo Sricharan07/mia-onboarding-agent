@@ -4,6 +4,7 @@ export type MiaStatus = "idle" | "connecting" | "listening" | "thinking" | "spea
 export type MiaCursorState = Exclude<MiaStatus, "ended"> | "fading";
 export type RiskLevel = "read" | "navigate" | "reversible_write" | "manual" | "blocked";
 export type UiActionPolicy = "guide_only" | Exclude<RiskLevel, "read">;
+export type MiaActionEffect = "read" | "navigate" | "draft_create" | "draft_update" | "reversible_change" | "protected";
 
 export type RuntimeToken = { token: string; expiresAt?: string };
 export type RuntimeTokenProvider = () => Promise<string | RuntimeToken>;
@@ -113,6 +114,7 @@ export type MiaActionDefinition<TInput extends Record<string, unknown> = Record<
   description: string;
   inputSchema: Record<string, unknown>;
   risk: RiskLevel;
+  effect: MiaActionEffect;
   execute: { bivarianceHack(input: TInput, context: {
     signal: AbortSignal;
     observation: Observation;
@@ -120,7 +122,7 @@ export type MiaActionDefinition<TInput extends Record<string, unknown> = Record<
   }): MiaActionReceiptResult | Promise<MiaActionReceiptResult> }["bivarianceHack"];
 };
 
-export type MiaActionManifest = Pick<MiaActionDefinition, "name" | "description" | "inputSchema" | "risk">;
+export type MiaActionManifest = Pick<MiaActionDefinition, "name" | "description" | "inputSchema" | "risk" | "effect">;
 
 export type AgentTarget = {
   ref: string;

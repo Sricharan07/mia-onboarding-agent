@@ -28,6 +28,7 @@ const createDraftLead = defineMiaAction({
     required: ["name"]
   },
   risk: "reversible_write",
+  effect: "draft_create",
   async execute(input, { signal, idempotencyKey }) {
     const response = await fetch("/api/leads/drafts", {
       method: "POST",
@@ -80,9 +81,11 @@ Keep the integration key on your server. `tokenProvider` should call your server
 
 ## Actions And Safety
 
-`defineMiaAction` requires a unique name, clear description, JSON input schema, risk classification, and receipt-producing executor. Actions are detected by the backend but unavailable to Gemini until an administrator reviews and publishes them.
+`defineMiaAction` requires a unique name, clear description, JSON input schema, risk classification, typed effect, and receipt-producing executor. Actions are detected by the backend but unavailable to Gemini until an administrator reviews and publishes them.
 
 Allowed risk values are `read`, `navigate`, `reversible_write`, `manual`, and `blocked`. The backend blocks delete, send, publish, approve, payment, external communication, and irreversible submission operations in v1 regardless of the manifest.
+
+Effects are `read`, `navigate`, `draft_create`, `draft_update`, `reversible_change`, and `protected`. The SDK and backend reject incompatible risk/effect pairs, and `protected` effects are never executable.
 
 Use the supplied idempotency key for every host mutation. Return evidence that lets Mia verify the resulting product state.
 

@@ -205,7 +205,12 @@ test("v1 agent keeps a goal across questions and blocks protected operations bef
       ["Approve this request", "Approve the request"],
       ["Pay this invoice", "Pay the invoice"],
       ["Email the customer", "Email the customer"],
-      ["Submit the final application", "Submit the final application"]
+      ["Submit the final application", "Submit the final application"],
+      ["Erase this account", "Erase the account"],
+      ["Destroy this workspace", "Destroy the workspace"],
+      ["Charge this card", "Charge the card"],
+      ["Dispatch this email", "Dispatch the email"],
+      ["Finalize this order", "Finalize the order"]
     ] as const;
     for (const [utterance, actionMessage] of prohibited) {
       model.push(decision("actions", {
@@ -296,6 +301,41 @@ test("v1 agent keeps a goal across questions and blocks protected operations bef
     });
     assert.equal(write.status, "waiting_confirmation");
     assert.equal(write.actions[0]?.risk, "reversible_write");
+
+    const manualSession = await agent.createSession("manual-user", runtime());
+    model.push(decision("actions", { message: "Use the protected control", actions: [planned("click", "live:manual", "Use protected control")] }));
+    const manualAction = await agent.submitTurn({
+      sessionId: manualSession.sessionId, userId: "manual-user", revision: manualSession.revision,
+      utterance: "Use the protected control", source: "text", runtime: runtime(6)
+    });
+    assert.equal(manualAction.type, "actions");
+    assert.equal(manualAction.status, "active");
+    assert.equal(manualAction.actions[0]?.risk, "manual");
+    assert.equal(manualAction.actions[0]?.confirmation, undefined);
+
+    const guideSession = await agent.createSession("guide-user", runtime());
+    model.push(decision("actions", { message: "Activate the guide-only control", actions: [planned("click", "live:guide", "Activate guide-only control")] }));
+    const guideOnly = await agent.submitTurn({
+      sessionId: guideSession.sessionId, userId: "guide-user", revision: guideSession.revision,
+      utterance: "Activate the guide-only control", source: "text", runtime: runtime(7)
+    });
+    assert.equal(guideOnly.type, "unable");
+    assert.equal(guideOnly.status, "failed");
+
+    await agent.createSession("dangerous-host-user", {
+      ...runtime(8),
+      actions: [{
+        name: "destroy_workspace",
+        description: "Destroy the current workspace",
+        inputSchema: { type: "object" },
+        risk: "reversible_write",
+        effect: "reversible_change"
+      }]
+    });
+    const dangerousHost = (await repositories.agent.listHostActions()).find((action) => action.name === "destroy_workspace");
+    assert.equal(dangerousHost?.status, "blocked");
+    assert.equal(dangerousHost?.proposedRisk, "blocked");
+    assert.equal(dangerousHost?.effect, "protected");
   } finally {
     await database.close();
   }
@@ -516,9 +556,31 @@ function observation(revision = 1) {
         tagName: "button",
         role: "button",
         name: "Save draft",
-        actionPolicy: "navigate" as const,
+        actionPolicy: "reversible_write" as const,
         locators: [{ strategy: "role" as const, role: "button", name: "Save draft" }],
         bounds: { x: 260, y: 80, width: 140, height: 40 },
+        viewportVisible: true,
+        sensitive: false
+      },
+      {
+        nodeId: "manual",
+        tagName: "button",
+        role: "button",
+        name: "Protected control",
+        actionPolicy: "manual" as const,
+        locators: [{ strategy: "role" as const, role: "button", name: "Protected control" }],
+        bounds: { x: 560, y: 80, width: 140, height: 40 },
+        viewportVisible: true,
+        sensitive: false
+      },
+      {
+        nodeId: "guide",
+        tagName: "button",
+        role: "button",
+        name: "Guide-only control",
+        actionPolicy: "read" as const,
+        locators: [{ strategy: "role" as const, role: "button", name: "Guide-only control" }],
+        bounds: { x: 720, y: 80, width: 140, height: 40 },
         viewportVisible: true,
         sensitive: false
       },

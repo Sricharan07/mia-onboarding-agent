@@ -27,6 +27,7 @@ import { redactSensitiveJson, redactSensitiveText } from "./redaction.js";
 import type { V1Gemini } from "./gemini.js";
 import { AppError } from "../utils/errors.js";
 import { createId } from "../utils/id.js";
+import { executableHostEffect, isProhibitedOperation } from "./safety.js";
 
 const MAX_STEPS = 24;
 const MAX_CONSECUTIVE_FAILURES = 3;
@@ -665,7 +666,12 @@ export class V1AgentService {
   }
 
   private async syncActions(actions: HostActionManifest[]): Promise<void> {
-    await this.repositories.agent.syncHostActions(actions.map((action) => ({ ...action, manifestHash: hash(stableJson(action)) })));
+    await this.repositories.agent.syncHostActions(actions.map((action) => {
+      const normalized: HostActionManifest = isProhibitedOperation(action.name)
+        ? { ...action, risk: "blocked", effect: "protected" }
+        : action;
+      return { ...normalized, manifestHash: hash(stableJson(normalized)) };
+    }));
   }
 }
 
@@ -864,18 +870,16 @@ function riskForAction(
   if (readAction) return "read";
   if (["navigate", "go_back"].includes(action.type)) return "navigate";
 
-  const semantic = [action.type, action.message, action.hostAction, node?.name, node?.text, node?.elementKey, map?.name, map?.description, map?.elementKey]
-    .filter(Boolean).join(" ");
-  if (PROHIBITED_OPERATION.test(semantic)) return "blocked";
+  if (isProhibitedOperation(action.type, action.message, action.hostAction, node?.name, node?.text, node?.elementKey, map?.name, map?.description, map?.elementKey)) return "blocked";
   if (action.type === "click" && (node?.formSubmitter || isSubmitInputType(node?.inputType) || isSubmitInputType(mapInputType(map)))) return "blocked";
   if (action.type === "press_key" && isEnterKey(action.key)) return "blocked";
-  if (host) return host.effectiveRisk;
-  if (node?.sensitive || map?.actionPolicy === "manual") return "manual";
-  if (map?.actionPolicy === "blocked" || node?.actionPolicy === "blocked") return "blocked";
+  if (host) return executableHostEffect(host.effect) ? host.effectiveRisk : "blocked";
+  const policy = node?.actionPolicy ?? map?.actionPolicy;
+  if (node?.sensitive || policy === "manual") return "manual";
+  if (policy === "blocked" || policy === "read" || policy === "guide_only") return "blocked";
+  if (policy === "navigate") return action.type === "click" && Boolean(node?.route || map?.route) ? "navigate" : "blocked";
   return "reversible_write";
 }
-
-const PROHIBITED_OPERATION = /\b(delete|remove permanently|send|publish|approve|pay|purchase|checkout|transfer|wire|post publicly|submit|external(?:ly)? communicat(?:e|ion)|external message|email\s+(?:the|a|an|this|that|customer|user|contact|client|recipient)|issue refund|cancel subscription)\b/i;
 
 function actionNeedsTarget(type: PlannedAction["type"]): boolean {
   return ["point", "highlight", "hover", "scroll_to", "focus", "click", "fill", "clear", "select", "toggle"].includes(type);

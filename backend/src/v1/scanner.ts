@@ -8,6 +8,7 @@ import type { V1SecretService } from "./secrets.js";
 import { resolvePublicHttpsUrl } from "./network.js";
 import { AppError } from "../utils/errors.js";
 import { createId } from "../utils/id.js";
+import { isProhibitedOperation, isProtectedInputSemantic } from "./safety.js";
 
 const MAX_SCAN_ROUTES = 50;
 const SCAN_TIMEOUT_MS = 30_000;
@@ -73,6 +74,8 @@ export class V1UiScanner {
     const version = await this.repositories.knowledge.getMapVersion(id);
     const product = await this.repositories.product.get();
     const scanConfig = product.scanConfig as ScanConfig;
+    const reviewedPolicies = new Map((await this.repositories.knowledge.listReviewedElementPolicies())
+      .map((element) => [element.elementKey, element] as const));
     await validateScanOrigins(product.origin, scanConfig.allowedResourceOrigins ?? [], this.config.UI_SCAN_ALLOW_PRIVATE_NETWORKS);
     await this.repositories.knowledge.updateMapVersion(id, { status: "scanning", error: null });
     let browser: Browser | undefined;
@@ -120,7 +123,12 @@ export class V1UiScanner {
           }
         }
       }
-      const deduped = dedupeElements(elements);
+      const deduped = dedupeElements(elements).map((element) => {
+        const reviewed = reviewedPolicies.get(element.elementKey);
+        return reviewed
+          ? { ...element, actionPolicy: reviewed.actionPolicy, metadata: { ...element.metadata, ...reviewed.metadata, policySource: "admin" } }
+          : element;
+      });
       await this.repositories.knowledge.replaceMapElements(id, deduped.map((element) => ({ id: createId("ui_element"), ...element })));
       await this.indexMap(id, deduped);
       await this.repositories.knowledge.updateMapVersion(id, {
@@ -203,8 +211,8 @@ export class V1UiScanner {
 
 export function actionPolicyForElement(element: Pick<BrowserElement, "role" | "name" | "description" | "tagName" | "type">): UiActionPolicy {
   const semantic = [element.role, element.name, element.description, element.tagName, element.type].filter(Boolean).join(" ");
-  if (/\b(delete|remove permanently|send|publish|approve|pay|purchase|checkout|transfer|wire|post publicly|submit|external(?:ly)? communicat(?:e|ion)|external message|email\s+(?:the|a|an|this|that|customer|user|contact|client|recipient)|refund|cancel subscription)\b/i.test(semantic)) return "blocked";
-  if (["password", "file"].includes(element.type ?? "") || /\b(password|passcode|verification code|payment|card number|cvv|cvc|captcha|web.?authn)\b/i.test(semantic)) return "manual";
+  if (isProhibitedOperation(semantic)) return "blocked";
+  if (["password", "file"].includes(element.type ?? "") || isProtectedInputSemantic(semantic)) return "manual";
   if (element.role === "link" || element.tagName === "a") return "navigate";
   if (["button", "textbox", "checkbox", "radio", "switch", "combobox", "listbox", "option", "slider", "spinbutton"].includes(element.role ?? "")
     || ["button", "input", "textarea", "select"].includes(element.tagName)) return "reversible_write";
@@ -338,7 +346,7 @@ function normalizeElement(element: BrowserElement, route: string, frameIndex: nu
     locators: element.locators,
     fingerprint: hash(JSON.stringify({ route, role: element.role, name: element.name, tag: element.tagName, type: element.type })),
     actionPolicy: actionPolicyForElement(element),
-    metadata: { tagName: element.tagName, type: element.type, href: element.href, frameIndex }
+    metadata: { tagName: element.tagName, type: element.type, href: element.href, frameIndex, policySource: "inferred" }
   };
 }
 

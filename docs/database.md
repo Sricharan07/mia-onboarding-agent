@@ -26,6 +26,10 @@ Migrations run automatically before the HTTP server starts. Applied IDs and name
 | 1 | `mia_v1_initial` |
 | 2 | `encrypted_product_settings` |
 | 3 | `diagnostic_lookup_indexes` |
+| 4 | `stable_goal_run_identity` |
+| 5 | `separate_host_action_risk_review` |
+| 6 | `constrain_mia_voice` |
+| 7 | `typed_host_action_effects` |
 
 Migration 1 enables `vector`; the database role must be allowed to create that extension or an operator must install it before startup.
 

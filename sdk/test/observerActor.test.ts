@@ -52,6 +52,8 @@ test("semantic observer traverses open shadow roots, preserves stable IDs, and r
       <button data-mia-key="create-lead">Create lead</button>
       <form><button data-mia-key="continue">Continue</button></form>
       <label>Password<input type="password" value="super-secret-password"></label>
+      <label>Verification code<input id="protected-code" name="entry" autocomplete="one-time-code" value="123456"></label>
+      <label>Card number<input id="protected-card" name="entry" autocomplete="cc-number" value="4111111111111111"></label>
       <section data-private>Private customer 4111 1111 1111 1111</section>
       <div id="shadow-host"></div>
     </main>
@@ -71,6 +73,11 @@ test("semantic observer traverses open shadow roots, preserves stable IDs, and r
     const password = first.nodes.find((node) => node.inputType === "password");
     assert.equal(password?.sensitive, true);
     assert.equal(password?.value, undefined);
+    for (const id of ["protected-code", "protected-card"]) {
+      const protectedInput = first.nodes.find((node) => node.locators.some((locator) => locator.strategy === "css" && locator.selector === `#${id}`));
+      assert.equal(protectedInput?.sensitive, true);
+      assert.equal(protectedInput?.value, undefined);
+    }
     assert.equal(first.pageText?.includes("super-secret-password"), false);
     assert.equal(first.pageText?.includes("Private customer"), false);
     assert.equal(first.pageText?.includes("4111"), false);
@@ -145,6 +152,37 @@ test("DOM actor fills and verifies a live control and never executes a manual ac
     const protectedResult = await actor.executeBatch([manual], collector.collect(), new AbortController().signal);
     assert.equal(protectedResult.receipts[0]?.status, "manual");
     assert.equal((document.querySelector("input") as HTMLInputElement).value, "Avery");
+
+    let manualExecutions = 0;
+    const protectedActor = new DomAgentActor({
+      collector,
+      cursor,
+      config: {
+        ...options(),
+        actions: [{
+          name: "protected_step",
+          description: "A protected operation that remains manual",
+          inputSchema: { type: "object" },
+          risk: "manual",
+          effect: "protected",
+          execute: async () => {
+            manualExecutions += 1;
+            return { status: "completed", message: "Executed" };
+          }
+        }]
+      }
+    });
+    const protectedHost = await protectedActor.executeBatch([{
+      actionId: "manual_host",
+      idempotencyKey: "manual_host_key",
+      type: "host_action",
+      hostAction: "protected_step",
+      message: "Complete the protected step",
+      expectedOutcome: "The user completes it manually",
+      risk: "manual"
+    }], collector.collect(), new AbortController().signal);
+    assert.equal(protectedHost.receipts[0]?.status, "manual");
+    assert.equal(manualExecutions, 0);
     collector.destroy();
   } finally {
     cleanup();

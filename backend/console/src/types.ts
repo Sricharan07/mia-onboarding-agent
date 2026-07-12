@@ -157,6 +157,7 @@ export type HostAction = {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  effect: "read" | "navigate" | "draft_create" | "draft_update" | "reversible_change" | "protected";
   proposedRisk: RiskLevel;
   effectiveRisk: RiskLevel;
   status: "detected" | "needs_review" | "published" | "blocked";

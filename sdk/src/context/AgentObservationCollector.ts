@@ -363,10 +363,22 @@ function isSensitive(element: HTMLElement, options: MiaOptions): boolean {
   const tag = tagName(element);
   if (tag !== "input" && tag !== "textarea") return false;
   const control = element as HTMLInputElement | HTMLTextAreaElement;
-  const type = tag === "input" ? (control as HTMLInputElement).type : "";
-  const semantic = [type, control.getAttribute("name"), control.id, control.getAttribute("autocomplete"), control.getAttribute("aria-label")].join(" ");
+  const type = tag === "input" ? (control as HTMLInputElement).type.toLowerCase() : "";
+  const autocomplete = control.getAttribute("autocomplete")?.toLowerCase() ?? "";
+  const semantic = [
+    type,
+    autocomplete,
+    control.getAttribute("name"),
+    control.id,
+    control.getAttribute("aria-label"),
+    control.getAttribute("placeholder"),
+    control.getAttribute("title"),
+    accessibleName(element),
+    describedText(element)
+  ].filter(Boolean).join(" ").replace(/[_-]+/g, " ");
   return ["password", "hidden", "file"].includes(type)
-    || /\b(password|passcode|otp|verification|token|secret|api.?key|card|credit|cvv|cvc|ssn|social.?security|webauthn|captcha)\b/i.test(semantic);
+    || autocomplete.split(/\s+/).some((token) => ["current-password", "new-password", "one-time-code", "webauthn"].includes(token) || token.startsWith("cc-") || token.startsWith("transaction-"))
+    || /\b(password|passcode|passphrase|pin|otp|one time code|verification code|authentication code|security code|recovery code|token|secret|api key|access key|private key|seed phrase|credit card|debit card|card number|payment|cvv|cvc|bank account|routing number|ssn|social security|tax id|webauthn|passkey|captcha)\b/i.test(semantic);
 }
 
 function isRedacted(element: HTMLElement, options: MiaOptions): boolean {

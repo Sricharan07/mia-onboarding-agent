@@ -4,6 +4,8 @@ export const riskLevelSchema = z.enum(["read", "navigate", "reversible_write", "
 export type RiskLevel = z.infer<typeof riskLevelSchema>;
 export const uiActionPolicySchema = z.enum(["guide_only", "navigate", "reversible_write", "manual", "blocked"]);
 export type UiActionPolicy = z.infer<typeof uiActionPolicySchema>;
+export const hostActionEffectSchema = z.enum(["read", "navigate", "draft_create", "draft_update", "reversible_change", "protected"]);
+export type HostActionEffect = z.infer<typeof hostActionEffectSchema>;
 
 export const targetLocatorSchema = z.discriminatedUnion("strategy", [
   z.object({ strategy: z.literal("css"), selector: z.string().min(1).max(2_000) }),
@@ -89,7 +91,14 @@ export const hostActionManifestSchema = z.object({
   name: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
   description: z.string().min(1).max(1_000),
   inputSchema: z.record(z.string(), z.unknown()).default({}),
-  risk: riskLevelSchema
+  risk: riskLevelSchema,
+  effect: hostActionEffectSchema
+}).superRefine((value, context) => {
+  const compatible = value.risk === "read" ? value.effect === "read"
+    : value.risk === "navigate" ? value.effect === "navigate"
+      : value.risk === "reversible_write" ? ["draft_create", "draft_update", "reversible_change"].includes(value.effect)
+        : value.effect === "protected";
+  if (!compatible) context.addIssue({ code: "custom", path: ["effect"], message: `Effect ${value.effect} is incompatible with risk ${value.risk}.` });
 });
 export type HostActionManifest = z.infer<typeof hostActionManifestSchema>;
 

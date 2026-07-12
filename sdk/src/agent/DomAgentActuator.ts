@@ -59,6 +59,9 @@ export class DomAgentActor {
       assertActive(signal);
       if (directive.risk === "blocked") return { receipt: receipt(directive, "failed", "This action is blocked by the product policy."), visualContext: [] };
       if (directive.type === "request_visual") return this.requestVisual(directive, observation, signal);
+      if (directive.type === "host_action" && directive.risk === "manual") {
+        return { receipt: receipt(directive, "manual", "This protected host action must be completed by the user."), visualContext: [] };
+      }
       if (directive.type === "host_action") return this.hostAction(directive, observation, signal);
       if (directive.type === "navigate") return { receipt: await this.navigate(directive, signal), visualContext: [] };
       if (directive.type === "go_back") return { receipt: await this.goBack(directive, signal), visualContext: [] };
@@ -177,6 +180,9 @@ export class DomAgentActor {
     const definition = directive.hostAction ? this.actions.get(directive.hostAction) : undefined;
     if (!definition) return { receipt: receipt(directive, "failed", "The requested host action is not registered."), visualContext: [] };
     if (definition.risk === "blocked") return { receipt: receipt(directive, "failed", "The requested host action is blocked."), visualContext: [] };
+    if (definition.risk === "manual" || definition.effect === "protected") {
+      return { receipt: receipt(directive, "failed", "The requested host action is protected and cannot be executed by Mia."), visualContext: [] };
+    }
     const result = await definition.execute(directive.arguments ?? {}, {
       signal,
       observation,

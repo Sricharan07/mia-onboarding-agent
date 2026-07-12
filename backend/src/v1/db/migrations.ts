@@ -328,6 +328,22 @@ const migrations: Migration[] = [{
       AND jsonb_typeof(voice_config->'enabled') = 'boolean'
     );
   `
+}, {
+  id: 7,
+  name: "typed_host_action_effects",
+  sql: `
+    ALTER TABLE host_actions
+      ADD COLUMN effect TEXT CHECK (effect IN ('read', 'navigate', 'draft_create', 'draft_update', 'reversible_change', 'protected'));
+
+    UPDATE host_actions SET effect = CASE
+      WHEN proposed_risk = 'read' THEN 'read'
+      WHEN proposed_risk = 'navigate' THEN 'navigate'
+      WHEN proposed_risk IN ('manual', 'blocked') THEN 'protected'
+      ELSE 'reversible_change'
+    END;
+
+    ALTER TABLE host_actions ALTER COLUMN effect SET NOT NULL;
+  `
 }];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {

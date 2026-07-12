@@ -148,6 +148,7 @@ const createDraftOpportunity = defineMiaAction<CreateDraftInput>({
     required: ["account"],
   },
   risk: "reversible_write",
+  effect: "draft_create",
   async execute(input, { signal, idempotencyKey }) {
     const response = await fetch("/api/v1/crm/opportunities/drafts", {
       method: "POST",
@@ -196,6 +197,7 @@ const updateOpportunity = defineMiaAction<UpdateOpportunityInput>({
     required: ["id", "patch"],
   },
   risk: "reversible_write",
+  effect: "draft_update",
   async execute(input, { signal, idempotencyKey }) {
     const response = await fetch(`/api/v1/crm/opportunities/${encodeURIComponent(input.id)}`, {
       method: "PATCH",

@@ -43,7 +43,8 @@ test("v1 PostgreSQL foundation migrates and enforces singleton setup plus sessio
       { id: 3, name: "diagnostic_lookup_indexes" },
       { id: 4, name: "stable_goal_run_identity" },
       { id: 5, name: "separate_host_action_risk_review" },
-      { id: 6, name: "constrain_mia_voice" }
+      { id: 6, name: "constrain_mia_voice" },
+      { id: 7, name: "typed_host_action_effects" }
     ]);
     assert.equal((await database.query<{ count: number }>(`
       SELECT COUNT(*)::int AS count FROM information_schema.tables WHERE table_schema = 'public'
@@ -109,6 +110,7 @@ test("v1 PostgreSQL foundation migrates and enforces singleton setup plus sessio
       description: "Look up a customer record",
       inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
       risk: "read" as const,
+      effect: "read" as const,
       manifestHash: "stable-manifest"
     };
     await repositories.agent.syncHostActions([manifest]);
@@ -124,7 +126,7 @@ test("v1 PostgreSQL foundation migrates and enforces singleton setup plus sessio
     assert.equal(afterSameManifest.effectiveRisk, "reversible_write", "SDK sync must not weaken reviewed effective risk");
     assert.equal(afterSameManifest.reviewedAt, reviewed.reviewedAt);
 
-    await repositories.agent.syncHostActions([{ ...manifest, risk: "manual", manifestHash: "changed-manifest" }]);
+    await repositories.agent.syncHostActions([{ ...manifest, risk: "manual", effect: "protected", manifestHash: "changed-manifest" }]);
     const afterChangedManifest = (await repositories.agent.listHostActions())[0]!;
     assert.equal(afterChangedManifest.status, "needs_review");
     assert.equal(afterChangedManifest.proposedRisk, "manual");
