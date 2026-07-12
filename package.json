@@ -24,9 +24,11 @@
     "check:demo": "npm --prefix example/demo-crm+sdk run check",
     "acceptance:browsers": "node scripts/browser-acceptance.mjs",
     "acceptance:voice": "node scripts/voice-acceptance.mjs",
+    "acceptance:voice:repeat": "node scripts/repeat-voice-acceptance.mjs",
     "benchmark:agent": "node scripts/agent-benchmark.mjs",
     "verify:package-install": "node scripts/verify-sdk-package.mjs",
-    "verify": "npm run test && npm run check:demo && npm run build && npm run build:console && npm run build:demo && npm run audit:prod && npm run pack:sdk && npm run verify:package-install"
+    "verify": "npm run test && npm run check:demo && npm run build && npm run build:console && npm run build:demo && npm run audit:prod && npm run pack:sdk && npm run verify:package-install",
+    "verify:release": "npm run verify && npm run acceptance:browsers && npm run benchmark:agent && npm run acceptance:voice:repeat"
   },
   "devDependencies": {
     "typescript": "^5.9.3"

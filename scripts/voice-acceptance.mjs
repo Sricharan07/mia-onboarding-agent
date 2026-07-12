@@ -6,6 +6,7 @@ const origin = new URL(required("MIA_VOICE_ORIGIN")).origin;
 const integrationKey = required("MIA_VOICE_INTEGRATION_KEY");
 const expectedSpeech = "Mia voice acceptance passed.";
 const userPrompt = "Run the Mia voice acceptance check.";
+const resultPrefix = "[MIA_AGENT_RESULT]";
 
 const runtime = await json(`${backendUrl}/api/v1/runtime/tokens`, {
   method: "POST",
@@ -54,12 +55,18 @@ try {
   await messages.waitFor((message) => Boolean(message.setupComplete ?? message.setup_complete), 20_000, "Gemini Live setup did not complete.");
 
   socket.send(JSON.stringify({
-    clientContent: { turns: [{ role: "user", parts: [{ text: userPrompt }] }], turnComplete: true }
+    clientContent: {
+      turns: [{ role: "user", parts: [{ text: `${resultPrefix}\n${JSON.stringify({ spokenMessage: userPrompt })}` }] }],
+      turnComplete: true
+    }
   }));
-  const toolMessage = await messages.waitFor((message) => functionCalls(message).some((call) => call.name === "submit_mia_turn"), 30_000, "Voice transport did not call Mia's authoritative turn tool.");
-  const call = functionCalls(toolMessage).find((candidate) => candidate.name === "submit_mia_turn");
+  const promptAudio = await collectSpeechTurn(messages, userPrompt, 30_000, "Gemini Live did not synthesize the voice acceptance prompt.");
+  const inputPcm = downsamplePcm16(promptAudio.audio, 24_000, 16_000);
+  await sendPcm(socket, inputPcm, 16_000);
+  const voiceInput = await collectVoiceInput(messages, 30_000);
+  assert.equal(normalize(voiceInput.transcript), normalize(userPrompt), "Gemini Live input transcription altered the spoken request.");
+  const call = voiceInput.call;
   assert.ok(call, "submit_mia_turn call was missing.");
-  assert.equal(normalize(String(call.args?.utterance ?? "")), normalize(userPrompt), "Voice transport altered the user request.");
 
   socket.send(JSON.stringify({
     toolResponse: {
@@ -71,11 +78,28 @@ try {
     }
   }));
 
+  const trusted = await collectSpeechTurn(messages, expectedSpeech, 30_000, "Gemini Live did not finish trusted speech output.");
+  process.stdout.write(`${JSON.stringify({
+    voice: live.voice,
+    language: live.language,
+    inputTranscript: voiceInput.transcript,
+    tool: call.name,
+    toolUtterance: String(call.args?.utterance ?? ""),
+    toolUtteranceMatched: normalize(String(call.args?.utterance ?? "")) === normalize(voiceInput.transcript),
+    transcript: trusted.transcript,
+    audioBytes: trusted.audio.length
+  }, null, 2)}\n`);
+} finally {
+  messages.close();
+  if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) socket.close();
+}
+
+async function collectSpeechTurn(messages, expected, timeoutMs, timeoutMessage) {
   let transcript = "";
-  let audioBytes = 0;
-  const deadline = Date.now() + 30_000;
-  while (Date.now() < deadline) {
-    const message = await messages.next(deadline - Date.now(), "Gemini Live did not finish trusted speech output.");
+  const audio = [];
+  const end = Date.now() + timeoutMs;
+  while (Date.now() < end) {
+    const message = await messages.next(end - Date.now(), timeoutMessage);
     const content = object(message.serverContent) ?? object(message.server_content);
     const output = object(content?.outputTranscription) ?? object(content?.output_transcription);
     if (typeof output?.text === "string") transcript = mergeTranscript(transcript, output.text);
@@ -83,16 +107,58 @@ try {
     for (const rawPart of array(turn?.parts)) {
       const part = object(rawPart);
       const inline = object(part?.inlineData) ?? object(part?.inline_data);
-      if (typeof inline?.data === "string") audioBytes += Buffer.from(inline.data, "base64").byteLength;
+      if (typeof inline?.data === "string") audio.push(Buffer.from(inline.data, "base64"));
     }
-    if ((content?.turnComplete ?? content?.turn_complete) && transcript && audioBytes > 0) break;
+    if ((content?.turnComplete ?? content?.turn_complete) && transcript && audio.length) break;
   }
-  assert.ok(audioBytes > 0, "Gemini Live returned no audio bytes.");
-  assert.equal(normalize(transcript), normalize(expectedSpeech), "Gemini Live did not speak the exact trusted Mia result.");
-  process.stdout.write(`${JSON.stringify({ voice: live.voice, language: live.language, tool: call.name, transcript, audioBytes }, null, 2)}\n`);
-} finally {
-  messages.close();
-  if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) socket.close();
+  const combined = Buffer.concat(audio);
+  assert.ok(combined.length > 0, "Gemini Live returned no audio bytes.");
+  assert.equal(normalize(transcript), normalize(expected), "Gemini Live did not speak the exact trusted Mia text.");
+  return { transcript, audio: combined };
+}
+
+async function collectVoiceInput(messages, timeoutMs) {
+  let transcript = "";
+  let call;
+  const end = Date.now() + timeoutMs;
+  while (Date.now() < end && (!transcript || !call)) {
+    const message = await messages.next(end - Date.now(), "Gemini Live did not transcribe and route the spoken acceptance request.");
+    const content = object(message.serverContent) ?? object(message.server_content);
+    const input = object(content?.inputTranscription) ?? object(content?.input_transcription);
+    if (typeof input?.text === "string") transcript = mergeTranscript(transcript, input.text);
+    call ??= functionCalls(message).find((candidate) => candidate.name === "submit_mia_turn");
+  }
+  if (!transcript || !call) throw new Error("Gemini Live did not provide both authoritative input transcription and the Mia turn tool call.");
+  return { transcript, call };
+}
+
+async function sendPcm(socket, pcm, sampleRate) {
+  const chunkBytes = Math.floor(sampleRate * 2 / 10);
+  for (let offset = 0; offset < pcm.length; offset += chunkBytes) {
+    socket.send(JSON.stringify({
+      realtimeInput: {
+        audio: {
+          data: pcm.subarray(offset, offset + chunkBytes).toString("base64"),
+          mimeType: `audio/pcm;rate=${sampleRate}`
+        }
+      }
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  socket.send(JSON.stringify({ realtimeInput: { audioStreamEnd: true } }));
+}
+
+function downsamplePcm16(input, sourceRate, targetRate) {
+  assert.equal(input.byteLength % 2, 0, "Gemini Live PCM output was not 16-bit aligned.");
+  if (sourceRate === targetRate) return input;
+  const sourceSamples = input.byteLength / 2;
+  const outputSamples = Math.floor(sourceSamples * targetRate / sourceRate);
+  const output = Buffer.allocUnsafe(outputSamples * 2);
+  for (let index = 0; index < outputSamples; index += 1) {
+    const sourceIndex = Math.min(sourceSamples - 1, Math.floor(index * sourceRate / targetRate));
+    output.writeInt16LE(input.readInt16LE(sourceIndex * 2), index * 2);
+  }
+  return output;
 }
 
 function messageBuffer(socket) {

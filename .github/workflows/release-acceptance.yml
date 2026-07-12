@@ -3,8 +3,14 @@ name: Release Acceptance
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
     tags:
       - "v*"
+
+concurrency:
+  group: release-acceptance-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   live-acceptance:
@@ -12,7 +18,22 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment: release-acceptance
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17@sha256:d2ef61f42ef767baa5a1475393303cc235bcd92febd9d7014eddb48b41f3bad0
+        env:
+          POSTGRES_USER: mia
+          POSTGRES_PASSWORD: mia-release-database-password
+          POSTGRES_DB: mia_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mia -d mia_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
     env:
+      MIA_TEST_DATABASE_URL: postgres://mia:mia-release-database-password@127.0.0.1:5432/mia_test
       MIA_ACCEPTANCE_CONSOLE_URL: ${{ vars.MIA_ACCEPTANCE_CONSOLE_URL }}
       MIA_ACCEPTANCE_CONSOLE_EMAIL: ${{ secrets.MIA_ACCEPTANCE_CONSOLE_EMAIL }}
       MIA_ACCEPTANCE_CONSOLE_PASSWORD: ${{ secrets.MIA_ACCEPTANCE_CONSOLE_PASSWORD }}
@@ -25,6 +46,7 @@ jobs:
       MIA_VOICE_BACKEND_URL: ${{ vars.MIA_ACCEPTANCE_BACKEND_URL }}
       MIA_VOICE_ORIGIN: ${{ vars.MIA_ACCEPTANCE_PRODUCT_ORIGIN }}
       MIA_VOICE_INTEGRATION_KEY: ${{ secrets.MIA_VOICE_INTEGRATION_KEY }}
+      MIA_VOICE_ACCEPTANCE_ITERATIONS: "3"
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -38,8 +60,16 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install console and demo dependencies
+        run: |
+          npm ci --prefix backend/console
+          npm ci --prefix example/demo-crm+sdk
+
       - name: Install release browsers
         run: npx playwright install --with-deps chromium firefox webkit msedge
+
+      - name: Run deterministic release verification
+        run: npm run verify
 
       - name: Verify Chrome, Edge, Firefox, and WebKit
         run: npm run acceptance:browsers
@@ -47,5 +77,5 @@ jobs:
       - name: Run repeated intelligent-agent benchmark
         run: npm run benchmark:agent
 
-      - name: Verify Gemini Live voice protocol and trusted speech
-        run: npm run acceptance:voice
+      - name: Verify repeated Gemini Live voice parity and trusted speech
+        run: npm run acceptance:voice:repeat

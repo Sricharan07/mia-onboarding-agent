@@ -74,13 +74,32 @@ async function testConsole(browser, browserName) {
     }
 
     await page.goto(`${consoleUrl}/overview`, { waitUntil: "networkidle" });
+    const sidebar = page.locator(".sidebar");
+    assert.equal(await sidebar.evaluate((element) => element.inert), true, `${browserName} closed mobile navigation is inert`);
+    assert.equal(await sidebar.getAttribute("aria-hidden"), "true", `${browserName} closed mobile navigation is hidden from assistive technology`);
+    const hiddenFocusBlocked = await sidebar.evaluate((element) => {
+      element.querySelector("button")?.focus();
+      return !element.contains(document.activeElement);
+    });
+    assert.equal(hiddenFocusBlocked, true, `${browserName} hidden mobile navigation rejects focus`);
+
     await page.getByRole("button", { name: "Open navigation" }).click();
     await page.waitForTimeout(250);
-    const navigation = await page.locator(".sidebar").boundingBox();
+    const navigation = await sidebar.boundingBox();
     assert.ok(navigation && navigation.x >= -1 && navigation.x + navigation.width <= 391, `${browserName} mobile navigation bounds`);
     assert.equal(await page.getByRole("button", { name: "Dismiss navigation overlay" }).isVisible(), true);
+    assert.equal(await sidebar.evaluate((element) => element.inert), false, `${browserName} open mobile navigation is interactive`);
+    assert.equal(await page.locator(".main-shell").evaluate((element) => element.inert), true, `${browserName} background is inert while navigation is open`);
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")), "Close navigation", `${browserName} navigation receives focus`);
+    await page.keyboard.press("Shift+Tab");
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")), "Sign out", `${browserName} reverse tab wraps inside navigation`);
+    await page.keyboard.press("Tab");
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")), "Close navigation", `${browserName} forward tab wraps inside navigation`);
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(50);
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")), "Open navigation", `${browserName} closing navigation restores focus`);
     assert.deepEqual(errors, [], `${browserName} console errors`);
-    return { routes: routes.length, mobileOverflow: 0, navigation: true };
+    return { routes: routes.length, mobileOverflow: 0, navigation: true, focusIsolation: true };
   } catch (error) {
     await page.screenshot({ path: `/tmp/mia-browser-acceptance-${slug(browserName)}-console.png`, fullPage: true }).catch(() => undefined);
     throw error;
@@ -90,7 +109,7 @@ async function testConsole(browser, browserName) {
 }
 
 async function testDemo(browser, browserName) {
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce" });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: "no-preference" });
   const page = await context.newPage();
   const errors = collectErrors(page);
   await page.addInitScript(() => {
@@ -114,12 +133,12 @@ async function testDemo(browser, browserName) {
     await launcher.focus();
     await launcher.press("Enter");
     await page.locator("[data-mia-assistant-panel] [data-panel]").waitFor({ state: "visible" });
-    assertPanelBounds(await panelMetrics(page), `${browserName} desktop`);
+    assertPanelBounds(await panelMetrics(page), `${browserName} desktop`, false);
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.waitForTimeout(250);
     assert.equal(await horizontalOverflow(page), 0, `${browserName} demo mobile overflow`);
-    assertPanelBounds(await panelMetrics(page), `${browserName} mobile`);
+    assertPanelBounds(await panelMetrics(page), `${browserName} mobile`, false);
 
     let agent = "not requested";
     if (runAgent) {
@@ -129,13 +148,23 @@ async function testDemo(browser, browserName) {
       await composer.press("Enter");
       await page.waitForFunction(() => window.__miaAcceptanceEvents?.some((event) => event.type === "action_completed" && event.receiptType === "point" && event.receiptStatus === "completed"), null, { timeout: 90_000 });
       await page.waitForFunction(() => window.__miaAcceptanceEvents?.some((event) => ["answer", "completed"].includes(event.type)), null, { timeout: 90_000 });
+      const cursor = await cursorTargetMetrics(page, "Stage");
+      assert.ok(cursor.target && cursor.cursor, `${browserName} cursor and Stage target exist`);
+      assert.ok(cursor.distance <= 12, `${browserName} cursor aligns with Stage target (${cursor.distance.toFixed(2)}px)`);
+      assert.equal(cursor.targetHit, true, `${browserName} Stage target is not occluded`);
+      assert.equal(cursor.panelHidden, true, `${browserName} panel is collapsed during guidance`);
       agent = "point and answer passed";
     }
+
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForFunction(() => window.__miaAcceptanceEvents?.some((event) => event.type === "ready"), null, { timeout: 30_000 });
+    assert.equal((await panelMetrics(page)).reducedMotion, true, `${browserName} reduced-motion mode is honored`);
 
     const runtimeErrors = await page.evaluate(() => window.__miaAcceptanceEvents?.filter((event) => event.type === "error") ?? []);
     assert.deepEqual(runtimeErrors, [], `${browserName} SDK runtime errors`);
     assert.deepEqual(errors, [], `${browserName} demo errors`);
-    return { ready: true, desktopOverflow: 0, mobileOverflow: 0, panel: true, agent };
+    return { ready: true, desktopOverflow: 0, mobileOverflow: 0, panel: true, normalMotionCursor: runAgent, reducedMotion: true, agent };
   } catch (error) {
     await page.screenshot({ path: `/tmp/mia-browser-acceptance-${slug(browserName)}-demo.png`, fullPage: true }).catch(() => undefined);
     throw error;
@@ -176,13 +205,32 @@ async function panelMetrics(page) {
   });
 }
 
-function assertPanelBounds(metrics, label) {
+function assertPanelBounds(metrics, label, reducedMotion) {
   assert.ok(metrics.panel, `${label} panel exists`);
   assert.ok(metrics.panel.x >= 0 && metrics.panel.y >= 0, `${label} panel starts inside viewport`);
   assert.ok(metrics.panel.right <= metrics.viewport.width + 1 && metrics.panel.bottom <= metrics.viewport.height + 1, `${label} panel ends inside viewport`);
   assert.equal(metrics.launcherVisibility, "hidden", `${label} launcher hidden while panel is open`);
   assert.equal(metrics.input && metrics.microphone && metrics.stop, true, `${label} expected controls`);
-  assert.equal(metrics.reducedMotion, true, `${label} reduced-motion state`);
+  assert.equal(metrics.reducedMotion, reducedMotion, `${label} reduced-motion state`);
+}
+
+async function cursorTargetMetrics(page, label) {
+  return page.evaluate((targetLabel) => {
+    const target = [...document.querySelectorAll("button")].find((element) => element.textContent?.trim() === targetLabel);
+    const cursor = document.querySelector("[data-mia-shadow-cursor]")?.shadowRoot?.querySelector(".mia-cursor");
+    const panel = document.querySelector("[data-mia-assistant-panel]")?.shadowRoot?.querySelector("[data-panel]");
+    const targetRect = target?.getBoundingClientRect();
+    const cursorRect = cursor?.getBoundingClientRect();
+    const center = targetRect ? { x: targetRect.left + targetRect.width / 2, y: targetRect.top + targetRect.height / 2 } : null;
+    const hit = center ? document.elementFromPoint(center.x, center.y) : null;
+    return {
+      target: targetRect ? { x: targetRect.x, y: targetRect.y, width: targetRect.width, height: targetRect.height } : null,
+      cursor: cursorRect ? { x: cursorRect.x, y: cursorRect.y, width: cursorRect.width, height: cursorRect.height } : null,
+      distance: center && cursorRect ? Math.hypot(center.x - cursorRect.x, center.y - cursorRect.y) : Number.POSITIVE_INFINITY,
+      targetHit: Boolean(target && hit && (hit === target || target.contains(hit))),
+      panelHidden: panel?.hasAttribute("hidden") ?? false
+    };
+  }, label);
 }
 
 function required(name) {
