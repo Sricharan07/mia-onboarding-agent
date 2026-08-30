@@ -1,4 +1,4 @@
-FROM node:22.22.0-bookworm-slim@sha256:dd9d21971ec4395903fa6143c2b9267d048ae01ca6d3ea96f16cb30df6187d94 AS build
+FROM node:26.8.1-bookworm-slim@sha256:367679cf9792759492a486e4aa4b421764d71a9546a6dae8aab81a99eb797b3e AS build
 
 WORKDIR /app
 COPY package.json package-lock.json tsconfig.base.json ./
@@ -14,7 +14,7 @@ RUN npm run build \
     && npm --prefix backend/console run build \
     && npm prune --omit=dev
 
-FROM node:22.22.0-bookworm-slim@sha256:dd9d21971ec4395903fa6143c2b9267d048ae01ca6d3ea96f16cb30df6187d94 AS runtime
+FROM node:26.8.1-bookworm-slim@sha256:367679cf9792759492a486e4aa4b421764d71a9546a6dae8aab81a99eb797b3e AS runtime
 
 LABEL org.opencontainers.image.title="Mia" \
       org.opencontainers.image.description="Self-hosted intelligent product agent" \
