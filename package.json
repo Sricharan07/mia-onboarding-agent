@@ -35,9 +35,9 @@
     "verify:release": "npm run verify && npm run acceptance:browsers && npm run benchmark:agent && npm run acceptance:voice:repeat"
   },
   "devDependencies": {
-    "@axe-core/playwright": "^4.12.1",
+    "@axe-core/playwright": "^4.13.0",
     "axe-core": "^4.12.1",
-    "selenium-webdriver": "^4.46.0",
-    "typescript": "^5.9.3"
+    "selenium-webdriver": "^4.48.0",
+    "typescript": "^7.0.2"
   }
 }
